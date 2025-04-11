@@ -26,7 +26,7 @@ import torch
 from einops import rearrange
 from torch.nn.functional import silu
 
-from physicsnemo.models.diffusion import weight_init
+from src.utils.model_utils import weight_init
 
 
 class Linear(torch.nn.Module):

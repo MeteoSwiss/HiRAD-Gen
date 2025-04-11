@@ -18,11 +18,11 @@ import importlib
 from dataclasses import dataclass
 
 import torch
+import torch.nn as nn
 
 from physicsnemo.models.meta import ModelMetaData
-from physicsnemo.models.module import Module
 
-network_module = importlib.import_module("physicsnemo.models.diffusion")
+network_module = importlib.import_module("src.models")
 
 
 @dataclass
@@ -43,7 +43,7 @@ class MetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class UNet(Module):  # TODO a lot of redundancy, need to clean up
+class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
     """
     U-Net Wrapper for CorrDiff.
 
@@ -166,7 +166,7 @@ class UNet(Module):  # TODO a lot of redundancy, need to clean up
         return torch.as_tensor(sigma)
 
 
-class StormCastUNet(Module):
+class StormCastUNet(nn.Module):
     """
     U-Net wrapper for StormCast; used so the same Song U-Net network can be re-used for this model.
 

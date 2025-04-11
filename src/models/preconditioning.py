@@ -27,13 +27,13 @@ from typing import List, Union
 import numpy as np
 import nvtx
 import torch
+import torch.nn as nn
 
-from physicsnemo.models.diffusion import (
+from src.models import (
     DhariwalUNet,  # noqa: F401 for globals
     SongUNet,  # noqa: F401 for globals
 )
 from physicsnemo.models.meta import ModelMetaData
-from physicsnemo.models.module import Module
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -58,7 +58,7 @@ class VPPrecondMetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class VPPrecond(Module):
+class VPPrecond(nn.Module):
     """
     Preconditioning corresponding to the variance preserving (VP) formulation.
 
@@ -241,7 +241,7 @@ class VEPrecondMetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class VEPrecond(Module):
+class VEPrecond(nn.Module):
     """
     Preconditioning corresponding to the variance exploding (VE) formulation.
 
@@ -370,7 +370,7 @@ class iDDPMPrecondMetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class iDDPMPrecond(Module):
+class iDDPMPrecond(nn.Module):
     """
     Preconditioning corresponding to the improved DDPM (iDDPM) formulation.
 
@@ -544,7 +544,7 @@ class EDMPrecondMetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class EDMPrecond(Module):
+class EDMPrecond(nn.Module):
     """
     Improved preconditioning proposed in the paper "Elucidating the Design Space of
     Diffusion-Based Generative Models" (EDM)
@@ -713,7 +713,7 @@ class EDMPrecondSRMetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class EDMPrecondSR(Module):
+class EDMPrecondSR(nn.Module):
     """
     Improved preconditioning proposed in the paper "Elucidating the Design Space of
     Diffusion-Based Generative Models" (EDM) for super-resolution tasks
@@ -861,7 +861,7 @@ class EDMPrecondSR(Module):
         return EDMPrecond.round_sigma(sigma)
 
 
-class VEPrecond_dfsr(torch.nn.Module):
+class VEPrecond_dfsr(nn.Module):
     """
     Preconditioning for dfsr model, modified from class VEPrecond, where the input
     argument 'sigma' in forward propagation function is used to receive the timestep
@@ -953,7 +953,7 @@ class VEPrecond_dfsr(torch.nn.Module):
         return F_x
 
 
-class VEPrecond_dfsr_cond(torch.nn.Module):
+class VEPrecond_dfsr_cond(nn.Module):
     """
     Preconditioning for dfsr model with physics-informed conditioning input, modified
     from class VEPrecond, where the input argument 'sigma' in forward propagation function

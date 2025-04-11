@@ -27,8 +27,9 @@ import nvtx
 import torch
 from torch.nn.functional import silu
 from torch.utils.checkpoint import checkpoint
+import torch.nn as nn
 
-from physicsnemo.models.diffusion import (
+from src.models import (
     Conv2d,
     FourierEmbedding,
     GroupNorm,
@@ -37,7 +38,6 @@ from physicsnemo.models.diffusion import (
     UNetBlock,
 )
 from physicsnemo.models.meta import ModelMetaData
-from physicsnemo.models.module import Module
 
 
 @dataclass
@@ -58,7 +58,7 @@ class MetaData(ModelMetaData):
     auto_grad: bool = False
 
 
-class SongUNet(Module):
+class SongUNet(nn.Module):
     """
     Reimplementation of the DDPM++ and NCSN++ architectures, U-Net variants with
     optional self-attention, embeddings, and encoder-decoder components.
