@@ -53,6 +53,7 @@ def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
     """
     Get indices of ERA5 data that is in the bounding rectangle of COSMO data.
     This is useful for plotting in the case where read_input(..., bound_to_cosmo_area=False) was used.
+    In this case, one would then feed e.g. era.latitudes[indices] into _plot_projection.
     """
     min_lat_cosmo = min(cosmo.latitudes)
     max_lat_cosmo = max(cosmo.latitudes)
