@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hirad-gen"
+version = "0.1.0"
+description = "High resolution atmospheric downscaling using generative machine learning"
+authors = [
+    { name="Petar Stamenkovic", email="petar.stamenkovic@meteoswiss.ch" }
+]
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+
+dependencies = [
+    "torch>=2.6.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
