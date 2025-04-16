@@ -25,7 +25,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from src.distributed.config import ProcessGroupConfig, ProcessGroupNode
+from hirad.distributed.config import ProcessGroupConfig, ProcessGroupNode
 
 warnings.simplefilter("default", DeprecationWarning)
 
@@ -393,7 +393,7 @@ class DistributedManager(object):
         else:
             os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "0"
         initialization_method = os.getenv(
-            "PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD"
+            "DISTRIBUTED_INITIALIZATION_METHOD"
         )
         if initialization_method is None:
             try:
@@ -419,7 +419,7 @@ class DistributedManager(object):
                 "Unknown initialization method "
                 f"{initialization_method}. "
                 "Supported values for "
-                "PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD are "
+                "DISTRIBUTED_INITIALIZATION_METHOD are "
                 "ENV, SLURM and OPENMPI"
             )
 
