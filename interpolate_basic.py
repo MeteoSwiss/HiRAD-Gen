@@ -3,9 +3,9 @@ import datetime
 import argparse
 import yaml
 
-import anemoi.datasets
-from anemoi.datasets import open_dataset
+from anemoi.datasets import open_dataset, create
 from anemoi.datasets.data.dataset import Dataset
+from pandas import to_datetime
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import numpy as np
@@ -46,39 +46,64 @@ def _read_input(era_config_file: str, cosmo_config_file: str, bound_to_cosmo_are
                         area=(max_lat_cosmo, min_lon_cosmo, min_lat_cosmo, max_lon_cosmo))
     else:
         era = open_dataset(era, start=start_date, end=end_date)
-    print(cosmo.shape)
-    print(cosmo.variables)
-    print(era.shape)
     return (era, cosmo)
 
-def _interpolate_basic(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
-    """Perform simple interpolation from ERA5 to COSMO grid for all data points in the COSMO date range."""
-    grid = np.column_stack((era.longitudes, era.latitudes)) # stack lon-lat columns of era5 points
+def _interpolate_basic(era: Dataset, cosmo: Dataset, intermediate_files_path=None) -> np.ndarray[np.intp]:
+    """Perform simple interpolation from ERA5 to COSMO grid for all data points in the COSMO date range.
+
+    Parameters:
+    era: Dataset
+        Pre-loaded anemoi dataset for ERA
+    cosmo: Dataset
+        Pre-loaded anemoi dataset for COSMO
+    intermediate_files_path
+        If set, will save each date point to a new file.
+
+    Returns: 
+    np.ndarray
+        4-D array of interpolated values. (date, variable, ensemble, grid-point)
+    """
     # Check that our date ranges do in fact line up.
     assert (era.start_date == cosmo.start_date and 
             era.end_date == cosmo.end_date and 
             era.frequency == cosmo.frequency and
             era.shape[0] == cosmo.shape[0]), "ERA and COSMO date ranges or frequencies do not align."
-
-    assert(set(cosmo.variables).issubset(era.variables)), "COSMO variables should be subset of ERA"
     
+    grid = np.column_stack((era.longitudes, era.latitudes)) # stack lon-lat columns of era5 points
     interp_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes)) # stack lon-lat column of cosmo points
-    interpolated_data = np.empty([10, cosmo.shape[3]])
-    #interpolated_data = np.empty([cosmo.shape[0], cosmo.shape[3]])  # TODO: Full dataset
+    
+    interpolated_data = np.empty([cosmo.shape[0], era.shape[1], 1, cosmo.shape[3]])  # all date points
+    dates = range(cosmo.shape[0])
+    
     print(interpolated_data.shape)
 
     # TODO: Replace the for loop if possible.
     # Each 100 iterations takes 30s, so entire 7000 points would take 35 minutes (per channel).
     
-    for i in range(10):
-    #for i in range(era.shape[0]):
-        values = np.array(era[i,0,0,:]) # get era grid 2m-temperature values on the given date-time
-        interpolated_data[i,:] = griddata(grid,values,interp_grid,method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
+    for i in range(interpolated_data.shape[0]):
+        if i % 100 == 0:
+            print('interpolating time point ' + _format_date(cosmo.dates[i]))
+        for j in range(era.shape[1]):
+            values = np.array(era[i,j,0,:]) # get era grid values on the given date-time and channel
+            interpolated_data[i,j,0,:] = griddata(grid,values,interp_grid,method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
+        if (intermediate_files_path):
+            _save_datetime_file(interpolated_data[i,:,:,:], era.variables, era.dates[i], intermediate_files_path + "era-interpolated/")
+            _save_datetime_file(era[i,:,:,:], era.variables, era.dates[i], intermediate_files_path + "era/")
+            _save_datetime_file(cosmo[i,:,:,:], cosmo.variables, cosmo.dates[i], intermediate_files_path + "cosmo/")
 
     return interpolated_data
 
+def _format_date(dt64: np.datetime64) -> str:
+    """Makes date string from date time point, for saving files."""
+    return to_datetime(dt64).strftime('%Y%m%d-%H%M')
+
+def _save_datetime_file(values: np.ndarray[np.intp], variables: np.ndarray, date: np.datetime64, filepath: str):
+    filename = filepath + _format_date(date)
+    torch.save(values, filename)
+
 def _save_interpolation(values: np.ndarray[np.intp], filename: str):
     """Output interpolated data to a given filename, in PyTorch tensor format."""
+    
     torch_data = torch.from_numpy(values)
     # TODO: Separate file for each datetime -- all channels.
     # dataset / cosmo  -> 20200101-0000
@@ -114,7 +139,7 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     plt.savefig(filename)
     plt.close('all')
 
-def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_torch: str, outfile_plots_prefix: str = None, plot_times = [0]):
+def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_torch_path: str, outfile_plots_prefix: str = None, plot_indices=[0]):
     """Read both ERA and COSMO data and perform basic interpolation. Save output into Pytorch format, and (optionally) plot
     ERA, COSMO, and interpolated data.
 
@@ -135,39 +160,26 @@ def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_torch: str,
     """
     era, cosmo = _read_input(ERA_CONFIG, COSMO_CONFIG, bound_to_cosmo_area=True)
 
-    istart = datetime.datetime.now()
-    interpolated = _interpolate_basic(era, cosmo)
-    iend = datetime.datetime.now()
-    print(f'interpolation took {iend-istart} seconds')
+    interpolated = _interpolate_basic(era, cosmo, "dataset/")
+    
 
     if outfile_plots_prefix:
-        for i in plot_times:
+        for i in plot_indices:
+            datestr = _format_date(era.dates[i])
+            for j,var in enumerate(era.variables):
             # TODO: use actual dates in filenames instead of i
             # plot era original
-            _plot_projection(era.longitudes, era.latitudes, era[i, 0, 0, :], outfile_plots_prefix + "temperature-2m-era-" + str(i) + ".jpg", cmap='seismic', vmin=MIN_TEMP, vmax = MIN_TEMP)
-            _plot_projection(era.longitudes, era.latitudes, era[i, 1, 0, :], outfile_plots_prefix + "wind-u-era-" + str(i) + ".jpg")
-            _plot_projection(era.longitudes, era.latitudes, era[i, 2, 0, :], outfile_plots_prefix + "wind-v-era-" + str(i) + ".jpg")
-            _plot_projection(era.longitudes, era.latitudes, era[i, 3, 0, :], outfile_plots_prefix + "precip-era-" + str(i) + ".jpg")
+                _plot_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_prefix}{era.variables[j]}-{datestr}-era.jpg')
+                _plot_projection(cosmo.longitudes, cosmo.latitudes, interpolated[i, j, 0, :], f'{outfile_plots_prefix}{era.variables[j]}-{datestr}-era-interpolated.jpg')
 
-            # plot cosmo original
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, 0, 0, :], outfile_plots_prefix + "temperaure-2m-cosmo-" + str(i) + ".jpg", cmap='seismic', vmin=MIN_TEMP, vmax = MIN_TEMP)
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, 1, 0, :], outfile_plots_prefix + "wind-u-cosmo-" + str(i) + ".jpg")
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, 2, 0, :], outfile_plots_prefix + "wind-v-cosmo-" + str(i) + ".jpg")
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, 3, 0, :], outfile_plots_prefix + "precip-cosmo-" + str(i) + ".jpg")
+            for j,var in enumerate(cosmo.variables):
+                _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_prefix}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
-            #plot interpolated era5
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, interpolated[i,:], outfile_plots_prefix + "temperature-2m-interpolated-" + str(i) + ".jpg", cmap='seismic', vmin=MIN_TEMP, vmax = MIN_TEMP)
-
-    #_save_interpolation(interpolated, outfile_torch)
-
+    #_save_interpolation(interpolated, outfile_torch_path+"data.torch")
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog='InterpolateBasic',
-        description='Perform simple linear interpolation from ERA to COSMO grid'
-    )
-    parser.add_argument=('-')
-    interpolate_and_save(ERA_CONFIG, COSMO_CONFIG, "interpolated.torch", "plots/")
+    #interpolate_and_save(ERA_CONFIG, COSMO_CONFIG, "interpolated.torch", "plots/")
+    interpolate_and_save(ERA_CONFIG, COSMO_CONFIG, "dataset/", "plots/")
 
 if __name__ == "__main__":
     main()
