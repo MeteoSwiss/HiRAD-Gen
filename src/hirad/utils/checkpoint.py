@@ -23,11 +23,11 @@ import torch
 from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import _LRScheduler
 
-from src.distributed import DistributedManager
-from src.utils.console import PythonLogger
-from src.utils.capture import _StaticCapture
+from hirad.distributed import DistributedManager
+from hirad.utils.console import PythonLogger
+from hirad.utils.capture import _StaticCapture
 
-optimizer = NewType("optimizer", torch.optim)
+optimizer = NewType("optimizer", torch.optim.Optimizer)
 scheduler = NewType("scheduler", _LRScheduler)
 scaler = NewType("scaler", GradScaler)
 
@@ -39,7 +39,7 @@ def _get_checkpoint_filename(
     base_name: str = "checkpoint",
     index: Union[int, None] = None,
     saving: bool = False,
-    model_type: str = "mdlus",
+    model_type: str = "pt",
 ) -> str:
     """Gets the file name /path of checkpoint
 
@@ -91,7 +91,7 @@ def _get_checkpoint_filename(
     )
 
     # File extension for PhysicsNeMo models or PyTorch models
-    file_extension = ".mdlus" if model_type == "mdlus" else ".pt"
+    file_extension = "."+model_type
 
     # If epoch is provided load that file
     if index is not None:
@@ -157,8 +157,6 @@ def _unique_model_names(
             model0 = model0.module
         # Base name of model is meta.name unless pytorch model
         base_name = model0.__class__.__name__
-        if isinstance(model0, physicsnemo.models.Module):
-            base_name = model0.meta.name
         # If we have multiple models of the same name, introduce another index
         if base_name in model_dict:
             model_dict[base_name].append(model0)
@@ -189,8 +187,8 @@ def save_checkpoint(
     """Training checkpoint saving utility
 
     This will save a training checkpoint in the provided path following the file naming
-    convention "checkpoint.{model parallel id}.{epoch/index}.mdlus". The load checkpoint
-    method in PhysicsNeMo core can then be used to read this file.
+    convention "checkpoint.{model parallel id}.{epoch/index}.pt". The load checkpoint
+    method can then be used to read this file.
 
     Parameters
     ----------
@@ -224,21 +222,13 @@ def save_checkpoint(
             models = [models]
         models = _unique_model_names(models)
         for name, model in models.items():
-            # Get model type
-            model_type = (
-                "mdlus" if isinstance(model, physicsnemo.models.Module) else "pt"
-            )
-
             # Get full file path / name
             file_name = _get_checkpoint_filename(
-                path, name, index=epoch, saving=True, model_type=model_type
+                path, name, index=epoch, saving=True, model_type="pt"
             )
 
             # Save state dictionary
-            if isinstance(model, physicsnemo.models.Module):
-                model.save(file_name)
-            else:
-                torch.save(model.state_dict(), file_name)
+            torch.save(model.state_dict(), file_name)
             checkpoint_logging.success(f"Saved model state dictionary: {file_name}")
 
     # == Saving training checkpoint ==
@@ -251,12 +241,9 @@ def save_checkpoint(
     if scheduler:
         checkpoint_dict["scheduler_state_dict"] = scheduler.state_dict()
 
-    # Scheduler state dict
+    # Scaler state dict
     if scaler:
         checkpoint_dict["scaler_state_dict"] = scaler.state_dict()
-    # Static capture is being used, save its grad scaler
-    if _StaticCapture._amp_scalers:
-        checkpoint_dict["static_capture_state_dict"] = _StaticCapture.state_dict()
 
     # Output file name
     output_filename = _get_checkpoint_filename(
@@ -288,8 +275,7 @@ def load_checkpoint(
 ) -> int:
     """Checkpoint loading utility
 
-    This loader is designed to be used with the save checkpoint utility in PhysicsNeMo
-    Launch. Given a path, this method will try to find a checkpoint and load state
+    This loader is designed to be used with the save checkpoint utility. Given a path, this method will try to find a checkpoint and load state
     dictionaries into the provided training objects.
 
     Parameters
@@ -331,9 +317,7 @@ def load_checkpoint(
         models = _unique_model_names(models)
         for name, model in models.items():
             # Get model type
-            model_type = (
-                "mdlus" if isinstance(model, physicsnemo.models.Module) else "pt"
-            )
+            model_type = "pt"
 
             # Get full file path / name
             file_name = _get_checkpoint_filename(
@@ -345,10 +329,7 @@ def load_checkpoint(
                 )
                 continue
             # Load state dictionary
-            if isinstance(model, physicsnemo.models.Module):
-                model.load(file_name)
-            else:
-                model.load_state_dict(torch.load(file_name, map_location=device))
+            model.load_state_dict(torch.load(file_name, map_location=device))
 
             checkpoint_logging.success(
                 f"Loaded model state dictionary {file_name} to device {device}"
@@ -381,10 +362,6 @@ def load_checkpoint(
     if scaler and "scaler_state_dict" in checkpoint_dict:
         scaler.load_state_dict(checkpoint_dict["scaler_state_dict"])
         checkpoint_logging.success("Loaded grad scaler state dictionary")
-
-    if "static_capture_state_dict" in checkpoint_dict:
-        _StaticCapture.load_state_dict(checkpoint_dict["static_capture_state_dict"])
-        checkpoint_logging.success("Loaded static capture state dictionary")
 
     epoch = 0
     if "epoch" in checkpoint_dict:
