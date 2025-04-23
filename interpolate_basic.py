@@ -3,7 +3,7 @@ import datetime
 import argparse
 import yaml
 
-from anemoi.datasets import open_dataset, create
+from anemoi.datasets import open_dataset
 from anemoi.datasets.data.dataset import Dataset
 from pandas import to_datetime
 import matplotlib.pyplot as plt
@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from scipy.interpolate import griddata
 
-# Default paths for input data sets
+# Default paths for input data set config files
 ERA_CONFIG = 'era.yaml'
 COSMO_CONFIG = 'cosmo.yaml'
 
@@ -110,7 +110,6 @@ def _save_interpolation(values: np.ndarray[np.intp], filename: str):
     # dataset / era_interpolated -> 20200101-0000
     # OR - save back as an anemoi dataset -- ask francesco
     torch.save(torch_data, filename)
-    
 
 def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
     """
