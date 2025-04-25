@@ -21,14 +21,12 @@ import torch
 from hirad.utils.function_utils import InfiniteSampler
 from hirad.distributed import DistributedManager
 
-from . import base, cwb, hrrrmini, gefs_hrrr
+from hirad.datasets import ERA5_COSMO
 
 
 # this maps all known dataset types to the corresponding init function
 known_datasets = {
-    "cwb": cwb.get_zarr_dataset,
-    "hrrr_mini": hrrrmini.HRRRMiniDataset,
-    "gefs_hrrr": gefs_hrrr.HrrrForecastGEFSDataset,
+    "era5_cosmo": ERA5_COSMO,
 }
 
 
