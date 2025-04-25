@@ -4,6 +4,7 @@ import time
 import psutil
 import hydra
 from omegaconf import DictConfig, OmegaConf
+import json
 import torch
 from hydra.utils import to_absolute_path
 from torch.utils.tensorboard import SummaryWriter
@@ -14,8 +15,10 @@ from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_precision, \
                                         set_patch_shape, compute_num_accumulation_rounds, \
                                         is_time_for_periodic_task, handle_and_clip_gradients
+from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.models import UNet, EDMPrecondSR
 from hirad.losses import ResLoss, RegressionLoss, RegressionLossCE
+from hirad.datasets import init_train_valid_datasets_from_config
 
 @hydra.main(version_base=None, config_path="conf", config_name="training")
 def main(cfg: DictConfig) -> None:
@@ -54,20 +57,38 @@ def main(cfg: DictConfig) -> None:
     set_seed(dist.rank)
     configure_cuda_for_consistent_precision()
     
-    ### Write our own dataloader ###
+    # Instantiate the dataset
+    data_loader_kwargs = {
+        "pin_memory": True,
+        "num_workers": cfg.training.perf.dataloader_workers,
+        "prefetch_factor": 2,
+    }
     (
-    dataset,
-    dataset_iterator,
-    validation_dataset,
-    validation_dataset_iterator
-    ) = None, None, None, None
+        dataset,
+        dataset_iterator,
+        validation_dataset,
+        validation_dataset_iterator,
+    ) = init_train_valid_datasets_from_config(
+        dataset_cfg,
+        data_loader_kwargs,
+        batch_size=cfg.training.hp.batch_size_per_gpu,
+        seed=0,
+        validation_dataset_cfg=validation_dataset_cfg,
+        train_test_split=train_test_split,
+    )
 
-    dataset_channels = None #len(dataset.input_channels())
-    img_in_channels = None #dataset_channels
-    img_shape = None #dataset.image_shape()
-    img_out_channels = None #len(dataset.output_channels())
+    # Parse image configuration & update model args
+    dataset_channels = len(dataset.input_channels())
+    img_in_channels = dataset_channels
+    img_shape = dataset.image_shape()
+    img_out_channels = len(dataset.output_channels())
+    if cfg.model.hr_mean_conditioning:
+        img_in_channels += img_out_channels
 
-    prob_channels = None
+    if cfg.model.name == "lt_aware_ce_regression":
+        prob_channels = dataset.get_prob_channel_index()
+    else:
+        prob_channels = None
 
     # Parse the patch shape
     if (
@@ -181,6 +202,10 @@ def main(cfg: DictConfig) -> None:
 
     model.train().requires_grad_(True).to(dist.device)
 
+    if not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
+        with open(os.path.join(checkpoint_dir, 'model_args.json'), 'w') as f:
+            json.dump(model_args, f)
+
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
         model = DistributedDataParallel(
@@ -196,11 +221,38 @@ def main(cfg: DictConfig) -> None:
         regression_checkpoint_path = to_absolute_path(
             cfg.training.io.regression_checkpoint_path
         )
-        if not os.path.exists(regression_checkpoint_path):
+        if not os.path.isdir(regression_checkpoint_path):
             raise FileNotFoundError(
                 f"Expected this regression checkpoint but not found: {regression_checkpoint_path}"
             )
-        regression_net = torch.nn.Module() #Module.from_checkpoint(regression_checkpoint_path) figure out how to save and load models, also, some basic functions like num_params, device
+        #regression_net = torch.nn.Module() #TODO Module.from_checkpoint(regression_checkpoint_path) figure out how to save and load models, also, some basic functions like num_params, device
+        #TODO make regression model loading more robust (model type is both in rergession_checkpoint_path and regression_name)
+        #TODO add the option to choose epoch to load from / regression_checkpoint_path is now a folder
+        regression_model_args_path = os.path.join(regression_checkpoint_path, 'model_args.json')
+        if not os.path.isfile(regression_model_args_path):
+            raise FileNotFoundError(f"Missing config file at '{regression_model_args_path}'.")
+
+        with open(regression_model_args_path, 'r') as f:
+            regression_model_args = json.load(f)
+
+        if cfg.model.name == "lt_aware_patched_diffusion":
+            regression_net = UNet(
+                img_in_channels=img_in_channels
+                + model_args["N_grid_channels"]
+                + model_args["lead_time_channels"],
+                **regression_model_args,
+            )
+        else:
+            regression_net = UNet(
+                img_in_channels=img_in_channels + model_args["N_grid_channels"],
+                **regression_model_args,
+            )
+
+        _ = load_checkpoint(
+            path=regression_checkpoint_path,
+            model=regression_net,
+            device=dist.device
+        )
         regression_net.eval().requires_grad_(False).to(dist.device)
         logger0.success("Loaded the pre-trained regression model")
 
@@ -248,14 +300,12 @@ def main(cfg: DictConfig) -> None:
     if dist.world_size > 1:
         torch.distributed.barrier()
     try:
-        cur_nimg = 0
-        # Fix loading and saving checkpoint
-        #load_checkpoint(
-        #     path=checkpoint_dir,
-        #     models=model,
-        #     optimizer=optimizer,
-        #     device=dist.device,
-        # )
+        cur_nimg = load_checkpoint(
+            path=checkpoint_dir,
+            model=model,
+            optimizer=optimizer,
+            device=dist.device,
+        )
     except:
         cur_nimg = 0
 
@@ -445,13 +495,12 @@ def main(cfg: DictConfig) -> None:
             dist.rank,
             rank_0_only=True,
         ):
-            # figure out how to do save and load checkpoint
-            #save_checkpoint(
-            #     path=checkpoint_dir,
-            #     models=model,
-            #     optimizer=optimizer,
-            #     epoch=cur_nimg,
-            # )
+            save_checkpoint(
+                path=checkpoint_dir,
+                model=model,
+                optimizer=optimizer,
+                epoch=cur_nimg,
+            )
             pass
 
     # Done.

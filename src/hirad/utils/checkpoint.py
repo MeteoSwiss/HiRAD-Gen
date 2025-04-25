@@ -17,7 +17,7 @@
 import glob
 import re
 from pathlib import Path
-from typing import Any, Dict, List, NewType, Optional, Union
+from typing import Any, Dict, List, NewType, Optional, Union, Tuple
 
 import torch
 from torch.cuda.amp import GradScaler
@@ -25,7 +25,6 @@ from torch.optim.lr_scheduler import _LRScheduler
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger
-from hirad.utils.capture import _StaticCapture
 
 optimizer = NewType("optimizer", torch.optim.Optimizer)
 scheduler = NewType("scheduler", _LRScheduler)
@@ -133,51 +132,9 @@ def _get_checkpoint_filename(
     return checkpoint_filename
 
 
-def _unique_model_names(
-    models: List[torch.nn.Module],
-) -> Dict[str, torch.nn.Module]:
-    """Util to clean model names and index if repeat names, will also strip DDP wrappers
-    if they exist.
-
-    Parameters
-    ----------
-    model :  List[torch.nn.Module]
-        List of models to generate names for
-
-    Returns
-    -------
-    Dict[str, torch.nn.Module]
-        Dictionary of model names and respective modules
-    """
-    # Loop through provided models and set up base names
-    model_dict = {}
-    for model0 in models:
-        if hasattr(model0, "module"):
-            # Strip out DDP layer
-            model0 = model0.module
-        # Base name of model is meta.name unless pytorch model
-        base_name = model0.__class__.__name__
-        # If we have multiple models of the same name, introduce another index
-        if base_name in model_dict:
-            model_dict[base_name].append(model0)
-        else:
-            model_dict[base_name] = [model0]
-
-    # Set up unique model names if needed
-    output_dict = {}
-    for key, model in model_dict.items():
-        if len(model) > 1:
-            for i, model0 in enumerate(model):
-                output_dict[key + str(i)] = model0
-        else:
-            output_dict[key] = model[0]
-
-    return output_dict
-
-
 def save_checkpoint(
     path: str,
-    models: Union[torch.nn.Module, List[torch.nn.Module], None] = None,
+    model: Union[torch.nn.Module, None] = None,
     optimizer: Union[optimizer, None] = None,
     scheduler: Union[scheduler, None] = None,
     scaler: Union[scaler, None] = None,
@@ -217,19 +174,20 @@ def save_checkpoint(
         Path(path).mkdir(parents=True, exist_ok=True)
 
     # == Saving model checkpoint ==
-    if models:
-        if not isinstance(models, list):
-            models = [models]
-        models = _unique_model_names(models)
-        for name, model in models.items():
-            # Get full file path / name
-            file_name = _get_checkpoint_filename(
-                path, name, index=epoch, saving=True, model_type="pt"
-            )
+    if model:
+        if hasattr(model, "module"):
+            # Strip out DDP layer
+            model = model.module
+        # Base name of model is meta.name unless pytorch model
+        name = model.__class__.__name__
+        # Get full file path / name
+        file_name = _get_checkpoint_filename(
+            path, name, index=epoch, saving=True, model_type="pt"
+        )
 
-            # Save state dictionary
-            torch.save(model.state_dict(), file_name)
-            checkpoint_logging.success(f"Saved model state dictionary: {file_name}")
+        # Save state dictionary
+        torch.save(model.state_dict(), file_name)
+        checkpoint_logging.success(f"Saved model state dictionary: {file_name}")
 
     # == Saving training checkpoint ==
     checkpoint_dict = {}
@@ -265,7 +223,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str,
-    models: Union[torch.nn.Module, List[torch.nn.Module], None] = None,
+    model: torch.nn.Module,
     optimizer: Union[optimizer, None] = None,
     scheduler: Union[scheduler, None] = None,
     scaler: Union[scaler, None] = None,
@@ -311,29 +269,26 @@ def load_checkpoint(
         return 0
 
     # == Loading model checkpoint ==
-    if models:
-        if not isinstance(models, list):
-            models = [models]
-        models = _unique_model_names(models)
-        for name, model in models.items():
-            # Get model type
-            model_type = "pt"
+    if hasattr(model, "module"):
+        # Strip out DDP layer
+        model = model.module
+    # Base name of model is meta.name unless pytorch model
+    name = model.__class__.__name__
+    # Get full file path / name
+    file_name = _get_checkpoint_filename(
+        path, name, index=epoch,
+    )
+    if not Path(file_name).exists():
+        checkpoint_logging.error(
+            f"Could not find valid model file {file_name}, skipping load"
+        )
+    else:
+        # Load state dictionary
+        model.load_state_dict(torch.load(file_name, map_location=device))
 
-            # Get full file path / name
-            file_name = _get_checkpoint_filename(
-                path, name, index=epoch, model_type=model_type
-            )
-            if not Path(file_name).exists():
-                checkpoint_logging.error(
-                    f"Could not find valid model file {file_name}, skipping load"
-                )
-                continue
-            # Load state dictionary
-            model.load_state_dict(torch.load(file_name, map_location=device))
-
-            checkpoint_logging.success(
-                f"Loaded model state dictionary {file_name} to device {device}"
-            )
+        checkpoint_logging.success(
+            f"Loaded model state dictionary {file_name} to device {device}"
+        )
 
     # == Loading training checkpoint ==
     checkpoint_filename = _get_checkpoint_filename(path, index=epoch, model_type="pt")
