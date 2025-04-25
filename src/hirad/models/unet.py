@@ -20,7 +20,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from physicsnemo.models.meta import ModelMetaData
+from hirad.models import ModelMetaData
 
 network_module = importlib.import_module("src.models")
 
@@ -92,7 +92,7 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
         model_type="SongUNetPosEmbd",
         **model_kwargs,
     ):
-        super().__init__(meta=MetaData)
+        super().__init__() #meta=MetaData
 
         self.img_channels = img_channels
 
@@ -207,7 +207,7 @@ class StormCastUNet(nn.Module):
         model_type="SongUNet",
         **model_kwargs,
     ):
-        super().__init__(meta=MetaData("StormCastUNet"))
+        super().__init__() #meta=MetaData("StormCastUNet")
 
         if isinstance(img_resolution, int):
             self.img_shape_x = self.img_shape_y = img_resolution
