@@ -19,7 +19,7 @@ import numpy as np
 import nvtx
 import torch
 
-from src.models import EDMPrecond
+from hirad.models import EDMPrecond
 
 # ruff: noqa: E731
 
