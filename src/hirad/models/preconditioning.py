@@ -29,11 +29,11 @@ import nvtx
 import torch
 import torch.nn as nn
 
-from src.models import (
+from hirad.models import (
     DhariwalUNet,  # noqa: F401 for globals
     SongUNet,  # noqa: F401 for globals
 )
-from physicsnemo.models.meta import ModelMetaData
+from hirad.models import ModelMetaData
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
@@ -105,7 +105,7 @@ class VPPrecond(nn.Module):
         model_type: str = "SongUNet",
         **model_kwargs: dict,
     ):
-        super().__init__(meta=VPPrecondMetaData)
+        super().__init__() #meta=VPPrecondMetaData
         self.img_resolution = img_resolution
         self.img_channels = img_channels
         self.label_dim = label_dim
@@ -282,7 +282,7 @@ class VEPrecond(nn.Module):
         model_type: str = "SongUNet",
         **model_kwargs: dict,
     ):
-        super().__init__(meta=VEPrecondMetaData)
+        super().__init__() #meta=VEPrecondMetaData
         self.img_resolution = img_resolution
         self.img_channels = img_channels
         self.label_dim = label_dim
@@ -414,7 +414,7 @@ class iDDPMPrecond(nn.Module):
         model_type="DhariwalUNet",
         **model_kwargs,
     ):
-        super().__init__(meta=iDDPMPrecondMetaData)
+        super().__init__() #meta=iDDPMPrecondMetaData
         self.img_resolution = img_resolution
         self.img_channels = img_channels
         self.label_dim = label_dim
@@ -601,7 +601,7 @@ class EDMPrecond(nn.Module):
         img_out_channels=None,
         **model_kwargs,
     ):
-        super().__init__(meta=EDMPrecondMetaData)
+        super().__init__() #meta=EDMPrecondMetaData
         self.img_resolution = img_resolution
         if img_in_channels is not None:
             img_in_channels = img_in_channels
@@ -767,7 +767,7 @@ class EDMPrecondSR(nn.Module):
         scale_cond_input=True,
         **model_kwargs,
     ):
-        super().__init__(meta=EDMPrecondSRMetaData)
+        super().__init__() #meta=EDMPrecondSRMetaData
         self.img_resolution = img_resolution
         self.img_channels = img_channels  # TODO: this is not used, remove it
         self.img_in_channels = img_in_channels

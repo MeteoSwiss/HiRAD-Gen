@@ -29,7 +29,7 @@ from torch.nn.functional import silu
 from torch.utils.checkpoint import checkpoint
 import torch.nn as nn
 
-from src.models import (
+from hirad.models import (
     Conv2d,
     FourierEmbedding,
     GroupNorm,
@@ -37,7 +37,7 @@ from src.models import (
     PositionalEmbedding,
     UNetBlock,
 )
-from physicsnemo.models.meta import ModelMetaData
+from hirad.models import ModelMetaData
 
 
 @dataclass
@@ -175,7 +175,7 @@ class SongUNet(nn.Module):
                 f"Invalid decoder_type: {decoder_type}. Must be one of {valid_decoder_types}."
             )
 
-        super().__init__(meta=MetaData())
+        super().__init__() #meta=MetaData()
         self.label_dropout = label_dropout
         self.embedding_type = embedding_type
         emb_channels = model_channels * channel_mult_emb
