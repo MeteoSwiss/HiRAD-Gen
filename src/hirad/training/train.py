@@ -180,6 +180,7 @@ def main(cfg: DictConfig) -> None:
             img_in_channels=img_in_channels + model_args["N_grid_channels"],
             **model_args,
         )
+        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"]
     elif cfg.model.name == "lt_aware_ce_regression":
         model = UNet(
             img_in_channels=img_in_channels
@@ -187,6 +188,7 @@ def main(cfg: DictConfig) -> None:
             + model_args["lead_time_channels"],
             **model_args,
         )
+        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
     elif cfg.model.name == "lt_aware_patched_diffusion":
         model = EDMPrecondSR(
             img_in_channels=img_in_channels
@@ -194,15 +196,17 @@ def main(cfg: DictConfig) -> None:
             + model_args["lead_time_channels"],
             **model_args,
         )
+        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
     else:  # diffusion or patched diffusion
         model = EDMPrecondSR(
             img_in_channels=img_in_channels + model_args["N_grid_channels"],
             **model_args,
         )
-
+        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"]
+    
     model.train().requires_grad_(True).to(dist.device)
 
-    if not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
+    if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
         with open(os.path.join(checkpoint_dir, 'model_args.json'), 'w') as f:
             json.dump(model_args, f)
 
@@ -235,18 +239,7 @@ def main(cfg: DictConfig) -> None:
         with open(regression_model_args_path, 'r') as f:
             regression_model_args = json.load(f)
 
-        if cfg.model.name == "lt_aware_patched_diffusion":
-            regression_net = UNet(
-                img_in_channels=img_in_channels
-                + model_args["N_grid_channels"]
-                + model_args["lead_time_channels"],
-                **regression_model_args,
-            )
-        else:
-            regression_net = UNet(
-                img_in_channels=img_in_channels + model_args["N_grid_channels"],
-                **regression_model_args,
-            )
+        regression_net = UNet(**regression_model_args)
 
         _ = load_checkpoint(
             path=regression_checkpoint_path,
