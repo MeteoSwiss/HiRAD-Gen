@@ -25,7 +25,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from hirad.distributed.config import ProcessGroupConfig, ProcessGroupNode
+from .config import ProcessGroupConfig, ProcessGroupNode
 
 warnings.simplefilter("default", DeprecationWarning)
 

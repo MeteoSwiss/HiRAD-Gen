@@ -29,7 +29,7 @@ from torch.nn.functional import silu
 from torch.utils.checkpoint import checkpoint
 import torch.nn as nn
 
-from hirad.models import (
+from .layers import (
     Conv2d,
     FourierEmbedding,
     GroupNorm,
@@ -37,7 +37,7 @@ from hirad.models import (
     PositionalEmbedding,
     UNetBlock,
 )
-from hirad.models import ModelMetaData
+from .meta import ModelMetaData
 
 
 @dataclass
