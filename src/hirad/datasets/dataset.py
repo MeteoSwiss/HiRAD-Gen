@@ -21,7 +21,8 @@ import torch
 from hirad.utils.function_utils import InfiniteSampler
 from hirad.distributed import DistributedManager
 
-from hirad.datasets import ERA5_COSMO
+from .era5_cosmo import ERA5_COSMO
+from .base import DownscalingDataset
 
 
 # this maps all known dataset types to the corresponding init function
@@ -38,9 +39,9 @@ def init_train_valid_datasets_from_config(
     validation_dataset_cfg: Union[dict, None] = None,
     train_test_split: bool = True,
 ) -> Tuple[
-    base.DownscalingDataset,
+    DownscalingDataset,
     Iterable,
-    Union[base.DownscalingDataset, None],
+    Union[DownscalingDataset, None],
     Union[Iterable, None],
 ]:
     """
@@ -79,7 +80,7 @@ def init_dataset_from_config(
     dataloader_cfg: Union[dict, None] = None,
     batch_size: int = 1,
     seed: int = 0,
-) -> Tuple[base.DownscalingDataset, Iterable]:
+) -> Tuple[DownscalingDataset, Iterable]:
     dataset_cfg = copy.deepcopy(dataset_cfg)
     dataset_type = dataset_cfg.pop("type", "cwb")
     if "train_test_split" in dataset_cfg:
