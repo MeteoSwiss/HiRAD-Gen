@@ -21,7 +21,7 @@ import nvtx
 import torch
 import tqdm
 
-from src.utils.function_utils import StackedRandomGenerator, time_range
+from .function_utils import StackedRandomGenerator, time_range
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #

@@ -1,6 +1,6 @@
 import datetime
 from hirad.datasets import init_dataset_from_config
-from hirad.utils.function_utils import convert_datetime_to_cftime
+from .function_utils import convert_datetime_to_cftime
 
 
 def get_dataset_and_sampler(dataset_cfg, times, has_lead_time=False):

@@ -26,7 +26,7 @@ import torch
 from einops import rearrange
 from torch.nn.functional import silu
 
-from src.utils.model_utils import weight_init
+from hirad.utils.model_utils import weight_init
 
 
 class Linear(torch.nn.Module):

@@ -24,7 +24,7 @@ from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import _LRScheduler
 
 from hirad.distributed import DistributedManager
-from hirad.utils.console import PythonLogger
+from .console import PythonLogger
 
 optimizer = NewType("optimizer", torch.optim.Optimizer)
 scheduler = NewType("scheduler", _LRScheduler)

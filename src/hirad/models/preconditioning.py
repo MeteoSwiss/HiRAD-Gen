@@ -29,11 +29,11 @@ import nvtx
 import torch
 import torch.nn as nn
 
-from hirad.models import (
+from .song_unet import (
     DhariwalUNet,  # noqa: F401 for globals
     SongUNet,  # noqa: F401 for globals
 )
-from hirad.models import ModelMetaData
+from .meta import ModelMetaData
 
 network_module = importlib.import_module("physicsnemo.models.diffusion")
 
