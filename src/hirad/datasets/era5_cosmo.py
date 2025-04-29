@@ -33,8 +33,28 @@ class ERA5_COSMO(DownscalingDataset):
         # Load stats for normalizing channels of input and output
 
         cosmo_stats = torch.load(os.path.join(self._info_path,'cosmo-stats'), weights_only=False)
-        print(cosmo_stats)
-            
+        self.output_mean = cosmo_stats['mean']
+        self.output_std = cosmo_stats['stdev']
+
+        era_stats = torch.load(os.path.join(self._info_path,'era-stats'), weights_only=False)
+        #TODO Switch from cosmo to era stats once era-interpolated has all channels
+        self.input_mean = cosmo_stats['mean']
+        self.input_std = cosmo_stats['stdev']
+
+    
+    def __getitem__(self, idx):
+        # get era5 data point
+        era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
+                        .squeeze()\
+                        .reshape(-1,*self.image_shape())
+        era5_data = self.normalize_input(era5_data)
+        # get cosmo data point
+        cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)\
+                        .squeeze()\
+                        .reshape(-1,*self.image_shape())
+        cosmo_data = self.normalize_output(cosmo_data)
+        # return samples
+        return cosmo_data, era5_data, 0
 
     def __len__(self):
         return len(self._file_list)
@@ -70,25 +90,29 @@ class ERA5_COSMO(DownscalingDataset):
 
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data (same for input and output)."""
-        #TODO load from info, I hardcode it for now
-        return 390,582
+        #TODO load from info, I hardcode it for now (cosmo from anemoi-datasets minus trim-edge=20)
+        return 350,542
     
 
     def normalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from physical units to normalized data."""
-        return (x - self.input_mean) / self.input_std
+        return (x - self.input_mean.reshape((self.input_mean.shape[0],1,1))) \
+                / self.input_std.reshape((self.input_std.shape[0],1,1))
 
 
     def denormalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from normalized data to physical units."""
-        return x * self.input_std + self.input_mean
+        return x * self.input_std.reshape((self.input_std.shape[0],1,1)) \
+                + self.input_mean.reshape((self.input_mean.shape[0],1,1))
 
 
     def normalize_output(self, x: np.ndarray) -> np.ndarray:
         """Convert output from physical units to normalized data."""
-        return (x - self.output_mean) / self.output_std
+        return (x - self.output_mean.reshape((self.output_mean.shape[0],1,1))) \
+                / self.output_std.reshape((self.output_std.shape[0],1,1))
 
 
     def denormalize_output(self, x: np.ndarray) -> np.ndarray:
         """Convert output from normalized data to physical units."""
-        return x * self.output_std + self.output_mean
+        return x * self.output_std.reshape((self.output_std.shape[0],1,1)) \
+                + self.output_mean.reshape((self.output_mean.shape[0],1,1))
