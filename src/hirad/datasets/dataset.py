@@ -82,7 +82,7 @@ def init_dataset_from_config(
     seed: int = 0,
 ) -> Tuple[DownscalingDataset, Iterable]:
     dataset_cfg = copy.deepcopy(dataset_cfg)
-    dataset_type = dataset_cfg.pop("type", "cwb")
+    dataset_type = dataset_cfg.pop("type", "era5_cosmo")
     if "train_test_split" in dataset_cfg:
         # handled by init_train_valid_datasets_from_config
         del dataset_cfg["train_test_split"]

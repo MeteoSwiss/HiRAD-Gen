@@ -13,7 +13,7 @@ class ERA5_COSMO(DownscalingDataset):
         self._dataset_path = dataset_path
         self._era5_path = os.path.join(dataset_path, 'era-interpolated')
         self._cosmo_path = os.path.join(dataset_path, 'cosmo')
-        self._info_path = os.path.join(dataset_path, 'info')
+        self._info_path = os.path.join(dataset_path, 'old/info')
 
         # load file list (each file is one date-time state)
         self._file_list = os.listdir(self._cosmo_path)
@@ -37,9 +37,8 @@ class ERA5_COSMO(DownscalingDataset):
         self.output_std = cosmo_stats['stdev']
 
         era_stats = torch.load(os.path.join(self._info_path,'era-stats'), weights_only=False)
-        #TODO Switch from cosmo to era stats once era-interpolated has all channels
-        self.input_mean = cosmo_stats['mean']
-        self.input_std = cosmo_stats['stdev']
+        self.input_mean = era_stats['mean']
+        self.input_std = era_stats['stdev']
 
     
     def __getitem__(self, idx):
@@ -59,7 +58,7 @@ class ERA5_COSMO(DownscalingDataset):
                             1)
         cosmo_data = self.normalize_output(cosmo_data)
         # return samples
-        return cosmo_data, era5_data, 0
+        return torch.tensor(cosmo_data), torch.tensor(era5_data), 0
 
     def __len__(self):
         return len(self._file_list)
