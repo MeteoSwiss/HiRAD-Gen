@@ -44,14 +44,19 @@ class ERA5_COSMO(DownscalingDataset):
     
     def __getitem__(self, idx):
         # get era5 data point
-        era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
-                        .squeeze()\
-                        .reshape(-1,*self.image_shape())
+        # squeeze the ensemble dimesnsion
+        # reshape to image_shape
+        # flip so that it starts in top-left corner (by default it is bottom left)
+        era5_data = np.flip(torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
+                                .squeeze() \
+                                .reshape(-1,*self.image_shape()),
+                            1)
         era5_data = self.normalize_input(era5_data)
         # get cosmo data point
-        cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)\
-                        .squeeze()\
-                        .reshape(-1,*self.image_shape())
+        cosmo_data = np.flip(torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)\
+                                .squeeze() \
+                                .reshape(-1,*self.image_shape()),
+                            1)
         cosmo_data = self.normalize_output(cosmo_data)
         # return samples
         return cosmo_data, era5_data, 0
