@@ -138,8 +138,7 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     plt.savefig(filename)
     plt.close('all')
 
-def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: str, outfile_plots_path: str = None, plot_indices=[0],
-                        data_format='torch'):
+def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: str, outfile_plots_path: str = None, plot_indices=[0]):
     """Read both ERA and COSMO data and perform basic interpolation. Save output into Pytorch format, and (optionally) plot
     ERA, COSMO, and interpolated data.
 
