@@ -1,3 +1,6 @@
 dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-co2-an-archive-0p02-2015-2020-6h-v3-pl13.zarr'
-select: ['2t', '10u', '10v', 'tp'] 
-trim_edge: 20  # Removes boundary
+# Maximum radar reflectivity not available in COSMO. Added total precipitation
+select: ['2t', '10u', '10v', 'tp']  
+trim_edge: 27 # Minimum trim of 20 to avoid boundary conditions; additional trimming to make grid edge divisible by 16
+start: 2016-01-01
+end: 2016-02-29
