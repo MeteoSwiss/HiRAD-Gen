@@ -30,12 +30,14 @@ import torch
 import torch.nn as nn
 
 from .song_unet import (
-    DhariwalUNet,  # noqa: F401 for globals
     SongUNet,  # noqa: F401 for globals
+)
+from .dhariwal_unet import (
+    DhariwalUNet,  # noqa: F401 for globals
 )
 from .meta import ModelMetaData
 
-network_module = importlib.import_module("physicsnemo.models.diffusion")
+network_module = importlib.import_module("hirad.models")
 
 
 @dataclass

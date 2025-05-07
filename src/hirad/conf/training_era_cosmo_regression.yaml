@@ -1,0 +1,19 @@
+hydra:
+  job:
+    chdir: true
+    name: regression
+  run:
+    dir: /scratch/mch/pstamenk/output/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/era_cosmo
+
+  # Model
+  - model/era_cosmo_regression
+
+  # Training
+  - training/era_cosmo_regression

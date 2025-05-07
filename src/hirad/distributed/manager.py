@@ -348,7 +348,7 @@ class DistributedManager(object):
         rank = int(os.environ.get("SLURM_PROCID"))
         world_size = int(os.environ.get("SLURM_NPROCS"))
         local_rank = int(os.environ.get("SLURM_LOCALID"))
-        addr = os.environ.get("SLURM_LAUNCH_NODE_IPADDR")
+        addr = os.environ.get("MASTER_ADDR")
 
         DistributedManager.setup(
             rank=rank,
@@ -388,6 +388,7 @@ class DistributedManager(object):
         port = os.getenv("MASTER_PORT", "12355")
         # https://pytorch.org/docs/master/notes/cuda.html#id5
         # was changed in version 2.2
+        #TODO why is setting this important?
         if torch.__version__ < (2, 2):
             os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "0"
         else:
@@ -542,22 +543,25 @@ class DistributedManager(object):
             f"cuda:{manager.local_rank}" if torch.cuda.is_available() else "cpu"
         )
 
+        #TODO device_id makes the init hang, couldn't figure out why
         if manager._distributed:
             # Setup distributed process group
-            try:
-                dist.init_process_group(
-                    backend,
-                    rank=manager.rank,
-                    world_size=manager.world_size,
-                    device_id=manager.device,
-                )
-            except TypeError:
-                # device_id only introduced in PyTorch 2.3
-                dist.init_process_group(
-                    backend,
-                    rank=manager.rank,
-                    world_size=manager.world_size,
-                )
+            # try:
+            dist.init_process_group(
+                backend,
+                rank=manager.rank,
+                world_size=manager.world_size,
+            )
+            #           rank=manager.rank,
+            #           world_size=manager.world_size,
+            #           device_id=manager.device,
+            # except TypeError:
+            #     # device_id only introduced in PyTorch 2.3
+            #     dist.init_process_group(
+            #         backend,
+            #         rank=manager.rank,
+            #         world_size=manager.world_size,
+            #     )
 
         if torch.cuda.is_available():
             # Set device for this process and empty cache to optimize memory usage

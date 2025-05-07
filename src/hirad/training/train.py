@@ -9,6 +9,7 @@ import torch
 from hydra.utils import to_absolute_path
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
+from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -20,9 +21,10 @@ from hirad.models import UNet, EDMPrecondSR
 from hirad.losses import ResLoss, RegressionLoss, RegressionLossCE
 from hirad.datasets import init_train_valid_datasets_from_config
 
-@hydra.main(version_base=None, config_path="conf", config_name="training")
+from matplotlib import pyplot as plt
+
+@hydra.main(version_base=None, config_path="../conf", config_name="training")
 def main(cfg: DictConfig) -> None:
-    
     # Initialize distributed environment for training
     DistributedManager.initialize()
     dist = DistributedManager()
@@ -45,10 +47,12 @@ def main(cfg: DictConfig) -> None:
     fp16 = fp_optimizations == "fp16"
     enable_amp = fp_optimizations.startswith("amp")
     amp_dtype = torch.float16 if (fp_optimizations == "amp-fp16") else torch.bfloat16
-    logger.info(f"Saving the outputs in {os.getcwd()}")
+    logger0.info(f"Saving the outputs in {os.getcwd()}")
     checkpoint_dir = os.path.join(
         cfg.training.io.get("checkpoint_dir", "."), f"checkpoints_{cfg.model.name}"
     )
+    if dist.rank==0 and not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir) # added creating checkpoint dir
     if cfg.training.hp.batch_size_per_gpu == "auto":
         cfg.training.hp.batch_size_per_gpu = (
             cfg.training.hp.total_batch_size // dist.world_size
@@ -85,12 +89,14 @@ def main(cfg: DictConfig) -> None:
     if cfg.model.hr_mean_conditioning:
         img_in_channels += img_out_channels
 
+
     if cfg.model.name == "lt_aware_ce_regression":
-        prob_channels = dataset.get_prob_channel_index()
+        prob_channels = dataset.get_prob_channel_index() #TODO figure out what prob_channel are and update dataloader
     else:
         prob_channels = None
 
     # Parse the patch shape
+    #TODO figure out patched diffusion and how to use it
     if (
         cfg.model.name == "patched_diffusion"
         or cfg.model.name == "lt_aware_patched_diffusion"
@@ -109,9 +115,8 @@ def main(cfg: DictConfig) -> None:
     # interpolate global channel if patch-based model is used
     if img_shape[1] != patch_shape[1]:
         img_in_channels += dataset_channels
-
     
-        # Instantiate the model and move to device.
+    # Instantiate the model and move to device.
     if cfg.model.name not in (
         "regression",
         "lt_aware_ce_regression",
@@ -180,7 +185,7 @@ def main(cfg: DictConfig) -> None:
             img_in_channels=img_in_channels + model_args["N_grid_channels"],
             **model_args,
         )
-        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"]
+        model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
     elif cfg.model.name == "lt_aware_ce_regression":
         model = UNet(
             img_in_channels=img_in_channels
@@ -188,7 +193,7 @@ def main(cfg: DictConfig) -> None:
             + model_args["lead_time_channels"],
             **model_args,
         )
-        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
+        model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
     elif cfg.model.name == "lt_aware_patched_diffusion":
         model = EDMPrecondSR(
             img_in_channels=img_in_channels
@@ -196,18 +201,21 @@ def main(cfg: DictConfig) -> None:
             + model_args["lead_time_channels"],
             **model_args,
         )
-        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
+        model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
     else:  # diffusion or patched diffusion
         model = EDMPrecondSR(
             img_in_channels=img_in_channels + model_args["N_grid_channels"],
             **model_args,
         )
-        model_args["image_in_channels"] = img_in_channels + model_args["N_grid_channels"]
+        model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
     
     model.train().requires_grad_(True).to(dist.device)
 
+    # TODO write summry from rank=0 possibly
+    # summary(model, input_size=[(4,img_out_channels,*img_shape),(4,img_in_channels,*img_shape),(4,1),(4,1)])
+
     if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
-        with open(os.path.join(checkpoint_dir, 'model_args.json'), 'w') as f:
+        with open(os.path.join(checkpoint_dir, f'model_args.json'), 'w') as f:
             json.dump(model_args, f)
 
     # Enable distributed data parallel if applicable
@@ -220,7 +228,7 @@ def main(cfg: DictConfig) -> None:
             find_unused_parameters=dist.find_unused_parameters,
         )
 
-    # Load the regression checkpoint if applicable
+    # Load the regression checkpoint if applicable #TODO test when training correction
     if hasattr(cfg.training.io, "regression_checkpoint_path"):
         regression_checkpoint_path = to_absolute_path(
             cfg.training.io.regression_checkpoint_path
@@ -286,8 +294,7 @@ def main(cfg: DictConfig) -> None:
         dist.world_size,
     )
     batch_size_per_gpu = cfg.training.hp.batch_size_per_gpu
-    logger0.info(f"Using {num_accumulation_rounds} gradient accumulation rounds")
-
+    logger0.info(f"Using {num_accumulation_rounds} gradient accumulation {"rounds" if num_accumulation_rounds>1 else "round"}.")
 
     ## Resume training from previous checkpoints if exists
     if dist.world_size > 1:
@@ -312,7 +319,6 @@ def main(cfg: DictConfig) -> None:
     # init variables to monitor running mean of average loss since last periodic
     average_loss_running_mean = 0
     n_average_loss_running_mean = 1
-
 
     while not done:
         tick_start_nimg = cur_nimg
@@ -494,7 +500,6 @@ def main(cfg: DictConfig) -> None:
                 optimizer=optimizer,
                 epoch=cur_nimg,
             )
-            pass
 
     # Done.
     logger0.info("Training Completed.")
