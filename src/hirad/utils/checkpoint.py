@@ -294,7 +294,7 @@ def load_checkpoint(
     checkpoint_filename = _get_checkpoint_filename(path, index=epoch, model_type="pt")
     if not Path(checkpoint_filename).is_file():
         checkpoint_logging.warning(
-            "Could not find valid checkpoint file, skipping load"
+            f"Could not find valid checkpoint file {checkpoint_filename} skipping load"
         )
         return 0
 
