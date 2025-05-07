@@ -22,7 +22,7 @@ import torch.nn as nn
 
 from .meta import ModelMetaData
 
-network_module = importlib.import_module("src.models")
+network_module = importlib.import_module("hirad.models")
 
 
 @dataclass

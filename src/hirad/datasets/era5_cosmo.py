@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from typing import List, Tuple
 import yaml
+import torch.nn.functional as F
 
 class ERA5_COSMO(DownscalingDataset):
     def __init__(self, dataset_path: str):
@@ -42,23 +43,27 @@ class ERA5_COSMO(DownscalingDataset):
 
     
     def __getitem__(self, idx):
+        """Get cosmo and era5 interpolated to cosmo grid"""
         # get era5 data point
         # squeeze the ensemble dimesnsion
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
+        orig_shape = [350,542] #TODO currently padding to be divisible by 16
         era5_data = np.flip(torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
                                 .squeeze() \
-                                .reshape(-1,*self.image_shape()),
+                                .reshape(-1,*orig_shape),
                             1)
         era5_data = self.normalize_input(era5_data)
         # get cosmo data point
         cosmo_data = np.flip(torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)\
                                 .squeeze() \
-                                .reshape(-1,*self.image_shape()),
+                                .reshape(-1,*orig_shape),
                             1)
         cosmo_data = self.normalize_output(cosmo_data)
         # return samples
-        return torch.tensor(cosmo_data), torch.tensor(era5_data), 0
+        return F.pad(torch.tensor(cosmo_data), pad=(1,1,1,1), mode='constant', value=0), \
+                F.pad(torch.tensor(era5_data), pad=(1,1,1,1), mode='constant', value=0), \
+                0
 
     def __len__(self):
         return len(self._file_list)
@@ -95,7 +100,7 @@ class ERA5_COSMO(DownscalingDataset):
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data (same for input and output)."""
         #TODO load from info, I hardcode it for now (cosmo from anemoi-datasets minus trim-edge=20)
-        return 350,542
+        return 352,544 #TODO 350,542 is orig size, UNet requires dimenions divisible by 16, for now, I just add zeros to orig images
     
 
     def normalize_input(self, x: np.ndarray) -> np.ndarray:

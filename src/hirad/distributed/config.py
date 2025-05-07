@@ -84,7 +84,7 @@ class ProcessGroupConfig:
 
     Examples
     --------
-    >>> from physicsnemo.distributed import ProcessGroupNode, ProcessGroupConfig
+    >>> from hirad.distributed import ProcessGroupNode, ProcessGroupConfig
     >>>
     >>> # Create world group that contains all processes that are part of this job
     >>> world = ProcessGroupNode("world")
