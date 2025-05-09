@@ -80,6 +80,7 @@ def main(cfg: DictConfig) -> None:
         validation_dataset_cfg=validation_dataset_cfg,
         train_test_split=train_test_split,
     )
+    logger0.info(f"Training on dataset with size {len(dataset)}")
 
     # Parse image configuration & update model args
     dataset_channels = len(dataset.input_channels())
@@ -295,7 +296,7 @@ def main(cfg: DictConfig) -> None:
     )
     batch_size_per_gpu = cfg.training.hp.batch_size_per_gpu
     logger0.info(f"Using {num_accumulation_rounds} gradient accumulation {"rounds" if num_accumulation_rounds>1 else "round"}.")
-
+    logger0.info(f"Batch size per gpu: {batch_size_per_gpu}")
     ## Resume training from previous checkpoints if exists
     if dist.world_size > 1:
         torch.distributed.barrier()
