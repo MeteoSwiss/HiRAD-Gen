@@ -14,7 +14,7 @@ class ERA5_COSMO(DownscalingDataset):
         self._dataset_path = dataset_path
         self._era5_path = os.path.join(dataset_path, 'era-interpolated')
         self._cosmo_path = os.path.join(dataset_path, 'cosmo')
-        self._info_path = os.path.join(dataset_path, 'old/info')
+        self._info_path = os.path.join(dataset_path, 'info')
 
         # load file list (each file is one date-time state)
         self._file_list = os.listdir(self._cosmo_path)
@@ -48,7 +48,8 @@ class ERA5_COSMO(DownscalingDataset):
         # squeeze the ensemble dimesnsion
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
-        orig_shape = [350,542] #TODO currently padding to be divisible by 16
+        # orig_shape = [350,542] #TODO currently padding to be divisible by 16
+        orig_shape = self.image_shape()
         era5_data = np.flip(torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
@@ -61,9 +62,12 @@ class ERA5_COSMO(DownscalingDataset):
                             1)
         cosmo_data = self.normalize_output(cosmo_data)
         # return samples
-        return F.pad(torch.tensor(cosmo_data), pad=(1,1,1,1), mode='constant', value=0), \
-                F.pad(torch.tensor(era5_data), pad=(1,1,1,1), mode='constant', value=0), \
+        return torch.tensor(cosmo_data),\
+                torch.tensor(era5_data),\
                 0
+        # return F.pad(torch.tensor(cosmo_data), pad=(1,1,1,1), mode='constant', value=0), \
+        #         F.pad(torch.tensor(era5_data), pad=(1,1,1,1), mode='constant', value=0), \
+        #         0
 
     def __len__(self):
         return len(self._file_list)
