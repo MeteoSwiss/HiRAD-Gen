@@ -1,0 +1,4 @@
+type: deterministic
+num_steps: 9
+  # Number of denoising steps
+solver: euler
