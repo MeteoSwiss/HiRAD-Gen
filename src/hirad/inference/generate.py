@@ -10,6 +10,9 @@ from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+
+from matplotlib import pyplot as plt
+import cartopy.crs as ccrs
 from einops import rearrange
 from torch.distributed import gather
 
@@ -57,7 +60,7 @@ def main(cfg: DictConfig) -> None:
     all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
     rank_batches = all_batches[dist.rank :: dist.world_size]
 
-        # Synchronize
+    # Synchronize
     if dist.world_size > 1:
         torch.distributed.barrier()
 
@@ -65,7 +68,7 @@ def main(cfg: DictConfig) -> None:
     if cfg.generation.times_range and cfg.generation.times:
         raise ValueError("Either times_range or times must be provided, but not both")
     if cfg.generation.times_range:
-        times = get_time_from_range(cfg.generation.times_range) #TODO check what time formats we are using and adapt
+        times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
     else:
         times = cfg.generation.times
 
@@ -110,7 +113,7 @@ def main(cfg: DictConfig) -> None:
     # Load diffusion network, move to device, change precision
     if load_net_res:
         res_ckpt_path = cfg.generation.io.res_ckpt_path
-        logger0.info(f'Loading residual network from "{res_ckpt_path}"...')
+        logger0.info(f'Loading correction network from "{res_ckpt_path}"...')
 
         diffusion_model_args_path = os.path.join(res_ckpt_path, 'model_args.json')
         if not os.path.isfile(diffusion_model_args_path):
@@ -135,7 +138,7 @@ def main(cfg: DictConfig) -> None:
     # load regression network, move to device, change precision
     if load_net_reg:
         reg_ckpt_path = cfg.generation.io.reg_ckpt_path
-        logger0.info(f'Loading network from "{reg_ckpt_path}"...')
+        logger0.info(f'Loading regression network from "{reg_ckpt_path}"...')
 
 
         regression_model_args_path = os.path.join(reg_ckpt_path, 'model_args.json')
@@ -144,7 +147,7 @@ def main(cfg: DictConfig) -> None:
         with open(regression_model_args_path, 'r') as f:
             regression_model_args = json.load(f)
 
-        net_reg = EDMPrecond(**regression_model_args)
+        net_reg = UNet(**regression_model_args)
 
         _ = load_checkpoint(
             path=reg_ckpt_path,
@@ -157,3 +160,241 @@ def main(cfg: DictConfig) -> None:
             net_reg.use_fp16 = True
     else:
         net_reg = None
+
+        # Reset since we are using a different mode.
+    if cfg.generation.perf.use_torch_compile:
+        torch._dynamo.reset()
+        # Only compile residual network
+        # Overhead of compiling regression network outweights any benefits
+        if net_res:
+            net_res = torch.compile(net_res, mode="reduce-overhead")
+
+    # Partially instantiate the sampler based on the configs
+    if cfg.sampler.type == "deterministic":
+        if cfg.generation.hr_mean_conditioning:
+            raise NotImplementedError(
+                "High-res mean conditioning is not yet implemented for the deterministic sampler"
+            )
+        sampler_fn = partial(
+            deterministic_sampler,
+            num_steps=cfg.sampler.num_steps,
+            # num_ensembles=cfg.generation.num_ensembles,
+            solver=cfg.sampler.solver,
+        )
+    elif cfg.sampler.type == "stochastic":
+        sampler_fn = partial(
+            stochastic_sampler,
+            img_shape=img_shape[1],
+            patch_shape=patch_shape[1],
+            boundary_pix=cfg.sampler.boundary_pix,
+            overlap_pix=cfg.sampler.overlap_pix,
+        )
+    else:
+        raise ValueError(f"Unknown sampling method {cfg.sampling.type}")
+    
+
+        # Main generation definition
+    def generate_fn(image_lr, lead_time_label):
+        img_shape_y, img_shape_x = img_shape
+        with nvtx.annotate("generate_fn", color="green"):
+            if cfg.generation.sample_res == "full":
+                image_lr_patch = image_lr
+            else:
+                torch.cuda.nvtx.range_push("rearrange")
+                image_lr_patch = rearrange(
+                    image_lr,
+                    "b c (h1 h) (w1 w) -> (b h1 w1) c h w",
+                    h1=img_shape_y // patch_shape[0],
+                    w1=img_shape_x // patch_shape[1],
+                )
+                torch.cuda.nvtx.range_pop()
+            image_lr_patch = image_lr_patch.to(memory_format=torch.channels_last)
+
+            if net_reg:
+                with nvtx.annotate("regression_model", color="yellow"):
+                    image_reg = regression_step(
+                        net=net_reg,
+                        img_lr=image_lr_patch,
+                        latents_shape=(
+                            cfg.generation.seed_batch_size,
+                            img_out_channels,
+                            img_shape[0],
+                            img_shape[1],
+                        ),
+                        lead_time_label=lead_time_label,
+                    )
+            if net_res:
+                if cfg.generation.hr_mean_conditioning:
+                    mean_hr = image_reg[0:1]
+                else:
+                    mean_hr = None
+                with nvtx.annotate("diffusion model", color="purple"):
+                    image_res = diffusion_step(
+                        net=net_res,
+                        sampler_fn=sampler_fn,
+                        seed_batch_size=cfg.generation.seed_batch_size,
+                        img_shape=img_shape,
+                        img_out_channels=img_out_channels,
+                        rank_batches=rank_batches,
+                        img_lr=image_lr_patch.expand(
+                            cfg.generation.seed_batch_size, -1, -1, -1
+                        ).to(memory_format=torch.channels_last),
+                        rank=dist.rank,
+                        device=device,
+                        hr_mean=mean_hr,
+                        lead_time_label=lead_time_label,
+                    )
+            if cfg.generation.inference_mode == "regression":
+                image_out = image_reg
+            elif cfg.generation.inference_mode == "diffusion":
+                image_out = image_res
+            else:
+                image_out = image_reg + image_res
+
+            if cfg.generation.sample_res != "full":
+                image_out = rearrange(
+                    image_out,
+                    "(b h1 w1) c h w -> b c (h1 h) (w1 w)",
+                    h1=img_shape_y // patch_shape[0],
+                    w1=img_shape_x // patch_shape[1],
+                )
+            # Gather tensors on rank 0
+            if dist.world_size > 1:
+                if dist.rank == 0:
+                    gathered_tensors = [
+                        torch.zeros_like(
+                            image_out, dtype=image_out.dtype, device=image_out.device
+                        )
+                        for _ in range(dist.world_size)
+                    ]
+                else:
+                    gathered_tensors = None
+
+                torch.distributed.barrier()
+                gather(
+                    image_out,
+                    gather_list=gathered_tensors if dist.rank == 0 else None,
+                    dst=0,
+                )
+
+                if dist.rank == 0:
+                    return torch.cat(gathered_tensors)
+                else:
+                    return None
+            else:
+                return image_out
+    
+    # generate images
+    output_path = getattr(cfg.generation.io, "output_path", "./outputs")
+    logger0.info(f"Generating images, saving results to {output_path}...")
+    batch_size = 1
+    warmup_steps = min(len(times) - 1, 2)
+    # Generates model predictions from the input data using the specified
+    # `generate_fn`, and save the predictions to the provided NetCDF file. It iterates
+    # through the dataset using a data loader, computes predictions, and saves them along
+    # with associated metadata.
+
+    with torch.cuda.profiler.profile():
+        with torch.autograd.profiler.emit_nvtx():
+
+            data_loader = torch.utils.data.DataLoader(
+                dataset=dataset, sampler=sampler, batch_size=1, pin_memory=True
+            )
+            time_index = -1
+            if dist.rank == 0:
+                writer_executor = ThreadPoolExecutor(
+                    max_workers=cfg.generation.perf.num_writer_workers
+                )
+                writer_threads = []
+
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+
+            times = dataset.time()
+            for image_tar, image_lr, index, *lead_time_label in iter(data_loader):
+                time_index += 1
+                if dist.rank == 0:
+                    logger0.info(f"starting index: {time_index}")
+
+                if time_index == warmup_steps:
+                    start.record()
+
+                # continue
+                if lead_time_label:
+                    lead_time_label = lead_time_label[0].to(dist.device).contiguous()
+                else:
+                    lead_time_label = None
+                image_lr = (
+                    image_lr.to(device=device)
+                    .to(torch.float32)
+                    .to(memory_format=torch.channels_last)
+                )
+                image_tar = image_tar.to(device=device).to(torch.float32)
+                image_out = generate_fn(image_lr,lead_time_label)
+                if dist.rank == 0:
+                    batch_size = image_out.shape[0]
+                    # write out data in a seperate thread so we don't hold up inferencing
+                    writer_threads.append(
+                        writer_executor.submit(
+                            save_images,
+                            output_path,
+                            dataset,
+                            image_out.cpu(),
+                            image_tar.cpu(),
+                            image_lr.cpu(),
+                        )
+                    )
+            end.record()
+            end.synchronize()
+            elapsed_time = start.elapsed_time(end) / 1000.0  # Convert ms to s
+            timed_steps = time_index + 1 - warmup_steps
+            if dist.rank == 0:
+                average_time_per_batch_element = elapsed_time / timed_steps / batch_size
+                logger.info(
+                    f"Total time to run {timed_steps} steps and {batch_size} members = {elapsed_time} s"
+                )
+                logger.info(
+                    f"Average time per batch element = {average_time_per_batch_element} s"
+                )
+
+            # make sure all the workers are done writing
+            if dist.rank == 0:
+                for thread in list(writer_threads):
+                    thread.result()
+                    writer_threads.remove(thread)
+                writer_executor.shutdown()
+
+    if dist.rank == 0:
+        f.close()
+    logger0.info("Generation Completed.")
+
+def save_images(output_path, dataset, image_pred, image_hr, image_lr):
+    longitudes = dataset.longitude()
+    latitudes = dataset.latitude()
+    input_channels = dataset.input_channels()
+    output_channels = dataset.output_channels()
+    image_pred = np.flip(dataset.denormalize_output(image_pred.numpy()),1).reshape(len(output_channels),-1)
+    image_hr = np.flip(dataset.denormalize_output(image_hr.numpy()),1).reshape(len(output_channels),-1)
+    image_lr = np.flip(dataset.denormalize_input(image_lr.numpy()),1).reshape(len(input_channels),-1)
+    for idx, channel in enumerate(output_channels):
+        input_channel_idx = input_channels.index(channel)
+        _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{channel.name}-lr.jpg'))
+        _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{channel.name}-hr.jpg'))
+        _plot_projection(longitudes,latitudes,image_pred[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred.jpg'))
+
+def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+
+    """Plot observed or interpolated data in a scatter plot."""
+    # TODO: Refactor this somehow, it's not really generalizing well across variables.
+    fig = plt.figure()
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    plt.colorbar(p, label="K", orientation="horizontal")
+    plt.savefig(filename)
+    plt.close('all')
+
+if __name__ == "__main__":
+    main()
+    
