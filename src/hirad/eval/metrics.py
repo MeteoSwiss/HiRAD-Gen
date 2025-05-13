@@ -8,7 +8,7 @@ import torch
 
 # Extracted from physicsnemo/examples/weather/regen/paper_figures/score_inference.py
 
-def absolute_error(pred, target):
+def absolute_error(pred, target) -> tuple[float, np.ndarray]:
     return torch.abs(pred-target)
 
 def compute_mae(pred, target):    
@@ -17,5 +17,7 @@ def compute_mae(pred, target):
     pred = pred[:, mask]
     target = target[mask]
 
-    return torch.mean(absolute_error(pred, target))
+    ae = absolute_error(pred, target)
+
+    return torch.mean(absolute_error(pred, target)), ae
 

@@ -41,15 +41,15 @@ def main():
     baseline = torch.from_numpy(baseline)
     prediction = torch.from_numpy(prediction)
 
-    # plot baseline error
+    # plot errors
     for t_c in range(len(target_channels)):
         b_c = input_channels.index(target_channels[t_c])
         if b_c > -1:
-            baseline_errors = metrics.absolute_error(baseline[b_c,:,:], target[t_c,:,:])
+            baseline_mae, baseline_errors = metrics.compute_mae(baseline[b_c,:,:], target[t_c,:,:])
             plotting.plot_error_projection(baseline_errors, latitudes, longitudes, os.path.join('plots/errors/', 'baseline', target_channels[t_c] + '-' + date))
-        prediction_errors = metrics.absolute_error(prediction[t_c,:,:], target[t_c,:,:])
+        prediction_mae, prediction_errors = metrics.compute_mae(prediction[t_c,:,:], target[t_c,:,:])
         plotting.plot_error_projection(prediction_errors, latitudes, longitudes, os.path.join('plots/errors/', 'prediction', target_channels[t_c] + '-' + date))
-
+    print(f'baseline MAE={baseline_mae}, prediction MAE={prediction_mae}')
 
 if __name__ == "__main__":
     main()
