@@ -34,7 +34,7 @@ RUN pip install \
 # replace pynvml with nvidia-ml-py
 RUN pip uninstall -y pynvml && pip install nvidia-ml-py
 
-CMD ["python3.11" "src/input_data/interpolate_basic_test.py"]
+#CMD ["python3.11" "src/input_data/interpolate_basic_test.py"]
 
 
 
