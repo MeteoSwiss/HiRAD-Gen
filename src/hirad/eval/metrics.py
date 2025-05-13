@@ -13,8 +13,9 @@ def absolute_error(pred, target) -> tuple[float, np.ndarray]:
 
 def compute_mae(pred, target):    
     # Exclude any target NaNs (not expected, but precautionary)
+    # TODO: Fix the deprecated warning (index with dtype torch.bool instead of torch.uint8)
     mask = ~np.isnan(target)
-    pred = pred[:, mask]
+    pred = pred[mask]
     target = target[mask]
 
     ae = absolute_error(pred, target)
