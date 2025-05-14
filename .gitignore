@@ -169,3 +169,18 @@ poetry.toml
 
 # LSP config files
 pyrightconfig.json
+
+# output files
+*.out
+*.torch
+plots/*
+*.npz
+
+# conda
+.conda/*
+
+# temp
+temp.*
+
+# local script
+interpolate.sh
