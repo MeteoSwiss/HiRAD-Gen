@@ -12,7 +12,7 @@ build_job:
   stage: build
   extends: .container-builder-cscs-gh200
   variables:
-    DOCKERFILE: ci/docker/Dockerfile.build
+    DOCKERFILE: ci/docker/Dockerfile
 
 #test_job:
 #  stage: test
