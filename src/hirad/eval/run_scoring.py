@@ -31,7 +31,8 @@ def main():
     # Reshape predictions, if necessary
     # target is shape [channels, ensembles, points]
     # prediction is shape [channels, ensembles, x, y]
-    prediction = prediction.reshape(*target.shape)
+    prediction_1d = prediction.reshape(*target.shape)
+    prediction_2d = prediction.reshape(prediction.shape[0],352,544)
 
     latitudes = lat_lon[:,0]
     longitudes = lat_lon[:,1]
@@ -39,7 +40,7 @@ def main():
     # convert to torch
     target = torch.from_numpy(target)
     baseline = torch.from_numpy(baseline)
-    prediction = torch.from_numpy(prediction)
+    prediction_1d = torch.from_numpy(prediction_1d)
 
     # plot errors
     for t_c in range(len(target_channels)):
@@ -47,9 +48,19 @@ def main():
         if b_c > -1:
             baseline_mae, baseline_errors = metrics.compute_mae(baseline[b_c,:,:], target[t_c,:,:])
             plotting.plot_error_projection(baseline_errors, latitudes, longitudes, os.path.join('plots/errors/', 'baseline', target_channels[t_c] + '-' + date))
-        prediction_mae, prediction_errors = metrics.compute_mae(prediction[t_c,:,:], target[t_c,:,:])
-        plotting.plot_error_projection(prediction_errors, latitudes, longitudes, os.path.join('plots/errors/', 'prediction', target_channels[t_c] + '-' + date))
+            plotting.plot_power_spectrum(baseline[b_c,:,:], os.path.join('plots/spectra/', 'baseline',  target_channels[t_c] + date))
+        prediction_mae, prediction_errors = metrics.compute_mae(prediction_1d[t_c,:,:], target[t_c,:,:])
+        plotting.plot_error_projection(prediction_errors, latitudes, longitudes, os.path.join('plots/errors/', 'prediction', target_channels[t_c] + '-' + date)) 
+        plotting.plot_power_spectrum(prediction[t_c,0,:], os.path.join('plots/spectra/', 'prediction',  target_channels[t_c] + date))
+        plotting.plot_power_spectrum(prediction_2d[t_c,:,:], os.path.join('plots/spectra/', 'prediction2d',  target_channels[t_c] + date))
     print(f'baseline MAE={baseline_mae}, prediction MAE={prediction_mae}')
+
+    # Plot power spectra
+    freq, power = metrics.compute_power_spectrum(prediction, 1)
+    plotting.plot_power_spectrum(prediction, 'plots/errors/powerspec-prediction')
+    plotting.plot_power_spectrum(prediction, 'plots/errors/powerspec-prediction')
+
+
 
 if __name__ == "__main__":
     main()
