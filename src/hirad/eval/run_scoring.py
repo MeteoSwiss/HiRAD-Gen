@@ -129,39 +129,5 @@ def main():
         plotting.plot_error_projection(prediction_mae[t_c,:], latitudes, longitudes, os.path.join(output_directory, 'prediction-error' + target_channels[t_c] + '-' + 'average_over_time'))
 
 
-
-
-    #for i in range(4):
-    #    dates = ['20160101-0000', '20160115-0000', '20160201-0000', '20160215-0000']
-    #    pred = torch.load(os.path.join(predictions_directory, dates[i]), weights_only=False)
-    #    base = torch.load(os.path.join(input_directory, 'era-interpolated', dates[i]), weights_only=False)
-    #    pred_2d = pred.reshape(pred.shape[0],352,544)
-    #    base_2d = base.reshape(baseline.shape[0],352,544)
-    #    base_2d = np.transpose(base_2d, (0,-1,-2))
-    #    preds_tensor[i,:] = pred_2d
-    #    baseline_tensor[i,:] = base_2d
-    #for t_c in range(len(target_channels)):
-    #    freq, power = metrics.average_power_spectrum(baseline_tensor[:,t_c,:,:].squeeze(), 2)
-    #    b_c = input_channels.index(target_channels[t_c])
-    ##    if b_c > -1:
-     #       plotting.plot_power_spectrum(freq, power, target_channels[t_c], os.path.join('plots/spectra/baseline2dt',  target_channels[t_c] + date))
-    
-
-    # plot errors
-    #for t_c in range(len(target_channels)):
-    #    b_c = input_channels.index(target_channels[t_c])
-    #    if b_c > -1:
-    #        baseline_mae, baseline_errors = metrics.compute_mae(baseline[b_c,:,:], target[t_c,:,:])
-    #        plotting.plot_error_projection(baseline_errors, latitudes, longitudes, os.path.join('plots/errors/', 'baseline', target_channels[t_c] + '-' + date))
-    #        #plotting.plot_power_spectrum(baseline[b_c,:,:], os.path.join('plots/spectra/', 'baseline',  target_channels[t_c] + date))
-    #    prediction_mae, prediction_errors = metrics.compute_mae(prediction_1d[t_c,:,:], target[t_c,:,:])
-    #    plotting.plot_error_projection(prediction_errors, latitudes, longitudes, os.path.join('plots/errors/', 'prediction', target_channels[t_c] + '-' + date)) 
-    #    #plotting.plot_power_spectrum(prediction[t_c,0,:], os.path.join('plots/spectra/', 'prediction',  target_channels[t_c] + date))
-        #plotting.plot_power_spectrum(prediction_2d[t_c,:,:], os.path.join('plots/spectra/', 'prediction2d',  target_channels[t_c] + date))
-
-
-
-
-
 if __name__ == "__main__":
     main()
