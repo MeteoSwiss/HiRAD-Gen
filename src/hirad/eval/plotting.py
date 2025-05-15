@@ -15,9 +15,16 @@ def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.
     plt.savefig(filename)
     plt.close('all')
 
-def plot_power_spectrum(x, filename):
+def plot_power_spectra(freqs: dict, spec: dict, channel_name, filename):
     fig = plt.figure()
-    plt.psd(x)
+    for k in freqs.keys():
+        plt.loglog(freqs[k], spec[k], label=k)
+    plt.title(channel_name)
+    plt.legend()
+    plt.xlabel("Frequency (1/km)")
+    plt.ylabel("Power Spectrum")
+    plt.ylim(bottom=1e-1)
+    #plt.psd(x)
     logging.info(f'plotting values to {filename}')
     plt.savefig(filename)
     plt.close('all')
