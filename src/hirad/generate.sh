@@ -13,13 +13,13 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/iopsstor/scratch/cscs/pstamenk/logs/regression_test.log
-#SBATCH --error=/iopsstor/scratch/cscs/pstamenk/logs/regression_test.err
+#SBATCH --output=/iopsstor/scratch/cscs/pstamenk/logs/full_generation.log
+#SBATCH --error=/iopsstor/scratch/cscs/pstamenk/logs/full_generation.err
 
 ### ENVIRONMENT ####
 #SBATCH --uenv=pytorch/v2.6.0:/user-environment
 #SBATCH --view=default
-#SBATCH -A a-a01
+#SBATCH -A a-a122
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -47,5 +47,5 @@ echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
 srun bash -c "
     . ./train_env/bin/activate
-    python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
+    python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "

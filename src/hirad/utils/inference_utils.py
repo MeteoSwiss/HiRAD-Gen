@@ -31,6 +31,7 @@ from .function_utils import StackedRandomGenerator, time_range
 def regression_step(
     net: torch.nn.Module,
     img_lr: torch.Tensor,
+    labels: torch.Tensor,
     latents_shape: torch.Size,
     lead_time_label: torch.Tensor = None,
 ) -> torch.Tensor:
@@ -50,15 +51,15 @@ def regression_step(
         torch.Tensor: Predicted output at the next time step.
     """
     # Create a tensor of zeros with the given shape and move it to the appropriate device
-    x_hat = torch.zeros(latents_shape, dtype=torch.float64, device=net.device)
-    t_hat = torch.tensor(1.0, dtype=torch.float64, device=net.device)
+    x_hat = torch.zeros(latents_shape, dtype=img_lr.dtype, device=img_lr.device)
+    t_hat = torch.tensor(1.0, dtype=img_lr.dtype, device=img_lr.device).reshape((1,1,1,1))
 
     # Perform regression on a single batch element
     with torch.inference_mode():
         if lead_time_label is not None:
-            x = net(x_hat[0:1], img_lr, t_hat, lead_time_label=lead_time_label)
+            x = net(x_hat, img_lr, t_hat, labels, lead_time_label=lead_time_label)
         else:
-            x = net(x_hat[0:1], img_lr, t_hat)
+            x = net(x_hat, img_lr, t_hat, labels)
 
     # If the batch size is greater than 1, repeat the prediction
     if x_hat.shape[0] > 1:
@@ -100,7 +101,7 @@ def diffusion_step(  # TODO generalize the module and add defaults
         torch.Tensor: Generated images concatenated across batches.
     """
 
-    img_lr = img_lr.to(memory_format=torch.channels_last)
+    img_lr = img_lr #.to(memory_format=torch.channels_last)
 
     # Handling of the high-res mean
     additional_args = {}
@@ -128,7 +129,7 @@ def diffusion_step(  # TODO generalize the module and add defaults
                     img_shape[1],
                 ],
                 device=device,
-            ).to(memory_format=torch.channels_last)
+            )#.to(memory_format=torch.channels_last)
 
             with torch.inference_mode():
                 images = sampler_fn(
