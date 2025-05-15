@@ -1,12 +1,13 @@
 # Hyperparameters
 hp:
-    training_duration: 16
+    training_duration: 8
     # Training duration based on the number of processed samples
-    total_batch_size: 16
+    total_batch_size: 4
     # Total batch size
     batch_size_per_gpu: "auto"
     # Batch size per GPU
-    lr: 0.0002
+    lr: 0.001
+    #0.0002
     # Learning rate
     grad_clip_threshold: null
     # no gradient clipping for defualt non-patch-based training
@@ -27,7 +28,7 @@ perf:
 
 # I/O
 io:
-    print_progress_freq: 32
+    print_progress_freq: 128
     # How often to print progress
     save_checkpoint_freq: 5000
     # How often to save the checkpoints, measured in number of processed samples
@@ -35,4 +36,4 @@ io:
     # how often to record the validation loss, measured in number of processed samples
     validation_steps: 10
     # how many loss evaluations are used to compute the validation loss per checkpoint
-    checkpoint_dir: /scratch/mch/pstamenk/output/regression
+    checkpoint_dir: .

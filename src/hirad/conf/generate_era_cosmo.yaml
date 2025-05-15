@@ -1,13 +1,13 @@
 hydra:
   job:
     chdir: true
-    name: generation
+    name: generation_full
   run:
-    dir: ./outputs/${hydra:job.name}
+    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
 
 # Get defaults
 defaults:
-
+  - _self_
   # Dataset
   - dataset/era_cosmo
 

@@ -213,7 +213,7 @@ def main(cfg: DictConfig) -> None:
     model.train().requires_grad_(True).to(dist.device)
 
     # TODO write summry from rank=0 possibly
-    # summary(model, input_size=[(4,img_out_channels,*img_shape),(4,img_in_channels,*img_shape),(4,1),(4,1)])
+    # summary(model, input_size=[(1,img_out_channels,*img_shape),(1,img_in_channels,*img_shape),(1,1)])
 
     if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
         with open(os.path.join(checkpoint_dir, f'model_args.json'), 'w') as f:

@@ -75,14 +75,14 @@ class ERA5_COSMO(DownscalingDataset):
 
     def longitude(self) -> np.ndarray:
         """Get longitude values from the dataset."""
-        lon_lat = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
-        return lon_lat[:,0]
+        lat_lon = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
+        return lat_lon[:,1]
 
 
     def latitude(self) -> np.ndarray:
         """Get latitude values from the dataset."""
-        lon_lat = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
-        return lon_lat[:,1]
+        lat_lon = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
+        return lat_lon[:,0]
 
 
     def input_channels(self) -> List[ChannelMetadata]:
