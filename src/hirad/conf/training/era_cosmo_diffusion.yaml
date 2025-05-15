@@ -29,7 +29,7 @@ perf:
 io:
     regression_checkpoint_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_overfit/checkpoints_regression
     # Where to load the regression checkpoint
-    print_progress_freq: 32
+    print_progress_freq: 128
     # How often to print progress
     save_checkpoint_freq: 5000
     # How often to save the checkpoints, measured in number of processed samples
