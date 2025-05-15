@@ -2,7 +2,7 @@ num_ensembles: 64
   # Number of ensembles to generate per input
 seed_batch_size: 1
   # Size of the batched inference
-inference_mode: regression
+inference_mode: all
   # Choose between "all" (regression + diffusion), "regression" or "diffusion"
   # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
   # img_shape_x and img_shape_y
@@ -11,7 +11,7 @@ overlap_pixels: 0
 boundary_pixels: 0
   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
   # artifact.
-hr_mean_conditioning: False
+hr_mean_conditioning: True
 sample_res: full
   # Sampling resolution
 times_range: null
@@ -19,10 +19,10 @@ times:
   - 20160101-0000
 
 perf:
-  force_fp16: false
+  force_fp16: False
     # Whether to force fp16 precision for the model. If false, it'll use the precision
     # specified upon training.
-  use_torch_compile: false
+  use_torch_compile: False
     # whether to use torch.compile on the diffusion model
     # this will make the first time stamp generation very slow due to compilation overheads
     # but will significantly speed up subsequent inference runs
@@ -31,8 +31,9 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  res_ckpt_path: null
+  res_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/diffusion_test/checkpoints_diffusion
     # Checkpoint filename for the diffusion model  
   reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_overfit/checkpoints_regression
+  # reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_test/checkpoints_regression
     # Checkpoint filename for the mean predictor model
   output_path: ./images
