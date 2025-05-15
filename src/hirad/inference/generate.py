@@ -11,14 +11,14 @@ from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
-from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
+from matplotlib import pyplot as plt
 from einops import rearrange
 from torch.distributed import gather
 
 
 from hydra.utils import to_absolute_path
-from hirad.models import EDMPrecond, UNet
+from hirad.models import EDMPrecondSR, UNet
 from hirad.utils.stochastic_sampler import stochastic_sampler
 from hirad.utils.deterministic_sampler import deterministic_sampler
 from hirad.utils.inference_utils import (
@@ -36,12 +36,12 @@ from hirad.utils.generate_utils import (
 from hirad.utils.train_helpers import set_patch_shape
 
 
-@hydra.main(version_base="1.2", config_path="conf", config_name="config_generate")
+@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig) -> None:
     """Generate random dowscaled atmospheric states using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
     """
-
+    torch.backends.cudnn.enabled = False
     # Initialize distributed manager
     DistributedManager.initialize()
     dist = DistributedManager()
@@ -50,7 +50,7 @@ def main(cfg: DictConfig) -> None:
     # Initialize logger
     logger = PythonLogger("generate")  # General python logger
     logger0 = RankZeroLoggingWrapper(logger, dist)
-    logger.file_logging("generate.log")
+    # logger.file_logging("generate.log")
 
     # Handle the batch size
     seeds = list(np.arange(cfg.generation.num_ensembles))
@@ -121,7 +121,7 @@ def main(cfg: DictConfig) -> None:
         with open(diffusion_model_args_path, 'r') as f:
             diffusion_model_args = json.load(f)
 
-        net_res = EDMPrecond(**diffusion_model_args)
+        net_res = EDMPrecondSR(**diffusion_model_args)
 
         _ = load_checkpoint(
             path=res_ckpt_path,
@@ -129,7 +129,8 @@ def main(cfg: DictConfig) -> None:
             device=dist.device
         )
         
-        net_res = net_res.eval().to(device).to(memory_format=torch.channels_last)
+        #TODO fix to use channels_last which is optimal for H100
+        net_res = net_res.eval().to(device)#.to(memory_format=torch.channels_last)
         if cfg.generation.perf.force_fp16:
             net_res.use_fp16 = True
     else:
@@ -155,7 +156,7 @@ def main(cfg: DictConfig) -> None:
             device=dist.device
         )
         
-        net_reg = net_reg.eval().to(device).to(memory_format=torch.channels_last)
+        net_reg = net_reg.eval().to(device)#.to(memory_format=torch.channels_last)
         if cfg.generation.perf.force_fp16:
             net_reg.use_fp16 = True
     else:
@@ -184,8 +185,9 @@ def main(cfg: DictConfig) -> None:
     elif cfg.sampler.type == "stochastic":
         sampler_fn = partial(
             stochastic_sampler,
-            img_shape=img_shape[1],
-            patch_shape=patch_shape[1],
+            img_shape=img_shape,
+            patch_shape_x=patch_shape[0],
+            patch_shape_y=patch_shape[1],
             boundary_pix=cfg.sampler.boundary_pix,
             overlap_pix=cfg.sampler.overlap_pix,
         )
@@ -194,7 +196,7 @@ def main(cfg: DictConfig) -> None:
     
 
         # Main generation definition
-    def generate_fn(image_lr, lead_time_label):
+    def generate_fn(image_lr, labels, lead_time_label):
         img_shape_y, img_shape_x = img_shape
         with nvtx.annotate("generate_fn", color="green"):
             if cfg.generation.sample_res == "full":
@@ -208,13 +210,14 @@ def main(cfg: DictConfig) -> None:
                     w1=img_shape_x // patch_shape[1],
                 )
                 torch.cuda.nvtx.range_pop()
-            image_lr_patch = image_lr_patch.to(memory_format=torch.channels_last)
+            image_lr_patch = image_lr_patch #.to(memory_format=torch.channels_last)
 
             if net_reg:
                 with nvtx.annotate("regression_model", color="yellow"):
                     image_reg = regression_step(
                         net=net_reg,
                         img_lr=image_lr_patch,
+                        labels=labels,
                         latents_shape=(
                             cfg.generation.seed_batch_size,
                             img_out_channels,
@@ -238,7 +241,7 @@ def main(cfg: DictConfig) -> None:
                         rank_batches=rank_batches,
                         img_lr=image_lr_patch.expand(
                             cfg.generation.seed_batch_size, -1, -1, -1
-                        ).to(memory_format=torch.channels_last),
+                        ), #.to(memory_format=torch.channels_last),
                         rank=dist.rank,
                         device=device,
                         hr_mean=mean_hr,
@@ -282,7 +285,10 @@ def main(cfg: DictConfig) -> None:
                 else:
                     return None
             else:
-                return image_out
+                #TODO do this for multi-gpu setting above too
+                if cfg.generation.inference_mode != "regression":
+                    return image_out, image_reg
+                return image_out, None
     
     # generate images
     output_path = getattr(cfg.generation.io, "output_path", "./outputs")
@@ -311,7 +317,7 @@ def main(cfg: DictConfig) -> None:
             end = torch.cuda.Event(enable_timing=True)
 
             times = dataset.time()
-            for image_tar, image_lr, index, *lead_time_label in iter(data_loader):
+            for image_tar, image_lr, labels, *lead_time_label in iter(data_loader):
                 time_index += 1
                 if dist.rank == 0:
                     logger0.info(f"starting index: {time_index}")
@@ -327,10 +333,11 @@ def main(cfg: DictConfig) -> None:
                 image_lr = (
                     image_lr.to(device=device)
                     .to(torch.float32)
-                    .to(memory_format=torch.channels_last)
+                    #.to(memory_format=torch.channels_last)
                 )
                 image_tar = image_tar.to(device=device).to(torch.float32)
-                image_out = generate_fn(image_lr,lead_time_label)
+                labels = labels.to(device).to(torch.float32).contiguous()
+                image_out, image_reg = generate_fn(image_lr,labels,lead_time_label)
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
@@ -342,6 +349,7 @@ def main(cfg: DictConfig) -> None:
                             image_out.cpu(),
                             image_tar.cpu(),
                             image_lr.cpu(),
+                            image_reg.cpu(),
                         )
                     )
             end.record()
@@ -368,19 +376,29 @@ def main(cfg: DictConfig) -> None:
         f.close()
     logger0.info("Generation Completed.")
 
-def save_images(output_path, dataset, image_pred, image_hr, image_lr):
+def save_images(output_path, dataset, image_pred, image_hr, image_lr, mean_pred):
     longitudes = dataset.longitude()
     latitudes = dataset.latitude()
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
-    image_pred = np.flip(dataset.denormalize_output(image_pred.numpy()),1).reshape(len(output_channels),-1)
-    image_hr = np.flip(dataset.denormalize_output(image_hr.numpy()),1).reshape(len(output_channels),-1)
-    image_lr = np.flip(dataset.denormalize_input(image_lr.numpy()),1).reshape(len(input_channels),-1)
+    image_pred = image_pred.numpy()
+    image_pred_final = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1).reshape(len(output_channels),-1)
+    image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
+    image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[32,::].squeeze()),1).reshape(len(output_channels),-1)
+    image_hr = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
+    image_lr = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze().numpy()),1).reshape(len(input_channels),-1)
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
+    os.makedirs(output_path, exist_ok=True)
     for idx, channel in enumerate(output_channels):
         input_channel_idx = input_channels.index(channel)
         _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{channel.name}-lr.jpg'))
         _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{channel.name}-hr.jpg'))
-        _plot_projection(longitudes,latitudes,image_pred[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred.jpg'))
+        _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred.jpg'))
+        _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred-0.jpg'))
+        _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred-mid.jpg'))
+        if mean_pred is not None:
+            _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{channel.name}-mean-pred.jpg'))
 
 def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
 

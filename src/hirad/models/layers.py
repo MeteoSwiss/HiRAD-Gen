@@ -221,6 +221,8 @@ class Conv2d(torch.nn.Module):
                     padding=f_pad,
                 )
             if w is not None:
+                #TODO during inference, model breaks here for some reason
+                # current fix is to disable torch.backends.cudnn.enabled = False
                 x = torch.nn.functional.conv2d(x, w, padding=w_pad)
         if b is not None:
             x = x.add_(b.reshape(1, -1, 1, 1))
@@ -473,7 +475,6 @@ class UNetBlock(torch.nn.Module):
         torch.cuda.nvtx.range_push("UNetBlock")
         orig = x
         x = self.conv0(silu(self.norm0(x)))
-
         params = self.affine(emb).unsqueeze(2).unsqueeze(3).to(x.dtype)
         if self.adaptive_scale:
             scale, shift = params.chunk(chunks=2, dim=1)

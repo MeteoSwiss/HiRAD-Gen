@@ -1,2 +1,2 @@
 type: era5_cosmo
-dataset_path: /store_new/mch/msopr/hirad-gen/basic-torch
+dataset_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/trim_19_overfit
