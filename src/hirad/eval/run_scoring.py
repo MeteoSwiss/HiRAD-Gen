@@ -76,7 +76,8 @@ def main():
         t_freq, t_power = metrics.average_power_spectrum(target_tensor[:,t_c,:,:].squeeze(), 2.0)
         freqs['target'] = t_freq
         power['target'] = t_power
-        #p_freq, p_power = metrics.average_power_spectrum(prediction_tensor[:,t_c,:,:].squeeze(), 2.0)
+        p_freq, p_power = metrics.average_power_spectrum(prediction_tensor[:,t_c,:,:].squeeze(), 2.0)
+        # TODO: Uncomment when we have predictions
         #freqs['prediction'] = p_freq
         #power['prediction'] = p_power
         plotting.plot_power_spectra(freqs, power, target_channels[t_c], os.path.join(output_directory, 'spectra', target_channels[t_c] + '-alldates'))
@@ -102,14 +103,9 @@ def main():
             if b_c > -1:
                 _, baseline_errors = metrics.compute_mae(baseline[b_c,:,:], target[t_c,:,:])
                 baseline_absolute_error[i, t_c, :, :] = baseline_errors
-                #plotting.plot_error_projection(baseline_errors, latitudes, longitudes, os.path.join('plots/errors/', 'baseline', target_channels[t_c] + '-' + date))
-                #plotting.plot_power_spectrum(baseline[b_c,:,:], os.path.join('plots/spectra/', 'baseline',  target_channels[t_c] + date))
             _, prediction_errors = metrics.compute_mae(prediction_1d[t_c,:,:], target[t_c,:,:])
             prediction_absolute_error[i, t_c, :, :] = prediction_errors
-        #plotting.plot_error_projection(prediction_errors, latitudes, longitudes, os.path.join('plots/errors/', 'prediction', target_channels[t_c] + '-' + date)) 
-        #plotting.plot_power_spectrum(prediction[t_c,0,:], os.path.join('plots/spectra/', 'prediction',  target_channels[t_c] + date))
-        #plotting.plot_power_spectrum(prediction_2d[t_c,:,:], os.path.join('plots/spectra/', 'prediction2d',  target_channels[t_c] + date))
-
+ 
 
     print(f'baseline_absolute_error.shape={baseline_absolute_error.shape}, prediction_absolute_error.shape={prediction_absolute_error.shape}')
     # Average errors over ensembles
