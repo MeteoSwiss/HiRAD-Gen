@@ -3,7 +3,7 @@ hydra:
     chdir: true
     name: regression
   run:
-    dir: /scratch/mch/pstamenk/output/${hydra:job.name}
+    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
 
 # Get defaults
 defaults:
