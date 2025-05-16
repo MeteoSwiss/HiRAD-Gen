@@ -345,11 +345,12 @@ def main(cfg: DictConfig) -> None:
                         writer_executor.submit(
                             save_images,
                             output_path,
+                            times[sampler[time_index]],
                             dataset,
                             image_out.cpu(),
                             image_tar.cpu(),
                             image_lr.cpu(),
-                            image_reg.cpu(),
+                            image_reg.cpu() if image_reg is not None else None,
                         )
                     )
             end.record()
@@ -376,15 +377,16 @@ def main(cfg: DictConfig) -> None:
         f.close()
     logger0.info("Generation Completed.")
 
-def save_images(output_path, dataset, image_pred, image_hr, image_lr, mean_pred):
+def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
     longitudes = dataset.longitude()
     latitudes = dataset.latitude()
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
     image_pred = image_pred.numpy()
     image_pred_final = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1).reshape(len(output_channels),-1)
-    image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
-    image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[32,::].squeeze()),1).reshape(len(output_channels),-1)
+    if image_pred.shape[0]>1:
+        image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
+        image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[32,::].squeeze()),1).reshape(len(output_channels),-1)
     image_hr = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
     image_lr = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze().numpy()),1).reshape(len(input_channels),-1)
     if mean_pred is not None:
@@ -392,13 +394,14 @@ def save_images(output_path, dataset, image_pred, image_hr, image_lr, mean_pred)
     os.makedirs(output_path, exist_ok=True)
     for idx, channel in enumerate(output_channels):
         input_channel_idx = input_channels.index(channel)
-        _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{channel.name}-lr.jpg'))
-        _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{channel.name}-hr.jpg'))
-        _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred.jpg'))
-        _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred-0.jpg'))
-        _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{channel.name}-hr-pred-mid.jpg'))
+        _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-lr.jpg'))
+        _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr.jpg'))
+        _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred.jpg'))
+        if image_pred.shape[0]>1:
+            _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-0.jpg'))
+            _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mid.jpg'))
         if mean_pred is not None:
-            _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{channel.name}-mean-pred.jpg'))
+            _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-mean-pred.jpg'))
 
 def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
 

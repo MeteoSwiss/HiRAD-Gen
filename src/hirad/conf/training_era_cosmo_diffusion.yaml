@@ -1,7 +1,7 @@
 hydra:
   job:
     chdir: true
-    name: diffusion_test
+    name: diffusion
   run:
     dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
 
