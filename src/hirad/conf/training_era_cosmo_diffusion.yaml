@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: diffusion
+    name: diffusion_test
   run:
-    dir: /scratch/mch/pstamenk/output/${hydra:job.name}
+    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
 
 # Get defaults
 defaults:
