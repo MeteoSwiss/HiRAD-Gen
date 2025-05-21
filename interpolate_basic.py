@@ -15,7 +15,7 @@ import torch
 import lmdb
 from scipy.interpolate import griddata
 
-# Default paths for input data sets
+# Default paths for input data set config files
 ERA_CONFIG = 'era.yaml'
 COSMO_CONFIG = 'cosmo.yaml'
 
@@ -120,13 +120,12 @@ def _save_stats(dataset: Dataset, filename: str):
 def _save_interpolation(values: np.ndarray[np.intp], filename: str, data_format='torch'):
     """Output interpolated data to a given filename, in PyTorch tensor format."""
     
-    if data_format == 'torch':
-        torch_data = torch.from_numpy(values)
-        torch.save(torch_data, filename)
-    elif data_format == 'lmdb':
-        lmdb.open()
-    else:
-        raise ValueError(f'Cannot output to format: {data_format}. Currently only supports torch or lmdb')    
+    torch_data = torch.from_numpy(values)
+    # TODO: Separate file for each datetime -- all channels.
+    # dataset / cosmo  -> 20200101-0000
+    # dataset / era_interpolated -> 20200101-0000
+    # OR - save back as an anemoi dataset -- ask francesco
+    torch.save(torch_data, filename)
 
 def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
     """
