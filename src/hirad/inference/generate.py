@@ -50,7 +50,6 @@ def main(cfg: DictConfig) -> None:
     # Initialize logger
     logger = PythonLogger("generate")  # General python logger
     logger0 = RankZeroLoggingWrapper(logger, dist)
-    # logger.file_logging("generate.log")
 
     # Handle the batch size
     seeds = list(np.arange(cfg.generation.num_ensembles))
@@ -252,7 +251,7 @@ def main(cfg: DictConfig) -> None:
             elif cfg.generation.inference_mode == "diffusion":
                 image_out = image_res
             else:
-                image_out = image_reg + image_res
+                image_out = image_reg[0:1,::] + image_res
 
             if cfg.generation.sample_res != "full":
                 image_out = rearrange(
@@ -385,8 +384,9 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     image_pred = image_pred.numpy()
     image_pred_final = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1).reshape(len(output_channels),-1)
     if image_pred.shape[0]>1:
+        image_pred_mean = np.flip(dataset.denormalize_output(image_pred.mean(axis=0)),1).reshape(len(output_channels),-1)
         image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
-        image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[32,::].squeeze()),1).reshape(len(output_channels),-1)
+        image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[image_pred.shape[0]//2,::].squeeze()),1).reshape(len(output_channels),-1)
     image_hr = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
     image_lr = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze().numpy()),1).reshape(len(input_channels),-1)
     if mean_pred is not None:
@@ -398,6 +398,7 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr.jpg'))
         _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred.jpg'))
         if image_pred.shape[0]>1:
+            _plot_projection(longitudes,latitudes,image_pred_mean[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mean.jpg'))
             _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-0.jpg'))
             _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mid.jpg'))
         if mean_pred is not None:

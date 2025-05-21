@@ -36,12 +36,10 @@ def main(cfg: DictConfig) -> None:
 
     OmegaConf.resolve(cfg)
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
-    if hasattr(cfg, "validation"):
+    if hasattr(cfg.dataset, "validation_path"):
         train_test_split = True
-        validation_dataset_cfg = OmegaConf.to_container(cfg.validation)
     else:
         train_test_split = False
-        validation_dataset_cfg = None
     fp_optimizations = cfg.training.perf.fp_optimizations
     songunet_checkpoint_level = cfg.training.perf.songunet_checkpoint_level
     fp16 = fp_optimizations == "fp16"
@@ -77,7 +75,6 @@ def main(cfg: DictConfig) -> None:
         data_loader_kwargs,
         batch_size=cfg.training.hp.batch_size_per_gpu,
         seed=0,
-        validation_dataset_cfg=validation_dataset_cfg,
         train_test_split=train_test_split,
     )
     logger0.info(f"Training on dataset with size {len(dataset)}")

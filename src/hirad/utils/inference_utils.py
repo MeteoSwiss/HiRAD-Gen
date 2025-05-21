@@ -52,14 +52,14 @@ def regression_step(
     """
     # Create a tensor of zeros with the given shape and move it to the appropriate device
     x_hat = torch.zeros(latents_shape, dtype=img_lr.dtype, device=img_lr.device)
-    t_hat = torch.tensor(1.0, dtype=img_lr.dtype, device=img_lr.device).reshape((1,1,1,1))
+    t_hat = torch.tensor(1.0, dtype=img_lr.dtype, device=img_lr.device)#.reshape((1,1,1,1))
 
     # Perform regression on a single batch element
     with torch.inference_mode():
         if lead_time_label is not None:
-            x = net(x_hat, img_lr, t_hat, labels, lead_time_label=lead_time_label)
+            x = net(x_hat[0:1], img_lr, t_hat, labels, lead_time_label=lead_time_label)
         else:
-            x = net(x_hat, img_lr, t_hat, labels)
+            x = net(x_hat[0:1], img_lr, t_hat, labels)
 
     # If the batch size is greater than 1, repeat the prediction
     if x_hat.shape[0] > 1:
