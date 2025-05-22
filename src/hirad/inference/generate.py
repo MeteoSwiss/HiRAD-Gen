@@ -35,6 +35,7 @@ from hirad.utils.generate_utils import (
 
 from hirad.utils.train_helpers import set_patch_shape
 
+from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig) -> None:
@@ -346,10 +347,10 @@ def main(cfg: DictConfig) -> None:
                             output_path,
                             times[sampler[time_index]],
                             dataset,
-                            image_out.cpu(),
-                            image_tar.cpu(),
-                            image_lr.cpu(),
-                            image_reg.cpu() if image_reg is not None else None,
+                            image_out.cpu().numpy(),
+                            image_tar.cpu().numpy(),
+                            image_lr.cpu().numpy(),
+                            image_reg.cpu().numpy() if image_reg is not None else None,
                         )
                     )
             end.record()
@@ -381,41 +382,73 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     latitudes = dataset.latitude()
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
-    image_pred = image_pred.numpy()
-    image_pred_final = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1).reshape(len(output_channels),-1)
-    if image_pred.shape[0]>1:
-        image_pred_mean = np.flip(dataset.denormalize_output(image_pred.mean(axis=0)),1).reshape(len(output_channels),-1)
-        image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
-        image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[image_pred.shape[0]//2,::].squeeze()),1).reshape(len(output_channels),-1)
-    image_hr = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
-    image_lr = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze().numpy()),1).reshape(len(input_channels),-1)
-    if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
-    os.makedirs(output_path, exist_ok=True)
+
+    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+
+    freqs = {}
+    power = {}
     for idx, channel in enumerate(output_channels):
         input_channel_idx = input_channels.index(channel)
-        _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-lr.jpg'))
-        _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr.jpg'))
-        _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred.jpg'))
-        if image_pred.shape[0]>1:
-            _plot_projection(longitudes,latitudes,image_pred_mean[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mean.jpg'))
-            _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-0.jpg'))
-            _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mid.jpg'))
-        if mean_pred is not None:
-            _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-mean-pred.jpg'))
+        _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
+        _, prediction_errors = compute_mae(prediction[idx,:,:], target[idx,:,:])
 
-def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-baseline-error.jpg'))
+        plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-prediction-error.jpg'))
 
-    """Plot observed or interpolated data in a scatter plot."""
-    # TODO: Refactor this somehow, it's not really generalizing well across variables.
-    fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label="K", orientation="horizontal")
-    plt.savefig(filename)
-    plt.close('all')
+        b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
+        freqs['baseline'] = b_freq
+        power['baseline'] = b_power
+        #plotting.plot_power_spectrum(b_freq, b_power, target_channels[t_c], os.path.join('plots/spectra/baseline2dt',  target_channels[t_c] + '-all_dates'))
+        t_freq, t_power = average_power_spectrum(target[idx,:,:].squeeze(), 2.0)
+        freqs['target'] = t_freq
+        power['target'] = t_power
+        p_freq, p_power = average_power_spectrum(prediction[idx,:,:].squeeze(), 2.0)
+        freqs['prediction'] = p_freq
+        power['prediction'] = p_power
+        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
+
+# def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+#     longitudes = dataset.longitude()
+#     latitudes = dataset.latitude()
+#     input_channels = dataset.input_channels()
+#     output_channels = dataset.output_channels()
+#     image_pred = image_pred.numpy()
+#     image_pred_final = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1).reshape(len(output_channels),-1)
+#     if image_pred.shape[0]>1:
+#         image_pred_mean = np.flip(dataset.denormalize_output(image_pred.mean(axis=0)),1).reshape(len(output_channels),-1)
+#         image_pred_first_step = np.flip(dataset.denormalize_output(image_pred[0,::].squeeze()),1).reshape(len(output_channels),-1)
+#         image_pred_mid_step = np.flip(dataset.denormalize_output(image_pred[image_pred.shape[0]//2,::].squeeze()),1).reshape(len(output_channels),-1)
+#     image_hr = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
+#     image_lr = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze().numpy()),1).reshape(len(input_channels),-1)
+#     if mean_pred is not None:
+#         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze().numpy()),1).reshape(len(output_channels),-1)
+#     os.makedirs(output_path, exist_ok=True)
+#     for idx, channel in enumerate(output_channels):
+#         input_channel_idx = input_channels.index(channel)
+#         _plot_projection(longitudes,latitudes,image_lr[input_channel_idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-lr.jpg'))
+#         _plot_projection(longitudes,latitudes,image_hr[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr.jpg'))
+#         _plot_projection(longitudes,latitudes,image_pred_final[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred.jpg'))
+#         if image_pred.shape[0]>1:
+#             _plot_projection(longitudes,latitudes,image_pred_mean[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mean.jpg'))
+#             _plot_projection(longitudes,latitudes,image_pred_first_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-0.jpg'))
+#             _plot_projection(longitudes,latitudes,image_pred_mid_step[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-hr-pred-mid.jpg'))
+#         if mean_pred is not None:
+#             _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-mean-pred.jpg'))
+
+# def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+
+#     """Plot observed or interpolated data in a scatter plot."""
+#     # TODO: Refactor this somehow, it's not really generalizing well across variables.
+#     fig = plt.figure()
+#     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+#     p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+#     ax.coastlines()
+#     ax.gridlines(draw_labels=True)
+#     plt.colorbar(p, label="K", orientation="horizontal")
+#     plt.savefig(filename)
+#     plt.close('all')
 
 if __name__ == "__main__":
     main()
