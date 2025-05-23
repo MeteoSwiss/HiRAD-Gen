@@ -366,18 +366,6 @@ def main(cfg: DictConfig) -> None:
                 "training_loss_running_mean", average_loss_running_mean, cur_nimg
             )
 
-        ptt = is_time_for_periodic_task(
-            cur_nimg,
-            cfg.training.io.print_progress_freq,
-            done,
-            cfg.training.hp.total_batch_size,
-            dist.rank,
-            rank_0_only=True,
-        )
-        if ptt:
-            # reset running mean of average loss
-            average_loss_running_mean = 0
-            n_average_loss_running_mean = 1
 
         # Update weights.
         lr_rampup = cfg.training.hp.lr_rampup  # ramp up the learning rate
@@ -480,6 +468,19 @@ def main(cfg: DictConfig) -> None:
             ]
             logger0.info(" ".join(fields))
             torch.cuda.reset_peak_memory_stats()
+
+        ptt = is_time_for_periodic_task(
+            cur_nimg,
+            cfg.training.io.print_progress_freq,
+            done,
+            cfg.training.hp.total_batch_size,
+            dist.rank,
+            rank_0_only=True,
+        )
+        if ptt:
+            # reset running mean of average loss
+            average_loss_running_mean = 0
+            n_average_loss_running_mean = 1
 
         # Save checkpoints
         if dist.world_size > 1:
