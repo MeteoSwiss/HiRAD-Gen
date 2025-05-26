@@ -15,5 +15,7 @@ defaults:
   # Model
   - model/era_cosmo_diffusion
 
+  - model_size/normal
+
   # Training
   - training/era_cosmo_diffusion
