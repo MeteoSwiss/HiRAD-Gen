@@ -63,8 +63,7 @@ class ERA5_COSMO(DownscalingDataset):
         cosmo_data = self.normalize_output(cosmo_data)
         # return samples
         return torch.tensor(cosmo_data),\
-                torch.tensor(era5_data),\
-                0
+                torch.tensor(era5_data),
         # return F.pad(torch.tensor(cosmo_data), pad=(1,1,1,1), mode='constant', value=0), \
         #         F.pad(torch.tensor(era5_data), pad=(1,1,1,1), mode='constant', value=0), \
         #         0
