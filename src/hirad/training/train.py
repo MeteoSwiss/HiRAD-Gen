@@ -227,21 +227,6 @@ def main(cfg: DictConfig) -> None:
     
     model.train().requires_grad_(True).to(dist.device)
 
-    # param_to_name = {}
-    # ppp = False
-    # for name, param in model.named_parameters():
-    #     pid = id(param)
-    #     if pid in param_to_name:
-    #         print(f"[SHARED PARAM] {name} == {param_to_name[pid]}")
-    #         ppp = True
-    #         break
-    #     else:
-    #         param_to_name[pid] = name
-    # print(f'There are shared parameters: {ppp}')
-
-    # TODO write summry from rank=0 possibly
-    # summary(model, input_size=[(1,img_out_channels,*img_shape),(1,img_in_channels,*img_shape),(1,1)])
-
     if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
         with open(os.path.join(checkpoint_dir, f'model_args.json'), 'w') as f:
             json.dump(model_args, f)
@@ -572,6 +557,41 @@ def main(cfg: DictConfig) -> None:
                     cur_nimg += cfg.training.hp.total_batch_size
                     done = cur_nimg >= cfg.training.hp.training_duration
 
+                if is_time_for_periodic_task(
+                    cur_nimg,
+                    cfg.training.io.print_progress_freq,
+                    done,
+                    cfg.training.hp.total_batch_size,
+                    dist.rank,
+                    rank_0_only=True,
+                ):
+                    # Print stats if we crossed the printing threshold with this batch
+                    tick_end_time = time.time()
+                    fields = []
+                    fields += [f"samples {cur_nimg:<9.1f}"]
+                    fields += [f"training_loss {average_loss:<7.2f}"]
+                    fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
+                    fields += [f"learning_rate {current_lr:<7.8f}"]
+                    fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
+                    fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
+                    fields += [
+                        f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
+                    ]
+                    fields += [
+                        f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
+                    ]
+                    if torch.cuda.is_available():
+                        fields += [
+                            f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
+                        ]
+                        fields += [
+                            f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
+                        ]
+                        torch.cuda.reset_peak_memory_stats()
+                    logger0.info(" ".join(fields))
+                    logger0.info(img_clean.shape)
+                    logger0.info(img_lr.shape)
+
                 with nvtx.annotate("validation", color="red"):
                     # Validation
                     if validation_dataset_iterator is not None:
@@ -670,39 +690,6 @@ def main(cfg: DictConfig) -> None:
                                     writer.add_scalar(
                                         "validation_loss", average_valid_loss, cur_nimg
                                     )
-
-                    if is_time_for_periodic_task(
-                        cur_nimg,
-                        cfg.training.io.print_progress_freq,
-                        done,
-                        cfg.training.hp.total_batch_size,
-                        dist.rank,
-                        rank_0_only=True,
-                    ):
-                        # Print stats if we crossed the printing threshold with this batch
-                        tick_end_time = time.time()
-                        fields = []
-                        fields += [f"samples {cur_nimg:<9.1f}"]
-                        fields += [f"training_loss {average_loss:<7.2f}"]
-                        fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
-                        fields += [f"learning_rate {current_lr:<7.8f}"]
-                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
-                        fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
-                        fields += [
-                            f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
-                        ]
-                        fields += [
-                            f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
-                        ]
-                        if torch.cuda.is_available():
-                            fields += [
-                                f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
-                            ]
-                            fields += [
-                                f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
-                            ]
-                            torch.cuda.reset_peak_memory_stats()
-                        logger0.info(" ".join(fields))
 
 
                 # Save checkpoints
