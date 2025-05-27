@@ -589,8 +589,6 @@ def main(cfg: DictConfig) -> None:
                         ]
                         torch.cuda.reset_peak_memory_stats()
                     logger0.info(" ".join(fields))
-                    logger0.info(img_clean.shape)
-                    logger0.info(img_lr.shape)
 
                 with nvtx.annotate("validation", color="red"):
                     # Validation
