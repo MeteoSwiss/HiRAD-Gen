@@ -25,3 +25,7 @@ test_job:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
     USE_NCCL: cuda12
+    FI_CXI_DISABLE_HOST_REGISTER: 1
+    FI_MR_CACHE_MONITOR: userfaultfd
+    NCCL_DEBUG: INFO
+
