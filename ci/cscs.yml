@@ -19,6 +19,7 @@ test_job:
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
+    - env
     - cd /src
     - python src/hirad/eval/run_scoring.py 
   variables:
