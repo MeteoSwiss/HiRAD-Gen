@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hirad-gen"
+version = "0.1.0"
+description = "High resolution atmospheric downscaling using generative machine learning"
+authors = [
+    { name="Petar Stamenkovic", email="petar.stamenkovic@meteoswiss.ch" }
+]
+readme = "README.md"
+requires-python = ">=3.12"
+license = {file = "LICENSE"}
+
+dependencies = [
+    "cartopy>=0.24.1",
+    "cftime>=1.6.4",
+    "hydra-core>=1.3.2",
+    "matplotlib>=3.10.1",
+    "omegaconf>=2.3.0",
+    "tensorboard>=2.19.0",
+    "termcolor>=3.1.0",
+    "torchinfo>=1.8.0",
+    "treelib>=1.7.1"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,10 @@
+name: regression
+hr_mean_conditioning: False
+
+# Default regression model parameters. Do not modify.
+model_args:
+  "N_grid_channels": 4
+  # Number of channels for positional grid embeddings
+  "embedding_type": "zero"
+  # Type of timestep embedding: 'positional' for DDPM++, 'fourier' for NCSN++,
+  # 'zero' for none

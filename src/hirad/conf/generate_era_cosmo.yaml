@@ -1,0 +1,20 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_full
+  run:
+    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+  # Dataset
+  - dataset/era_cosmo
+
+  # Sampler
+  - sampler/stochastic
+  #- sampler/deterministic
+
+  # Generation
+  - generation/era_cosmo
+    #- generation/patched_based

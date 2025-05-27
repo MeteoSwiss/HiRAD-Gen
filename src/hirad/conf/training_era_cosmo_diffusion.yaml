@@ -1,0 +1,21 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion
+  run:
+    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/era_cosmo
+
+  # Model
+  - model/era_cosmo_diffusion
+
+  - model_size/normal
+
+  # Training
+  - training/era_cosmo_diffusion

@@ -1,0 +1,3 @@
+image = "library/ubuntu:24.04"
+mounts = ["/capstor/scratch/cscs/mmcgloho:/capstor/scratch/cscs/mmcgloho"]
+workdir = "/capstor/scratch/cscs/mmcgloho"

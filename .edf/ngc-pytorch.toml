@@ -1,0 +1,6 @@
+# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/pytorch
+image = "nvcr.io#nvidia/pytorch:22.01-py3"
+mounts = ["/capstor/scratch/cscs/${USER}:/capstor/scratch/cscs/${USER}"]
+workdir = "/capstor/scratch/cscs/${USER}"
+
+# Maybe above should be iopsstor
