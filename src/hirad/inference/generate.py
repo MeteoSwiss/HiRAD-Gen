@@ -269,9 +269,11 @@ def main(cfg: DictConfig) -> None:
                 )
 
                 if dist.rank == 0:
+                    if cfg.generation.inference_mode != "regression":
+                        return torch.cat(gathered_tensors), image_reg[0:1,::]
                     return torch.cat(gathered_tensors)
                 else:
-                    return None
+                    return None, None
             else:
                 #TODO do this for multi-gpu setting above too
                 if cfg.generation.inference_mode != "regression":
