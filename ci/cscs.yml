@@ -19,7 +19,8 @@ test_job:
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-    - python /src/hirad/eval/run_scoring.py 
+    - cd /src
+    - python src/hirad/eval/run_scoring.py 
   variables:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
