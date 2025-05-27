@@ -24,3 +24,4 @@ test_job:
   variables:
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
+    USE_NCCL: cuda12
