@@ -14,12 +14,12 @@ build_job:
   variables:
     DOCKERFILE: ci/docker/Dockerfile
 
-#test_job:
-#  stage: test
-#  extends: .container-runner-clariden-gh200
-#  image: $PERSIST_IMAGE_NAME
-#  script:
-#    - /opt/helloworld/bin/hello
-#  variables:
-#    SLURM_JOB_NUM_NODES: 2
-#    SLURM_NTASKS: 2
+test_job:
+  stage: test
+  extends: .container-runner-clariden-gh200
+  image: $PERSIST_IMAGE_NAME
+  script:
+    - python src/hirad/eval/run_scoring.py 
+  variables:
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1
