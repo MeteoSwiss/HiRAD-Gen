@@ -215,7 +215,7 @@ def main():
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
-    interpolate_and_save(infile_era, infile_cosmo, output_directory, os.path.join(output_directory, "plots"))
+    interpolate_and_save(infile_era, infile_cosmo, output_directory, os.path.join(output_directory, "plots/"))
 
 if __name__ == "__main__":
     main()
