@@ -1,0 +1,22 @@
+FROM nvcr.io/nvidia/pytorch:25.01-py3
+
+# setup
+#RUN apt-get update && apt-get install python3-pip python3-venv -y
+RUN pip install --upgrade \
+        pip
+
+# install the rest of dependencies
+# TODO: Factor pydeps into a separate file(s)
+# TODO: Add versions for things
+RUN pip install \
+        anemoi-datasets \
+        cartopy 
+
+
+COPY . /src
+WORKDIR /src
+
+# Useful utilities for performance monitoring/analysis/debugging
+RUN apt-get update \
+  && apt-get install -yqq --no-install-recommends strace valgrind htop nvtop atop ioping fio \
+  && rm -rf /var/lib/apt/lists/*
