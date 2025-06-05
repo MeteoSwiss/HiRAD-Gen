@@ -58,7 +58,7 @@ def init_train_valid_datasets_from_config(
     """
 
     config = copy.deepcopy(dataset_cfg)
-    if 'validation_path':
+    if 'validation_path' in config:
         del config['validation_path']
     (dataset, dataset_iter) = init_dataset_from_config(
         config, dataloader_cfg, batch_size=batch_size, seed=seed

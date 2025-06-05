@@ -494,8 +494,12 @@ def main(cfg: DictConfig) -> None:
                                     ):
                                         loss = loss_fn(**loss_fn_kwargs)
 
-                                loss = loss.sum() / batch_size_per_gpu
-                                loss_accum += loss / num_accumulation_rounds
+                                loss_accum += (
+                                    loss
+                                    / num_accumulation_rounds
+                                    / len(patch_nums_iter)
+                                )
+                                loss_accum += loss / num_accumulation_rounds  
                                 with nvtx.annotate(f"loss backward", color="yellow"):
                                     loss.backward()
 
@@ -544,7 +548,7 @@ def main(cfg: DictConfig) -> None:
                             if lr_rampup > 0:
                                 g["lr"] = cfg.training.hp.lr * min(cur_nimg / lr_rampup, 1)
                             if cur_nimg >= lr_rampup:
-                                g["lr"] *= cfg.training.hp.lr_decay ** ((cur_nimg - lr_rampup) // 5e6)
+                                g["lr"] *= cfg.training.hp.lr_decay ** ((cur_nimg - lr_rampup) // cfg.training.hp.lr_decay_rate)
                             current_lr = g["lr"]
                             if dist.rank == 0:
                                 writer.add_scalar("learning_rate", current_lr, cur_nimg)
@@ -658,7 +662,7 @@ def main(cfg: DictConfig) -> None:
                                     for patch_num_per_iter in patch_nums_iter:
                                         if patching is not None:
                                             patching.set_patch_num(patch_num_per_iter)
-                                            loss_fn_kwargs.update(
+                                            loss_valid_kwargs.update(
                                                 {"patching": patching}
                                             )
                                         with torch.autocast(
@@ -674,6 +678,7 @@ def main(cfg: DictConfig) -> None:
                                         valid_loss_accum += (
                                             loss_valid
                                             / cfg.training.io.validation_steps
+                                            / len(patch_nums_iter)
                                         )
                                 valid_loss_sum = torch.tensor(
                                     [valid_loss_accum], device=dist.device

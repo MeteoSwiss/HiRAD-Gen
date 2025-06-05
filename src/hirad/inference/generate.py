@@ -271,7 +271,7 @@ def main(cfg: DictConfig) -> None:
                 if dist.rank == 0:
                     if cfg.generation.inference_mode != "regression":
                         return torch.cat(gathered_tensors), image_reg[0:1,::]
-                    return torch.cat(gathered_tensors)
+                    return torch.cat(gathered_tensors), None
                 else:
                     return None, None
             else:
@@ -408,16 +408,31 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
     prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+
 
     freqs = {}
     power = {}
     for idx, channel in enumerate(output_channels):
         input_channel_idx = input_channels.index(channel)
+
+        _plot_projection(longitudes, latitudes, target[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-target.jpg'))
+        _plot_projection(longitudes, latitudes, prediction[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-prediction.jpg'))
+        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-input.jpg'))
+        if mean_pred is not None:
+            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-mean_prediction.jpg'))
+
         _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
         _, prediction_errors = compute_mae(prediction[idx,:,:], target[idx,:,:])
+        if mean_pred is not None:
+            _, mean_prediction_errors = compute_mae(mean_pred[idx,:,:], target[idx,:,:])
+
 
         plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-baseline-error.jpg'))
         plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-prediction-error.jpg'))
+        if mean_pred is not None:
+            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
 
         b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
         freqs['baseline'] = b_freq
@@ -429,6 +444,10 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         p_freq, p_power = average_power_spectrum(prediction[idx,:,:].squeeze(), 2.0)
         freqs['prediction'] = p_freq
         power['prediction'] = p_power
+        if mean_pred is not None:
+            mp_freq, mp_power = average_power_spectrum(mean_pred[idx,:,:].squeeze(), 2.0)
+            freqs['mean_prediction'] = mp_freq
+            power['mean_prediction'] = mp_power
         plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
 
 # def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
@@ -459,19 +478,18 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
 #         if mean_pred is not None:
 #             _plot_projection(longitudes,latitudes,mean_pred[idx,:],os.path.join(output_path,f'{time_step}-{channel.name}-mean-pred.jpg'))
 
-# def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
 
-#     """Plot observed or interpolated data in a scatter plot."""
-#     # TODO: Refactor this somehow, it's not really generalizing well across variables.
-#     fig = plt.figure()
-#     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-#     p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-#     ax.coastlines()
-#     ax.gridlines(draw_labels=True)
-#     plt.colorbar(p, label="K", orientation="horizontal")
-#     plt.savefig(filename)
-#     plt.close('all')
+    """Plot observed or interpolated data in a scatter plot."""
+    # TODO: Refactor this somehow, it's not really generalizing well across variables.
+    fig = plt.figure()
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    plt.colorbar(p, label="K", orientation="horizontal")
+    plt.savefig(filename)
+    plt.close('all')
 
 if __name__ == "__main__":
     main()
-    
