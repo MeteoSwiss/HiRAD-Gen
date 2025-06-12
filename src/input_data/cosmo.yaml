@@ -1,0 +1,5 @@
+dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-co2-an-archive-0p02-2015-2020-6h-v3-pl13.zarr'
+select: ['2t', '10u', '10v', 'tp'] 
+trim_edge: 19  # Removes boundary
+start: 2020-09-15
+end: 2020-12-31

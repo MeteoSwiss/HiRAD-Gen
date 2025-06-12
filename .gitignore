@@ -184,3 +184,13 @@ temp.*
 
 # local script
 interpolate.sh
+cosmo-grid.npz
+*.out
+.conda/* 
+plots/*
+src/input_data/interpolate_basic.log
+temp.zarr/*
+temp.zarr.sync*
+src/hirad/eval/__pycache__/*
+interpolate_basic.log
+interpolated.torch
