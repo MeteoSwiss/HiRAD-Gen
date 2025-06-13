@@ -16,6 +16,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Smaller model size (10 million parameters), lower learning capacity, should be used only for testing or for small datasets and small grid size. 
+# Learning capacity is reduced and final models are not recommmended to be used in production.
 
 model_args:
   # Base multiplier for the number of channels across the network.
