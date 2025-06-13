@@ -1,0 +1,5 @@
+# Stochastic sampler is slower, but should give better results than deterministic sampler.
+
+type: stochastic
+# boundary_pix: 2 # set for patched diffusion
+# overlap_pix: 4 # set for patched diffusion

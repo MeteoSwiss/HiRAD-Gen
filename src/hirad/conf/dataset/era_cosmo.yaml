@@ -1,0 +1,3 @@
+type: era5_cosmo
+dataset_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/trim_19_full
+validation_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/trim_19_full/validation

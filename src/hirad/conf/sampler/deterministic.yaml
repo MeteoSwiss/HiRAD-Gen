@@ -1,0 +1,8 @@
+# Deterministic sampler is generally faster than stochastic sampler, but should theoretically produce worse results.
+# Deterministic sampler is not implemented correctly in this codebase and shouldn't be used.
+
+type: deterministic
+num_steps: 9 
+  # Number of denoising steps
+solver: euler
+  # ODE solver type: euler is the simplest solver
