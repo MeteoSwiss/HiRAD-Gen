@@ -11,7 +11,7 @@ import torch
 from hydra.utils import to_absolute_path
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
-from torchinfo import summary
+# from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -494,6 +494,7 @@ def main(cfg: DictConfig) -> None:
                                     ):
                                         loss = loss_fn(**loss_fn_kwargs)
 
+                                loss = loss.sum() / batch_size_per_gpu
                                 loss_accum += (
                                     loss
                                     / num_accumulation_rounds
