@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Normal model size (80 million parameters) should be used by default for full datasets and higher grid size.
 
 model_args:
   # Base multiplier for the number of channels across the network.
