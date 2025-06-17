@@ -14,18 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
 from typing import Optional
 
-import cftime
 import nvtx
 import torch
 import tqdm
 
-from .function_utils import StackedRandomGenerator, time_range
-
-from .stochastic_sampler import stochastic_sampler
-from .deterministic_sampler import deterministic_sampler
+from .function_utils import StackedRandomGenerator
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #
@@ -199,7 +194,3 @@ def diffusion_step(
                 )
             all_images.append(images)
     return torch.cat(all_images)
-
-
-def generate():
-    pass

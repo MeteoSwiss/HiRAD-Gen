@@ -19,8 +19,8 @@ from torch.distributed import gather
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.utils.patching import GridPatching2D
-from hirad.utils.stochastic_sampler import stochastic_sampler
-from hirad.utils.deterministic_sampler import deterministic_sampler
+from hirad.inference import stochastic_sampler
+from hirad.inference import deterministic_sampler
 from hirad.utils.inference_utils import (
     regression_step,
     diffusion_step,
