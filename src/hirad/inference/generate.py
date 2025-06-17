@@ -15,26 +15,20 @@ from functools import partial
 
 import cartopy.crs as ccrs
 from matplotlib import pyplot as plt
-from einops import rearrange
 from torch.distributed import gather
 
-
-from hydra.utils import to_absolute_path
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.utils.patching import GridPatching2D
 from hirad.utils.stochastic_sampler import stochastic_sampler
 from hirad.utils.deterministic_sampler import deterministic_sampler
 from hirad.utils.inference_utils import (
-    get_time_from_range,
     regression_step,
     diffusion_step,
 )
+from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 
-
-from hirad.utils.generate_utils import (
-    get_dataset_and_sampler
-)
+from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
 
@@ -81,7 +75,7 @@ def main(cfg: DictConfig) -> None:
         has_lead_time = cfg.generation["has_lead_time"]
     else:
         has_lead_time = False
-    dataset, sampler = get_dataset_and_sampler(
+    dataset, sampler = get_dataset_and_sampler_inference(
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
     img_shape = dataset.image_shape()

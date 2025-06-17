@@ -1,3 +1,4 @@
+from .utils import weight_init
 from .layers import (
     Linear, 
     Conv2d, 

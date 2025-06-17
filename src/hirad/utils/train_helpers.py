@@ -16,7 +16,6 @@
 
 import torch
 import numpy as np
-from omegaconf import ListConfig
 import warnings
 
 
@@ -98,11 +97,6 @@ def handle_and_clip_gradients(model, grad_clip_threshold=None):
     # Clip gradients if a threshold is provided
     if grad_clip_threshold is not None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_threshold)
-
-
-def parse_model_args(args):
-    """Convert ListConfig values in args to tuples."""
-    return {k: tuple(v) if isinstance(v, ListConfig) else v for k, v in args.items()}
 
 
 def is_time_for_periodic_task(
