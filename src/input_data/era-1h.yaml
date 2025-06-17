@@ -1,0 +1,8 @@
+dataset: 'aifs-ea-an-oper-0001-mars-n320-1979-2023-1h-v1-with-ERA51'
+#dataset: '/store_new/mch/msopr/hirad-gen/era-1h-new/'
+select: ['2t', '10u', '10v', 'tcw', 't_850', 'z_850', 'u_850', 'v_850', 't_500', 'z_500', 'u_500', 'v_500', 'tp']
+    # See table S2 from corrdiff paper for the inputs.
+# Note: Bounding dates/area will be done in .py code.
+start: 2015-11-29
+end: 2020-10-28
+#area: (50.98, -0.94613, 41.600636, 17.846238)
