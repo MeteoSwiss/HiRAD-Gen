@@ -1,0 +1,4 @@
+dataset: '/scratch/mch/apennino/data/aifs-ea-an-oper-0001-mars-n320-1979-2022-6h-v6.zarr'
+select: ['2t', '10u', '10v', 'tcw', 't_850', 'z_850', 'u_850', 'v_850', 't_500', 'z_500', 'u_500', 'v_500', 'tp']
+    # See table S2 from corrdiff paper for the inputs.
+# Note: Bounding dates/area will be done in .py code.
