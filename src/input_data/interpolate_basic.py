@@ -47,18 +47,12 @@ def _read_input(era_config_file: str, cosmo_config_file: str, bound_to_cosmo_are
     
     return (era, cosmo)
 
-def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, grid: np.ndarray, interp_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
-    # eventually pass these as args
-    #grid = np.column_stack((era.longitudes, era.latitudes)) # stack lon-lat columns of era5 points
-    #interp_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes)) # stack lon-lat column of cosmo points
-    #intermediate_files_path = '/store_new/mch/msopr/hirad-gen/basic-torch/trim_19_thread/'
-
-    #if i % 100 == 0:
+def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
     logging.info('interpolating time point ' + _format_date(cosmo.dates[i]))
     interpolated_data = np.empty([era.shape[1], 1, cosmo.shape[3]])
     for j in range(era.shape[1]):
         values = np.array(era[i,j,0,:]) # get era grid values on the given date-time and channel
-        regrid = griddata(grid,values,interp_grid,method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
+        regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
         interpolated_data[j,0,:] = regrid
     logging.info(f'writing time point { _format_date(cosmo.dates[i])} to files in path {intermediate_files_path}')
     if (intermediate_files_path):
