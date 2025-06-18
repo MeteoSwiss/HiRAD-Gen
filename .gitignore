@@ -184,10 +184,10 @@ temp.*
 
 # local script
 interpolate.sh
-=======
+
+# various outputs
 cosmo-grid.npz
 *.out
-.conda/* 
 plots/*
 src/input_data/interpolate_basic.log
 temp.zarr/*
