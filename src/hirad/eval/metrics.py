@@ -4,6 +4,8 @@ import numpy as np
 import torch
 
 from scipy.signal import periodogram
+import xskillscore
+import xarray as xr
 
 
 # set up MAE calculation to be run for each channel for a given date/time (for target COSMO, prediction, and ERA interpolated)
@@ -55,3 +57,24 @@ def average_power_spectrum(data: np.ndarray, d=2.0):  # d=2km by default
         logging.info(f'power spectra shape={power_spectra.shape}')
 
     return freqs, power_spectra
+
+def crps(prediction_ensemble, target, average_over_area=True, average_over_channels=True):
+    #  Plot CRPS
+    observations = xr.DataArray(target,
+                                coords = [('channel', np.arange(target.shape[0])),
+                                           ('x', np.arange(target.shape[1])),
+                                           ('y', np.arange(target.shape[2]))])
+    
+    forecasts = xr.DataArray(prediction_ensemble,
+                                coords = [('member', np.arange(prediction_ensemble.shape[0])),
+                                           ('channel', np.arange(prediction_ensemble.shape[1])),
+                                           ('x', np.arange(prediction_ensemble.shape[2])),
+                                           ('y', np.arange(prediction_ensemble.shape[3]))])
+    dim = []
+    if average_over_area:
+        dim.append('x')
+        dim.append('y')
+    if average_over_channels:
+        dim.append('channel')
+    crps = xskillscore.crps_ensemble(observations=observations, forecasts=forecasts, dim=dim)
+    crps = crps.to_numpy()

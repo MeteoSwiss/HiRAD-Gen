@@ -25,7 +25,7 @@ from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
 
 from .function_utils import StackedRandomGenerator
-from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra
+from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra, crps
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #
@@ -211,12 +211,19 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     output_channels = dataset.output_channels()
 
     target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    # prediction.shape = (num_channels, X, Y)
     prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    # prediction_ensemble.shape = (num_ensembles, num_channels, X, Y)
+    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),1) #.reshape(len(output_channels),-1)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
 
+    #  Plot CRPS
+    crps_score = crps(prediction_ensemble, target, average_over_area=False, average_over_channels=True)
+    _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps.jpg'))
 
+    #  Plot power spectra
     freqs = {}
     power = {}
     for idx, channel in enumerate(output_channels):

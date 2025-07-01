@@ -12,8 +12,8 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_generation.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_generation.err
+#SBATCH --output=/capstor/scratch/cscs/$USER/logs/regression_generation.log
+#SBATCH --error=/capstor/scratch/cscs/$USER/logs/regression_generation.err
 
 ### ENVIRONMENT ####
 #SBATCH -A c38
@@ -47,5 +47,6 @@ srun --container-writable --environment=modulus_env bash -c "
     cd HiRAD-Gen
     pip install -e . --no-dependencies
     pip install Cartopy==0.22.0
+    pip install xskillscore
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "
