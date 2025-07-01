@@ -2,7 +2,7 @@ num_ensembles: 8
   # Number of ensembles to generate per input
 seed_batch_size: 4
   # Size of the batched inference
-inference_mode: all
+inference_mode: regression
   # Choose between "all" (regression + diffusion), "regression" or "diffusion"
   # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
   # img_shape_x and img_shape_y
@@ -17,7 +17,7 @@ hr_mean_conditioning: True
   # Sampling resolution
 times_range: null
 times:
-  - 20160101-0000
+  - 20200926-1800
   # - 20160101-0600
   # - 20160101-1200
 has_laed_time: False
@@ -35,10 +35,10 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  res_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/diffusion_refactoring/checkpoints_diffusion
+  res_ckpt_path: /capstor/scratch/cscs/pstamenk/diffusion_checkpoints
   # res_ckpt_path: null
     # Checkpoint filename for the diffusion model  
-  reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_refactoring/checkpoints_regression
+  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/regression_checkpoints
   # reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_test/checkpoints_regression
     # Checkpoint filename for the mean predictor model
   output_path: ./images

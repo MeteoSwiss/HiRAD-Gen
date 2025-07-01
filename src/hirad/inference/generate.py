@@ -4,27 +4,16 @@ import json
 from omegaconf import OmegaConf, DictConfig
 import torch
 import torch._dynamo
-import nvtx
 import numpy as np
 import contextlib
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
-
-import cartopy.crs as ccrs
-from matplotlib import pyplot as plt
-from torch.distributed import gather
 
 from hirad.models import EDMPrecondSuperResolution, UNet
-from hirad.utils.patching import GridPatching2D
-from hirad.inference import stochastic_sampler
-from hirad.inference import deterministic_sampler
-from hirad.utils.inference_utils import (
-    regression_step,
-    diffusion_step,
-)
+from hirad.inference import Generator
+from hirad.utils.inference_utils import save_images
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 
@@ -32,14 +21,13 @@ from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
 
-from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig) -> None:
     """Generate random dowscaled atmospheric states using the techniques described in the paper
     "Elucidating the Design Space of Diffusion-Based Generative Models".
     """
-    torch.backends.cudnn.enabled = False
+    # torch.backends.cudnn.enabled = False
     # Initialize distributed manager
     DistributedManager.initialize()
     dist = DistributedManager()
@@ -48,14 +36,6 @@ def main(cfg: DictConfig) -> None:
     # Initialize logger
     logger = PythonLogger("generate")  # General python logger
     logger0 = RankZeroLoggingWrapper(logger, dist)
-
-    # Handle the batch size
-    seeds = list(np.arange(cfg.generation.num_ensembles))
-    num_batches = (
-        (len(seeds) - 1) // (cfg.generation.seed_batch_size * dist.world_size) + 1
-    ) * dist.world_size
-    all_batches = torch.as_tensor(seeds).tensor_split(num_batches)
-    rank_batches = all_batches[dist.rank :: dist.world_size]
 
     # Synchronize
     if dist.world_size > 1:
@@ -80,26 +60,6 @@ def main(cfg: DictConfig) -> None:
     )
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
-
-    # Parse the patch shape
-    if cfg.generation.patching:
-        patch_shape_x = cfg.generation.patch_shape_x
-        patch_shape_y = cfg.generation.patch_shape_y
-    else:
-        patch_shape_x, patch_shape_y = None, None
-    patch_shape = (patch_shape_y, patch_shape_x)
-    use_patching, img_shape, patch_shape = set_patch_shape(img_shape, patch_shape)
-    if use_patching:
-        patching = GridPatching2D(
-            img_shape=img_shape,
-            patch_shape=patch_shape,
-            boundary_pix=cfg.generation.boundary_pix,
-            overlap_pix=cfg.generation.overlap_pix,
-        )
-        logger0.info("Patch-based training enabled")
-    else:
-        patching = None
-        logger0.info("Patch-based training disabled")
 
     # Parse the inference mode
     if cfg.generation.inference_mode == "regression":
@@ -178,101 +138,34 @@ def main(cfg: DictConfig) -> None:
         # Overhead of compiling regression network outweights any benefits
         if net_res:
             net_res = torch.compile(net_res, mode="reduce-overhead")
-
-    # Partially instantiate the sampler based on the configs
-    if cfg.sampler.type == "deterministic":
-        if cfg.generation.hr_mean_conditioning:
-            raise NotImplementedError(
-                "High-res mean conditioning is not yet implemented for the deterministic sampler"
-            )
-        sampler_fn = partial(
-            deterministic_sampler,
-            num_steps=cfg.sampler.num_steps,
-            # num_ensembles=cfg.generation.num_ensembles,
-            solver=cfg.sampler.solver,
-        )
-    elif cfg.sampler.type == "stochastic":
-        sampler_fn = partial(stochastic_sampler, patching=patching)
-    else:
-        raise ValueError(f"Unknown sampling method {cfg.sampling.type}")
     
+    generator = Generator(
+        net_reg=net_reg,
+        net_res=net_res,
+        batch_size=cfg.generation.seed_batch_size,
+        ensemble_size=cfg.generation.num_ensembles,
+        hr_mean_conditioning=cfg.generation.hr_mean_conditioning,
+        n_out_channels=img_out_channels,
+        inference_mode=cfg.generation.inference_mode,
+        dist=dist,
+        )
 
-        # Main generation definition
-    def generate_fn(image_lr, lead_time_label):
-        with nvtx.annotate("generate_fn", color="green"):
-            # (1, C, H, W)
-            image_lr = image_lr.to(memory_format=torch.channels_last)
-
-            if net_reg:
-                with nvtx.annotate("regression_model", color="yellow"):
-                    image_reg = regression_step(
-                        net=net_reg,
-                        img_lr=image_lr,
-                        latents_shape=(
-                            cfg.generation.seed_batch_size,
-                            img_out_channels,
-                            img_shape[0],
-                            img_shape[1],
-                        ), # (batch_size, C, H, W)
-                        lead_time_label=lead_time_label,
-                    )
-            if net_res:
-                if cfg.generation.hr_mean_conditioning:
-                    mean_hr = image_reg[0:1]
-                else:
-                    mean_hr = None
-                with nvtx.annotate("diffusion model", color="purple"):
-                    image_res = diffusion_step(
-                        net=net_res,
-                        sampler_fn=sampler_fn,
-                        img_shape=img_shape,
-                        img_out_channels=img_out_channels,
-                        rank_batches=rank_batches,
-                        img_lr=image_lr.expand(
-                            cfg.generation.seed_batch_size, -1, -1, -1
-                        ), #.to(memory_format=torch.channels_last),
-                        rank=dist.rank,
-                        device=device,
-                        mean_hr=mean_hr,
-                        lead_time_label=lead_time_label,
-                    )
-            if cfg.generation.inference_mode == "regression":
-                image_out = image_reg
-            elif cfg.generation.inference_mode == "diffusion":
-                image_out = image_res
-            else:
-                image_out = image_reg[0:1,::] + image_res
-
-            # Gather tensors on rank 0
-            if dist.world_size > 1:
-                if dist.rank == 0:
-                    gathered_tensors = [
-                        torch.zeros_like(
-                            image_out, dtype=image_out.dtype, device=image_out.device
-                        )
-                        for _ in range(dist.world_size)
-                    ]
-                else:
-                    gathered_tensors = None
-
-                torch.distributed.barrier()
-                gather(
-                    image_out,
-                    gather_list=gathered_tensors if dist.rank == 0 else None,
-                    dst=0,
-                )
-
-                if dist.rank == 0:
-                    if cfg.generation.inference_mode != "regression":
-                        return torch.cat(gathered_tensors), image_reg[0:1,::]
-                    return torch.cat(gathered_tensors), None
-                else:
-                    return None, None
-            else:
-                #TODO do this for multi-gpu setting above too
-                if cfg.generation.inference_mode != "regression":
-                    return image_out, image_reg
-                return image_out, None
+    # Parse the patch shape
+    if cfg.generation.patching:
+        patch_shape_x = cfg.generation.patch_shape_x
+        patch_shape_y = cfg.generation.patch_shape_y
+    else:
+        patch_shape_x, patch_shape_y = None, None
+    patch_shape = (patch_shape_y, patch_shape_x)
+    use_patching, img_shape, patch_shape = set_patch_shape(img_shape, patch_shape)
+    if use_patching:
+        generator.initialize_patching(img_shape=img_shape, 
+                                      patch_shape=patch_shape,
+                                      boundary_pix=cfg.generation.boundary_pix,
+                                      overlap_pix=cfg.generation.overlap_pix,
+                                      )
+    sampler_params = cfg.sampler.params if "params" in cfg.sampler else {}
+    generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
     # generate images
     output_path = getattr(cfg.generation.io, "output_path", "./outputs")
@@ -348,7 +241,8 @@ def main(cfg: DictConfig) -> None:
                     .to(memory_format=torch.channels_last)
                 )
                 image_tar = image_tar.to(device=device).to(torch.float32)
-                image_out, image_reg = generate_fn(image_lr,lead_time_label)
+                # image_out, image_reg = generate_fn(image_lr,lead_time_label)
+                image_out, image_reg = generator.generate(image_lr,lead_time_label)
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
@@ -390,91 +284,6 @@ def main(cfg: DictConfig) -> None:
         f.close()
     logger0.info("Generation Completed.")
 
-
-def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
-    
-    os.makedirs(output_path, exist_ok=True)
-
-    longitudes = dataset.longitude()
-    latitudes = dataset.latitude()
-    input_channels = dataset.input_channels()
-    output_channels = dataset.output_channels()
-
-    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
-    if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-
-
-    freqs = {}
-    power = {}
-    for idx, channel in enumerate(output_channels):
-        input_channel_idx = input_channels.index(channel)
-
-        if channel.name=="tp":
-            target[idx,::] = prepare_precipitaiton(target[idx,:,:])
-            prediction[idx,::] = prepare_precipitaiton(prediction[idx,:,:])
-            baseline[input_channel_idx,:,:] = prepare_precipitaiton(baseline[input_channel_idx])
-            if mean_pred is not None:
-                mean_pred[idx,::] = prepare_precipitaiton(mean_pred[idx,::])
-
-        _plot_projection(longitudes, latitudes, target[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-target.jpg'))
-        _plot_projection(longitudes, latitudes, prediction[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-prediction.jpg'))
-        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-input.jpg'))
-        if mean_pred is not None:
-            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-mean_prediction.jpg'))
-
-        _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
-        _, prediction_errors = compute_mae(prediction[idx,:,:], target[idx,:,:])
-        if mean_pred is not None:
-            _, mean_prediction_errors = compute_mae(mean_pred[idx,:,:], target[idx,:,:])
-
-
-        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-baseline-error.jpg'))
-        plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-prediction-error.jpg'))
-        if mean_pred is not None:
-            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
-
-        b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
-        freqs['baseline'] = b_freq
-        power['baseline'] = b_power
-        #plotting.plot_power_spectrum(b_freq, b_power, target_channels[t_c], os.path.join('plots/spectra/baseline2dt',  target_channels[t_c] + '-all_dates'))
-        t_freq, t_power = average_power_spectrum(target[idx,:,:].squeeze(), 2.0)
-        freqs['target'] = t_freq
-        power['target'] = t_power
-        p_freq, p_power = average_power_spectrum(prediction[idx,:,:].squeeze(), 2.0)
-        freqs['prediction'] = p_freq
-        power['prediction'] = p_power
-        if mean_pred is not None:
-            mp_freq, mp_power = average_power_spectrum(mean_pred[idx,:,:].squeeze(), 2.0)
-            freqs['mean_prediction'] = mp_freq
-            power['mean_prediction'] = mp_power
-        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
-
-
-def prepare_precipitaiton(precip_array):
-    precip_array = np.clip(precip_array, 0, None)
-    epsilon = 1e-2
-    precip_array = precip_array + epsilon
-    precip_array = np.log(precip_array)
-    # log_min, log_max = precip_array.min(), precip_array.max()
-    # precip_array = (precip_array-log_min)/(log_max-log_min)
-    return precip_array
-
-
-def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
-
-    """Plot observed or interpolated data in a scatter plot."""
-    # TODO: Refactor this somehow, it's not really generalizing well across variables.
-    fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label="K", orientation="horizontal")
-    plt.savefig(filename)
-    plt.close('all')
 
 if __name__ == "__main__":
     main()

@@ -500,7 +500,6 @@ def main(cfg: DictConfig) -> None:
                                     / num_accumulation_rounds
                                     / len(patch_nums_iter)
                                 )
-                                loss_accum += loss / num_accumulation_rounds  
                                 with nvtx.annotate(f"loss backward", color="yellow"):
                                     loss.backward()
 

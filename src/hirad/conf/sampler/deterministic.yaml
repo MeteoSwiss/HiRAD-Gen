@@ -2,7 +2,8 @@
 # Deterministic sampler is not implemented correctly in this codebase and shouldn't be used.
 
 type: deterministic
-num_steps: 9 
+params:
+  num_steps: 9 
   # Number of denoising steps
-solver: euler
+  solver: euler
   # ODE solver type: euler is the simplest solver

@@ -7,19 +7,16 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
-#SBATCH --cpus-per-task=72
 #SBATCH --time=00:30:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/iopsstor/scratch/cscs/pstamenk/logs/full_generation.log
-#SBATCH --error=/iopsstor/scratch/cscs/pstamenk/logs/full_generation.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_generation.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_generation.err
 
 ### ENVIRONMENT ####
-#SBATCH --uenv=pytorch/v2.6.0:/user-environment
-#SBATCH --view=default
-#SBATCH -A a-a122
+#SBATCH -A c38
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -34,18 +31,21 @@ export MASTER_PORT=29500
 echo "Master port: $MASTER_PORT"
 
 # Get number of physical cores using Python
-PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
-# Use SLURM_NTASKS (number of processes to be launched by torchrun)
-LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
-# Compute threads per process
-OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
-export OMP_NUM_THREADS=$OMP_THREADS
-echo "Physical cores: $PHYSICAL_CORES"
-echo "Local processes: $LOCAL_PROCS"
-echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
+# PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
+# # Use SLURM_NTASKS (number of processes to be launched by torchrun)
+# LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
+# # Compute threads per process
+# OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
+# export OMP_NUM_THREADS=$OMP_THREADS
+export OMP_NUM_THREADS=72
+# echo "Physical cores: $PHYSICAL_CORES"
+# echo "Local processes: $LOCAL_PROCS"
+# echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
-srun bash -c "
-    . ./train_env/bin/activate
+srun --container-writable --environment=modulus_env bash -c "
+    cd HiRAD-Gen
+    pip install -e . --no-dependencies
+    pip install Cartopy==0.22.0
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "

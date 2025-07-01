@@ -1,25 +1,23 @@
 #!/bin/bash
 
-#SBATCH --job-name="testrun"
+#SBATCH --job-name="corrdiff-first-stage"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=1
+#SBATCH --partition=normal
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=06:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/iopsstor/scratch/cscs/pstamenk/logs/regression.log
-#SBATCH --error=/iopsstor/scratch/cscs/pstamenk/logs/regression.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_full_run.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_full_run.err
 
 ### ENVIRONMENT ####
-#SBATCH --uenv=pytorch/v2.6.0:/user-environment
-#SBATCH --view=default
-#SBATCH -A a-a122
+#SBATCH -A c38
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -32,14 +30,19 @@ export MASTER_ADDR
 export MASTER_PORT=29500
 
 # Get number of physical cores using Python
-PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
-LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
-# Compute cores per process
-OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
-export OMP_NUM_THREADS=$OMP_THREADS
-
+# PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
+# LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
+# # Compute cores per process
+# OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
+# export OMP_NUM_THREADS=$OMP_THREADS
+export OMP_NUM_THREADS=72
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
-srun bash -c "
-    . ./train_env/bin/activate
+# srun bash -c "
+#     . ./train_env/bin/activate
+#     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
+# "
+srun --container-writable --environment=modulus_env bash -c "
+    cd HiRAD-Gen
+    pip install -e . --no-dependencies
     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
 "

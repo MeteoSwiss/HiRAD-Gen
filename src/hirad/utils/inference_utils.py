@@ -15,12 +15,17 @@
 # limitations under the License.
 
 from typing import Optional
+import os
 
 import nvtx
+import numpy as np
 import torch
 import tqdm
+from matplotlib import pyplot as plt
+import cartopy.crs as ccrs
 
 from .function_utils import StackedRandomGenerator
+from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #
@@ -194,3 +199,89 @@ def diffusion_step(
                 )
             all_images.append(images)
     return torch.cat(all_images)
+
+
+def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+    
+    os.makedirs(output_path, exist_ok=True)
+
+    longitudes = dataset.longitude()
+    latitudes = dataset.latitude()
+    input_channels = dataset.input_channels()
+    output_channels = dataset.output_channels()
+
+    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+
+
+    freqs = {}
+    power = {}
+    for idx, channel in enumerate(output_channels):
+        input_channel_idx = input_channels.index(channel)
+
+        if channel.name=="tp":
+            target[idx,::] = _prepare_precipitaiton(target[idx,:,:])
+            prediction[idx,::] = _prepare_precipitaiton(prediction[idx,:,:])
+            baseline[input_channel_idx,:,:] = _prepare_precipitaiton(baseline[input_channel_idx])
+            if mean_pred is not None:
+                mean_pred[idx,::] = _prepare_precipitaiton(mean_pred[idx,::])
+
+        _plot_projection(longitudes, latitudes, target[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-target.jpg'))
+        _plot_projection(longitudes, latitudes, prediction[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-prediction.jpg'))
+        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-input.jpg'))
+        if mean_pred is not None:
+            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-mean_prediction.jpg'))
+
+        _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
+        _, prediction_errors = compute_mae(prediction[idx,:,:], target[idx,:,:])
+        if mean_pred is not None:
+            _, mean_prediction_errors = compute_mae(mean_pred[idx,:,:], target[idx,:,:])
+
+
+        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-baseline-error.jpg'))
+        plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-prediction-error.jpg'))
+        if mean_pred is not None:
+            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
+
+        b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
+        freqs['baseline'] = b_freq
+        power['baseline'] = b_power
+        #plotting.plot_power_spectrum(b_freq, b_power, target_channels[t_c], os.path.join('plots/spectra/baseline2dt',  target_channels[t_c] + '-all_dates'))
+        t_freq, t_power = average_power_spectrum(target[idx,:,:].squeeze(), 2.0)
+        freqs['target'] = t_freq
+        power['target'] = t_power
+        p_freq, p_power = average_power_spectrum(prediction[idx,:,:].squeeze(), 2.0)
+        freqs['prediction'] = p_freq
+        power['prediction'] = p_power
+        if mean_pred is not None:
+            mp_freq, mp_power = average_power_spectrum(mean_pred[idx,:,:].squeeze(), 2.0)
+            freqs['mean_prediction'] = mp_freq
+            power['mean_prediction'] = mp_power
+        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
+
+
+def _prepare_precipitaiton(precip_array):
+    precip_array = np.clip(precip_array, 0, None)
+    epsilon = 1e-2
+    precip_array = precip_array + epsilon
+    precip_array = np.log(precip_array)
+    # log_min, log_max = precip_array.min(), precip_array.max()
+    # precip_array = (precip_array-log_min)/(log_max-log_min)
+    return precip_array
+
+
+def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+
+    """Plot observed or interpolated data in a scatter plot."""
+    # TODO: Refactor this somehow, it's not really generalizing well across variables.
+    fig = plt.figure()
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    plt.colorbar(p, label="K", orientation="horizontal")
+    plt.savefig(filename)
+    plt.close('all')

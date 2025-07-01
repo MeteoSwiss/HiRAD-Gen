@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: generation_full
+    name: generation_regression_valid
   run:
-    dir: /iopsstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
+    dir: /capstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
 
 # Get defaults
 defaults:
