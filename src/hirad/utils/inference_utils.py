@@ -292,6 +292,5 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
     ax.coastlines()
     ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label="K", orientation="horizontal")
     plt.savefig(filename)
     plt.close('all')
