@@ -78,3 +78,4 @@ def crps(prediction_ensemble, target, average_over_area=True, average_over_chann
         dim.append('channel')
     crps = xskillscore.crps_ensemble(observations=observations, forecasts=forecasts, dim=dim)
     crps = crps.to_numpy()
+    return crps

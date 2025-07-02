@@ -12,8 +12,8 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/$USER/logs/regression_generation.log
-#SBATCH --error=/capstor/scratch/cscs/$USER/logs/regression_generation.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_generation.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_generation.err
 
 ### ENVIRONMENT ####
 #SBATCH -A c38

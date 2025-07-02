@@ -214,7 +214,10 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     # prediction.shape = (num_channels, X, Y)
     prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
     # prediction_ensemble.shape = (num_ensembles, num_channels, X, Y)
-    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),1) #.reshape(len(output_channels),-1)
+    prediction_ensemble = np.ndarray(image_pred.shape)
+    for i in range(image_pred.shape[0]):
+        prediction_ensemble[i,::] = np.flip(dataset.denormalize_output(image_pred[i,::].squeeze()),1)
+    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),2) #.reshape(len(output_channels),-1)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
