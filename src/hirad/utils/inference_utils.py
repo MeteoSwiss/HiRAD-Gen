@@ -224,7 +224,10 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
 
     #  Plot CRPS
     crps_score = crps(prediction_ensemble, target, average_over_area=False, average_over_channels=True)
-    _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps.jpg'))
+    _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps-all.jpg'))
+    crps_score_channels = crps(prediction_ensemble, target, average_over_area=False, average_over_channels=False)
+    for channel_num in range(crps_score_channels.shape[0]):
+        _plot_projection(longitudes, latitudes, crps_score_channels[channel_num,::], os.path.join(output_path, f'{time_step}-crps-{output_channels[channel_num].name}.jpg'))
 
     #  Plot power spectra
     freqs = {}
@@ -292,5 +295,6 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
     ax.coastlines()
     ax.gridlines(draw_labels=True)
+    plt.colorbar(p, orientation="horizontal")
     plt.savefig(filename)
     plt.close('all')
