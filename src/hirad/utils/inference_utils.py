@@ -201,6 +201,26 @@ def diffusion_step(
     return torch.cat(all_images)
 
 
+def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+    
+    os.makedirs(output_path, exist_ok=True)
+    
+    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    # prediction.shape = (num_channels, X, Y)
+    # prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    # prediction_ensemble.shape = (num_ensembles, num_channels, X, Y)
+    prediction_ensemble = np.ndarray(image_pred.shape)
+    for i in range(image_pred.shape[0]):
+        prediction_ensemble[i,::] = np.flip(dataset.denormalize_output(image_pred[i,::].squeeze()),1)
+    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),2) #.reshape(len(output_channels),-1)
+    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    torch.save(target, os.path.join(output_path, f'{time_step}-target'))
+    torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
+    torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
     
     os.makedirs(output_path, exist_ok=True)
@@ -275,6 +295,24 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
             power['mean_prediction'] = mp_power
         plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
 
+def plot_crps_over_time(times, dataset, output_path):
+    longitudes = dataset.longitude()
+    latitudes = dataset.latitude()
+    input_channels = dataset.input_channels()
+    output_channels = dataset.output_channels()
+
+    prediction_ensemble = torch.load(os.join(output_path, f'{times[0]}-predictions'))
+    all_predictions = np.ndarray((len(times), prediction_ensemble.shape[0], prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3]))
+    all_targets = np.ndarray(len(times), prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3])
+    for i in range(len(times)):
+        prediction_ensemble = torch.load(os.join(output_path, f'{times[i]}-predictions'))
+        all_predictions[i,::] = prediction_ensemble
+        target = torch.load(os.join(output_path, f'{times[i]}-target'))
+        all_targets[i,::] = target
+    score_over_time_channels = crps_score = crps(all_predictions, all_targets, average_over_area=True, average_over_channels=False, average_over_time=False)
+    score_over_area_channels = crps(all_predictions, all_targets, average_over_area=False, average_over_channels=False, average_over_time=True)
+    for channel_num in range(score_over_area_channels.shape[0]):
+        _plot_projection(longitudes, latitudes, score_over_area_channels[channel_num,::], os.path.join(output_path, f'all-time-crps-{output_channels[channel_num].name}.jpg'))
 
 def _prepare_precipitaiton(precip_array):
     precip_array = np.clip(precip_array, 0, None)

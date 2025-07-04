@@ -66,21 +66,24 @@ def crps(prediction_ensemble, target, average_over_area=True, average_over_chann
     #   where k is the number of dimensions that were not averaged over.
     #   For example, if average_over_area is False (and all others true), will
     #   return an ndarray of shape (X,Y) 
-    observations = xr.DataArray(target,
-                                coords = [('channel', np.arange(target.shape[0])),
-                                           ('x', np.arange(target.shape[1])),
-                                           ('y', np.arange(target.shape[2]))])
+    target_coords =  [('channel', np.arange(target.shape[-3])),
+                        ('x', np.arange(target.shape[-2])),
+                        ('y', np.arange(target.shape[-1]))]
+
     
     forecasts_coords = [('member', np.arange(prediction_ensemble.shape[-4])),
                         ('channel', np.arange(prediction_ensemble.shape[-3])),
                         ('x', np.arange(prediction_ensemble.shape[-2])),
                         ('y', np.arange(prediction_ensemble.shape[-1]))]
     
-    if prediction_ensemble.ndim > 4:
-        forecasts.coords.insert(0, ('time', np.arange(prediction_ensemble.shape[-5])))
+    if prediction_ensemble.ndim > 4 and target.ndim > 3:
+        forecasts_coords.insert(0, ('time', np.arange(prediction_ensemble.shape[-5])))
+        target_coords.insert(0, ('time', np.arange(target.shape[-4])))
+        
 
 
     forecasts = xr.DataArray(prediction_ensemble, coords = forecasts_coords)
+    observations = xr.DataArray(target, coords = target_coords)
 
     dim = []
     if prediction_ensemble.ndim > 4 and average_over_time:
