@@ -130,8 +130,8 @@ def stochastic_sampler(
 
     # Adjust noise levels based on what's supported by the network.
     # Proposed EDM sampler (Algorithm 2) with minor changes to enable super-resolution.
-    sigma_min = max(sigma_min, net.sigma_min)
-    sigma_max = min(sigma_max, net.sigma_max)
+    sigma_min = max(sigma_min, net.module.sigma_min if hasattr(net, "module") else net.sigma_min)
+    sigma_max = min(sigma_max, net.module.sigma_max if hasattr(net, "module") else net.sigma_max)
 
     if patching is not None and not isinstance(patching, GridPatching2D):
         raise ValueError("patching must be an instance of GridPatching2D.")
@@ -162,7 +162,8 @@ def stochastic_sampler(
         * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))
     ) ** rho
     t_steps = torch.cat(
-        [net.round_sigma(t_steps), torch.zeros_like(t_steps[:1])]
+        [net.module.round_sigma(t_steps) if hasattr(net, "module") else net.round_sigma(t_steps),
+          torch.zeros_like(t_steps[:1])]
     )  # t_N = 0
 
     batch_size = img_lr.shape[0]
@@ -198,7 +199,7 @@ def stochastic_sampler(
         x_cur = x_next
         # Increase noise temporarily.
         gamma = S_churn / num_steps if S_min <= t_cur <= S_max else 0
-        t_hat = net.round_sigma(t_cur + gamma * t_cur)
+        t_hat = net.module.round_sigma(t_cur + gamma * t_cur) if hasattr(net, "module") else net.round_sigma(t_cur + gamma * t_cur)
 
         x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
 

@@ -230,6 +230,8 @@ def main(cfg: DictConfig) -> None:
                 if time_index == warmup_steps:
                     start.record()
 
+                savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
+                os.makedirs(savedir,exist_ok=True)
                 # continue
                 if lead_time_label:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
@@ -249,7 +251,7 @@ def main(cfg: DictConfig) -> None:
                     writer_threads.append(
                         writer_executor.submit(
                             save_images,
-                            output_path,
+                            savedir,
                             times[sampler[time_index]],
                             dataset,
                             image_out.cpu().numpy(),

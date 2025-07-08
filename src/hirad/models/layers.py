@@ -26,7 +26,7 @@ from typing import Any, Dict, List
 import numpy as np
 import nvtx
 import torch
-import torch.cuda.amp as amp
+import torch.amp as amp
 from einops import rearrange
 from torch.nn.functional import elu, gelu, leaky_relu, relu, sigmoid, silu, tanh
 
@@ -700,7 +700,7 @@ class UNetBlock(torch.nn.Module):
                 # w = AttentionOp.apply(q, k)
                 # a = torch.einsum("nqk,nck->ncq", w, v)
                 # Compute attention in one step
-                with amp.autocast(enabled=self.amp_mode):
+                with amp.autocast(x.device.type, enabled=self.amp_mode):
                     attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
                 x = self.proj(attn.reshape(*x.shape)).add_(x)
                 x = x * self.skip_scale

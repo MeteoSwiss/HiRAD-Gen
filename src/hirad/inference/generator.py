@@ -66,7 +66,6 @@ class Generator():
     def generate(self, image_lr, lead_time_label=None):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
-            image_lr = image_lr.to(memory_format=torch.channels_last)
             img_shape = image_lr.shape[-2:]
 
             if self.net_reg:

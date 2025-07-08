@@ -84,7 +84,7 @@ def regression_step(
         if lead_time_label is not None:
             x = net(x=x_hat[0:1], img_lr=img_lr, lead_time_label=lead_time_label)
         else:
-            x = net(x=x_hat[0:1], img_lr=img_lr)
+            x = net(x=x_hat[0:1], img_lr=img_lr, force_fp32=False)
 
     # If the batch size is greater than 1, repeat the prediction
     if x_hat.shape[0] > 1:
@@ -201,6 +201,11 @@ def diffusion_step(
     return torch.cat(all_images)
 
 
+############################################################################
+#                           Visualization Utilities                        #
+############################################################################
+
+
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
     
     os.makedirs(output_path, exist_ok=True)
@@ -211,7 +216,7 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     output_channels = dataset.output_channels()
 
     target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    prediction = np.flip(dataset.denormalize_output(image_pred.squeeze()),-2) #.reshape(len(output_channels),-1)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
@@ -220,31 +225,60 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     freqs = {}
     power = {}
     for idx, channel in enumerate(output_channels):
+        channel_dir = channel.name + "_" + channel.level if channel.level else channel.name
+        output_path_channel = os.path.join(output_path, channel_dir)
+        if not os.path.exists(output_path_channel):
+            os.makedirs(output_path_channel)
         input_channel_idx = input_channels.index(channel)
 
         if channel.name=="tp":
             target[idx,::] = _prepare_precipitaiton(target[idx,:,:])
-            prediction[idx,::] = _prepare_precipitaiton(prediction[idx,:,:])
-            baseline[input_channel_idx,:,:] = _prepare_precipitaiton(baseline[input_channel_idx])
+            prediction[:,idx,::] = _prepare_precipitaiton(prediction[:,idx,:,:])
+            baseline[input_channel_idx,:,:] = _prepare_precipitaiton(baseline[input_channel_idx,::])
             if mean_pred is not None:
                 mean_pred[idx,::] = _prepare_precipitaiton(mean_pred[idx,::])
-
-        _plot_projection(longitudes, latitudes, target[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-target.jpg'))
-        _plot_projection(longitudes, latitudes, prediction[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-prediction.jpg'))
-        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-input.jpg'))
+        
         if mean_pred is not None:
-            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], os.path.join(output_path, f'{time_step}-{channel.name}-mean_prediction.jpg'))
+            vmin, vmax = calculate_bounds(target[idx,:,:],
+                                            prediction[:,idx,:,:],
+                                            baseline[input_channel_idx,:,:],
+                                            mean_pred[idx,:,:])
+        else:
+            vmin, vmax = calculate_bounds(target[idx,:,:],
+                                            prediction[:,idx,:,:],
+                                            baseline[input_channel_idx,:,:])      
+        _plot_projection(longitudes, latitudes, target[idx,:,:],
+                          os.path.join(output_path_channel, f'{time_step}-{channel.name}-target.jpg'), 
+                          vmin=vmin, vmax=vmax)
+        if mean_pred is not None:
+            for member_idx in range(prediction.shape[0]):
+                _plot_projection(longitudes, latitudes, prediction[member_idx,idx,:,:],
+                                  os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}.jpg'), 
+                                  vmin=vmin, vmax=vmax)
+        else:
+            _plot_projection(longitudes, latitudes, 
+                             prediction[0,idx,:,:], os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction.jpg'), 
+                             vmin=vmin, vmax=vmax)
+        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], 
+                         os.path.join(output_path_channel, f'{time_step}-{channel.name}-input.jpg'), 
+                         vmin=vmin, vmax=vmax)
+        if mean_pred is not None:
+            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], 
+                             os.path.join(output_path_channel, f'{time_step}-{channel.name}-mean_prediction.jpg'), 
+                             vmin=vmin, vmax=vmax)
 
         _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
-        _, prediction_errors = compute_mae(prediction[idx,:,:], target[idx,:,:])
+        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-baseline-error.jpg'))
+        if mean_pred is not None:
+            for member_idx in range(prediction.shape[0]):
+                _, prediction_errors = compute_mae(prediction[member_idx,idx,:,:], target[idx,:,:])
+                plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}-error.jpg'))
+        else:
+            _, prediction_errors = compute_mae(prediction[0,idx,:,:], target[idx,:,:])
+            plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction-error.jpg'))            
         if mean_pred is not None:
             _, mean_prediction_errors = compute_mae(mean_pred[idx,:,:], target[idx,:,:])
-
-
-        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-baseline-error.jpg'))
-        plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-prediction-error.jpg'))
-        if mean_pred is not None:
-            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
+            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
 
         b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
         freqs['baseline'] = b_freq
@@ -253,21 +287,22 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         t_freq, t_power = average_power_spectrum(target[idx,:,:].squeeze(), 2.0)
         freqs['target'] = t_freq
         power['target'] = t_power
-        p_freq, p_power = average_power_spectrum(prediction[idx,:,:].squeeze(), 2.0)
+        p_freq, p_power = average_power_spectrum(prediction[-1,idx,:,:].squeeze(), 2.0)
         freqs['prediction'] = p_freq
         power['prediction'] = p_power
         if mean_pred is not None:
             mp_freq, mp_power = average_power_spectrum(mean_pred[idx,:,:].squeeze(), 2.0)
             freqs['mean_prediction'] = mp_freq
             power['mean_prediction'] = mp_power
-        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path, f'{time_step}-{channel.name}-spectra.jpg'))
+        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path_channel, f'{time_step}-{channel.name}-spectra.jpg'))
 
 
 def _prepare_precipitaiton(precip_array):
     precip_array = np.clip(precip_array, 0, None)
-    epsilon = 1e-2
-    precip_array = precip_array + epsilon
-    precip_array = np.log(precip_array)
+    precip_array = np.where(precip_array == 0, 1e-6, precip_array)
+    # epsilon = 1e-2
+    # precip_array = precip_array + epsilon
+    precip_array = np.log10(precip_array)
     # log_min, log_max = precip_array.min(), precip_array.max()
     # precip_array = (precip_array-log_min)/(log_max-log_min)
     return precip_array
@@ -285,3 +320,8 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     plt.colorbar(p, label="K", orientation="horizontal")
     plt.savefig(filename)
     plt.close('all')
+
+def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
+    vmin = min(*[np.min(array).item() for array in arrays])
+    vmax = max(*[np.max(array).item() for array in arrays])
+    return vmin, vmax

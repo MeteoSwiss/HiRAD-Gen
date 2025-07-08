@@ -1,6 +1,8 @@
 import os
 import time
 
+from concurrent.futures import ThreadPoolExecutor
+
 import psutil
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -20,11 +22,12 @@ from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_pr
                                         is_time_for_periodic_task, handle_and_clip_gradients
 from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
-from hirad.models import UNet, EDMPrecondSuperResolution, EDMPrecondSR
+from hirad.utils.function_utils import get_time_from_range
+from hirad.utils.inference_utils import save_images
+from hirad.models import UNet, EDMPrecondSuperResolution
 from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
-from hirad.datasets import init_train_valid_datasets_from_config
-
-from matplotlib import pyplot as plt
+from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
+from hirad.inference import Generator
 
 torch._dynamo.reset()
 # Increase the cache size limit
@@ -85,6 +88,14 @@ def main(cfg: DictConfig) -> None:
     )
     if dist.rank==0 and not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir) # added creating checkpoint dir
+    visualize_checkpoints = False
+    if hasattr(cfg, "generation"):
+        visualization_dir = os.path.join(
+            cfg.training.io.get("checkpoint_dir", "."), "visualization"
+        )
+        if dist.rank==0 and not os.path.exists(visualization_dir):
+            os.makedirs(visualization_dir) # added creating checkpoint dir
+        visualize_checkpoints = True
     if cfg.training.hp.batch_size_per_gpu == "auto":
         cfg.training.hp.batch_size_per_gpu = (
             cfg.training.hp.total_batch_size // dist.world_size
@@ -126,6 +137,22 @@ def main(cfg: DictConfig) -> None:
         prob_channels = dataset.get_prob_channel_index() #TODO figure out what prob_channel are and update dataloader
     else:
         prob_channels = None
+
+    if visualize_checkpoints:
+        # Parse the inference input times
+        if cfg.generation.times_range and cfg.generation.times:
+            raise ValueError("Either times_range or times must be provided, but not both")
+        if cfg.generation.times_range:
+            times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
+        else:
+            times = cfg.generation.times
+        viz_dataset_cfg = OmegaConf.to_container(cfg.generation.dataset)
+        visualization_dataset, visualization_sampler = get_dataset_and_sampler_inference(
+                                                                dataset_cfg=viz_dataset_cfg, times=times
+                                                            )
+        visualization_data_loader = torch.utils.data.DataLoader(
+                                        dataset=visualization_dataset, sampler=visualization_sampler, batch_size=1, pin_memory=True
+                                    )
 
     # Parse the patch shape
     #TODO figure out patched diffusion and how to use it
@@ -394,6 +421,27 @@ def main(cfg: DictConfig) -> None:
         )
     except:
         cur_nimg = 0
+
+    # init the generator for inference to visualize checkpoint results
+    if visualize_checkpoints:
+        generator = Generator(
+            net_reg= model if regression_net is None else regression_net,
+            net_res= model if regression_net is not None else None,
+            batch_size=int(cfg.generation.num_ensembles//dist.world_size),
+            ensemble_size=cfg.generation.num_ensembles,
+            hr_mean_conditioning=cfg.model.hr_mean_conditioning,
+            n_out_channels=img_out_channels,
+            inference_mode="all" if regression_net is not None else "regression",
+            dist=dist,
+            )
+        if use_patching:
+            generator.initialize_patching(img_shape=img_shape, 
+                                          patch_shape=patch_shape,
+                                          boundary_pix=cfg.generation.boundary_pix,
+                                          overlap_pix=cfg.generation.overlap_pix,
+                                          )
+        sampler_params = cfg.generation.sampler.params if "params" in cfg.generation.sampler else {}
+        generator.initialize_sampler(cfg.generation.sampler.type, **sampler_params)  
 
     ############################################################################
     #                            MAIN TRAINING LOOP                            #
@@ -712,6 +760,89 @@ def main(cfg: DictConfig) -> None:
                         optimizer=optimizer,
                         epoch=cur_nimg,
                     )
+
+                # Visualize samples
+                if dist.world_size > 1:
+                    torch.distributed.barrier()
+                if is_time_for_periodic_task(
+                    cur_nimg,
+                    cfg.training.io.save_checkpoint_freq,
+                    done,
+                    cfg.training.hp.total_batch_size,
+                    dist.rank,
+                ):
+                    if visualize_checkpoints:
+                        with nvtx.annotate("validation", color="red"):                    
+                            if dist.rank == 0:
+                                writer_executor = ThreadPoolExecutor(
+                                    max_workers=cfg.generation.perf.num_writer_workers
+                                )
+                                writer_threads = []
+
+                            times = visualization_dataset.time()
+                            time_index = -1
+                            for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
+                                iter(visualization_data_loader)
+                            ):
+                                time_index += 1
+                                logger0.info(f"starting index: {time_index}")
+
+                                # continue
+                                if lead_time_label_viz:
+                                    lead_time_label_viz = lead_time_label_viz[0].to(dist.device).contiguous()
+                                else:
+                                    lead_time_label_viz = None
+
+                                if use_apex_gn:
+                                    img_clean_viz = img_clean_viz.to(
+                                        dist.device,
+                                        dtype=input_dtype,
+                                        non_blocking=True,
+                                    ).to(memory_format=torch.channels_last)
+                                    img_lr_viz = img_lr_viz.to(
+                                        dist.device,
+                                        dtype=input_dtype,
+                                        non_blocking=True,
+                                    ).to(memory_format=torch.channels_last)
+                                else:
+                                    img_clean_viz = (
+                                        img_clean_viz.to(dist.device)
+                                        .to(input_dtype)
+                                        .contiguous()
+                                    )
+                                    img_lr_viz = (
+                                        img_lr_viz.to(dist.device)
+                                        .to(input_dtype)
+                                        .contiguous()
+                                    )
+                                with torch.autocast(
+                                        "cuda", dtype=amp_dtype, enabled=enable_amp
+                                    ):
+                                    image_pred_viz, image_reg_viz = generator.generate(img_lr_viz, lead_time_label_viz)
+                                if dist.rank == 0:
+                                    # write out data in a seperate thread so we don't hold up inferencing
+                                    output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
+                                    if dist.rank==0 and not os.path.exists(output_path):
+                                        os.makedirs(output_path)
+                                    writer_threads.append(
+                                        writer_executor.submit(
+                                            save_images,
+                                            output_path,
+                                            times[visualization_sampler[time_index]],
+                                            visualization_dataset,
+                                            image_pred_viz.cpu().numpy(),
+                                            img_clean_viz.cpu().numpy(),
+                                            img_lr_viz.cpu().numpy(),
+                                            image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
+                                        )
+                                    )
+                            # make sure all the workers are done writing
+                            if dist.rank == 0:
+                                for thread in list(writer_threads):
+                                    thread.result()
+                                    writer_threads.remove(thread)
+                                writer_executor.shutdown()
+
 
     # Done.
     logger0.info("Training Completed.")
