@@ -4,6 +4,8 @@ import numpy as np
 import torch
 
 from scipy.signal import periodogram
+import xskillscore
+import xarray as xr
 
 
 # set up MAE calculation to be run for each channel for a given date/time (for target COSMO, prediction, and ERA interpolated)
@@ -55,3 +57,42 @@ def average_power_spectrum(data: np.ndarray, d=2.0):  # d=2km by default
         logging.info(f'power spectra shape={power_spectra.shape}')
 
     return freqs, power_spectra
+
+def crps(prediction_ensemble, target, average_over_area=True, average_over_channels=True, average_over_time=True):
+    # Assumes that prediction_ensemble is in form:
+    #  (member, channel, x, y) or
+    #  (time, member, channel, x, y)
+    # Returns: a k-dimensional array of continuous ranked probability scores,
+    #   where k is the number of dimensions that were not averaged over.
+    #   For example, if average_over_area is False (and all others true), will
+    #   return an ndarray of shape (X,Y) 
+    target_coords =  [('channel', np.arange(target.shape[-3])),
+                        ('x', np.arange(target.shape[-2])),
+                        ('y', np.arange(target.shape[-1]))]
+
+    
+    forecasts_coords = [('member', np.arange(prediction_ensemble.shape[-4])),
+                        ('channel', np.arange(prediction_ensemble.shape[-3])),
+                        ('x', np.arange(prediction_ensemble.shape[-2])),
+                        ('y', np.arange(prediction_ensemble.shape[-1]))]
+    
+    if prediction_ensemble.ndim > 4 and target.ndim > 3:
+        forecasts_coords.insert(0, ('time', np.arange(prediction_ensemble.shape[-5])))
+        target_coords.insert(0, ('time', np.arange(target.shape[-4])))
+        
+
+
+    forecasts = xr.DataArray(prediction_ensemble, coords = forecasts_coords)
+    observations = xr.DataArray(target, coords = target_coords)
+
+    dim = []
+    if prediction_ensemble.ndim > 4 and average_over_time:
+        dim.append('time')
+    if average_over_area:
+        dim.append('x')
+        dim.append('y')
+    if average_over_channels:
+        dim.append('channel')
+    crps = xskillscore.crps_ensemble(observations=observations, forecasts=forecasts, dim=dim)
+    crps = crps.to_numpy()
+    return crps

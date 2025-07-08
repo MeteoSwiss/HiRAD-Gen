@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_images
+from hirad.utils.inference_utils import save_images, save_results_as_torch, plot_crps_over_time
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 
@@ -248,9 +248,23 @@ def main(cfg: DictConfig) -> None:
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
+                    
+                    if not cfg.generation.times_range:
+                        writer_threads.append(
+                            writer_executor.submit(
+                                save_images,
+                                savedir,
+                                times[sampler[time_index]],
+                                dataset,
+                                image_out.cpu().numpy(),
+                                image_tar.cpu().numpy(),
+                                image_lr.cpu().numpy(),
+                                image_reg.cpu().numpy() if image_reg is not None else None,
+                            )
+                        )
                     writer_threads.append(
                         writer_executor.submit(
-                            save_images,
+                            save_results_as_torch,
                             savedir,
                             times[sampler[time_index]],
                             dataset,
@@ -285,6 +299,11 @@ def main(cfg: DictConfig) -> None:
     if dist.rank == 0:
         f.close()
     logger0.info("Generation Completed.")
+
+    if cfg.generation.times_range: 
+        # reassign times
+        times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
+        plot_crps_over_time(times, dataset, output_path)
 
 
 if __name__ == "__main__":
