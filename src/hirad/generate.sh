@@ -17,7 +17,7 @@
 #SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.err
 
 ### ENVIRONMENT ####
-#SBATCH -A c38
+#SBATCH -A a122
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM

@@ -17,7 +17,7 @@
 #SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/training_diffusion_test.err
 
 ### ENVIRONMENT ####
-#SBATCH -A c38
+#SBATCH -A a122
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -38,8 +38,7 @@ export MASTER_PORT=29500
 export OMP_NUM_THREADS=72
 
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
-srun --container-writable --environment=modulus_env bash -c "
-    cd HiRAD-Gen
+srun --environment=./modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/training/train.py --config-name=training_era_cosmo_diffusion.yaml
 "

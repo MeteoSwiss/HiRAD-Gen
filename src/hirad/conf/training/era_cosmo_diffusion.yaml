@@ -1,6 +1,6 @@
 # Hyperparameters
 hp:
-    training_duration: 1000
+    training_duration: 1024
     # Training duration based on the number of processed samples
     total_batch_size: 64
     # Total batch size
@@ -33,7 +33,7 @@ io:
     # Where to load the regression checkpoint
     print_progress_freq: 128
     # How often to print progress
-    save_checkpoint_freq: 512
+    save_checkpoint_freq: 1024
     # How often to save the checkpoints, measured in number of processed samples
     validation_freq: 256
     # how often to record the validation loss, measured in number of processed samples
