@@ -1,0 +1,10 @@
+image = "/capstor/scratch/cscs/pstamenk/hirad.sqsh"
+
+mounts = ["/capstor", "/iopsstor”, “/users”]
+
+# The initial directory in the container. 
+workdir = "${PWD}"
+
+[annotations]
+com.hooks.aws_ofi_nccl.enabled = "true"
+com.hooks.aws_ofi_nccl.variant = "cuda12"
