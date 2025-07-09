@@ -1,6 +1,6 @@
 # Hyperparameters
 hp:
-    training_duration: 500000
+    training_duration: 1000
     # Training duration based on the number of processed samples
     total_batch_size: 64
     # Total batch size
@@ -31,12 +31,12 @@ perf:
 
 # I/O
 io:
-    print_progress_freq: 1024
+    print_progress_freq: 128
     # How often to print progress
-    save_checkpoint_freq: 25000
+    save_checkpoint_freq: 512
     # How often to save the checkpoints, measured in number of processed samples
-    validation_freq: 5000
+    validation_freq: 256
     # how often to record the validation loss, measured in number of processed samples
-    validation_steps: 10
+    validation_steps: 2
     # how many loss evaluations are used to compute the validation loss per checkpoint
     checkpoint_dir: .

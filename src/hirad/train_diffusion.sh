@@ -3,18 +3,18 @@
 #SBATCH --job-name="corrdiff-second-stage"
 
 ### HARDWARE ###
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
-#SBATCH --time=24:00:00
+#SBATCH --time=00:30:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/diffusion_full.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/diffusion_full.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/training_diffusion_test.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/training_diffusion_test.err
 
 ### ENVIRONMENT ####
 #SBATCH -A c38

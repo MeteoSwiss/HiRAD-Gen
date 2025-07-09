@@ -245,6 +245,7 @@ def main(cfg: DictConfig) -> None:
                 image_tar = image_tar.to(device=device).to(torch.float32)
                 # image_out, image_reg = generate_fn(image_lr,lead_time_label)
                 image_out, image_reg = generator.generate(image_lr,lead_time_label)
+
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing

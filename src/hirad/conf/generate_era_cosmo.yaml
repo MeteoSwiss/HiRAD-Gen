@@ -1,15 +1,15 @@
 hydra:
   job:
     chdir: true
-    name: generation_regression_valid
+    name: diffusion_era5_cosmo_7500000_test
   run:
-    dir: /capstor/scratch/cscs/pstamenk/outputs/${hydra:job.name}
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
 
 # Get defaults
 defaults:
   - _self_
   # Dataset
-  - dataset/era_cosmo
+  - dataset/era_cosmo_inference
 
   # Sampler
   - sampler/stochastic

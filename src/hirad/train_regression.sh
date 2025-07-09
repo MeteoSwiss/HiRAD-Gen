@@ -3,18 +3,18 @@
 #SBATCH --job-name="corrdiff-first-stage"
 
 ### HARDWARE ###
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
-#SBATCH --time=06:00:00
+#SBATCH --time=00:30:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_full_run.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_full_run.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/training_regression_test.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/training_regression_test.err
 
 ### ENVIRONMENT ####
 #SBATCH -A c38

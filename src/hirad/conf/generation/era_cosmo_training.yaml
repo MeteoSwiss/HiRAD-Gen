@@ -1,0 +1,18 @@
+defaults:
+  - ../sampler@sampler: stochastic
+  - ../dataset@dataset: era_cosmo_inference
+
+num_ensembles: 16
+  # Number of ensembles to generate per input
+# overlap_pixels: 0
+  # Number of overlapping pixels between adjacent patches
+# boundary_pixels: 0
+  # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
+  # artifact.
+times_range: null
+times:
+  - 20200926-1800
+  - 20200927-0000
+
+perf:
+  num_writer_workers: 10

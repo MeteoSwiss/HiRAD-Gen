@@ -1,0 +1,2 @@
+type: era5_cosmo
+dataset_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/era5-cosmo-1h-linear-interpolation/validation

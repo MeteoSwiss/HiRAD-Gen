@@ -215,10 +215,7 @@ def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr,
     # prediction.shape = (num_channels, X, Y)
     # prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
     # prediction_ensemble.shape = (num_ensembles, num_channels, X, Y)
-    prediction_ensemble = np.ndarray(image_pred.shape)
-    for i in range(image_pred.shape[0]):
-        prediction_ensemble[i,::] = np.flip(dataset.denormalize_output(image_pred[i,::].squeeze()),1)
-    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),2) #.reshape(len(output_channels),-1)
+    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),-2)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
@@ -227,8 +224,8 @@ def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr,
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
 
 
-def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
-    
+def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
+
     os.makedirs(output_path, exist_ok=True)
 
     longitudes = dataset.longitude()
@@ -237,17 +234,18 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     output_channels = dataset.output_channels()
 
     target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    prediction = np.flip(dataset.denormalize_output(image_pred.squeeze()),-2) #.reshape(len(output_channels),-1)
+    prediction = np.flip(dataset.denormalize_output(image_pred),-2) #.reshape(len(output_channels),-1)
     baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
 
     #  Plot CRPS
-    crps_score = crps(prediction, target, average_over_area=False, average_over_channels=True)
-    _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps-all.jpg'))
-    crps_score_channels = crps(prediction, target, average_over_area=False, average_over_channels=False)
-    for channel_num in range(crps_score_channels.shape[0]):
-        _plot_projection(longitudes, latitudes, crps_score_channels[channel_num,::], os.path.join(output_path, f'{time_step}-crps-{output_channels[channel_num].name}.jpg'))
+    if prediction.shape[0] > 1:
+        crps_score = crps(prediction, target, average_over_area=False, average_over_channels=True)
+        _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps-all.jpg'))
+        crps_score_channels = crps(prediction, target, average_over_area=False, average_over_channels=False)
+        for channel_num in range(crps_score_channels.shape[0]):
+            _plot_projection(longitudes, latitudes, crps_score_channels[channel_num,::], os.path.join(output_path, f'{time_step}-crps-{output_channels[channel_num].name}.jpg'))
 
     #  Plot power spectra
     freqs = {}
@@ -278,7 +276,7 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         _plot_projection(longitudes, latitudes, target[idx,:,:],
                           os.path.join(output_path_channel, f'{time_step}-{channel.name}-target.jpg'), 
                           vmin=vmin, vmax=vmax)
-        if mean_pred is not None:
+        if prediction.shape[0] > 1:
             for member_idx in range(prediction.shape[0]):
                 _plot_projection(longitudes, latitudes, prediction[member_idx,idx,:,:],
                                   os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}.jpg'), 
@@ -297,7 +295,7 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
 
         _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
         plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-baseline-error.jpg'))
-        if mean_pred is not None:
+        if prediction.shape[0] > 1:
             for member_idx in range(prediction.shape[0]):
                 _, prediction_errors = compute_mae(prediction[member_idx,idx,:,:], target[idx,:,:])
                 plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}-error.jpg'))

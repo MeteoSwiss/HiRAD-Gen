@@ -5,18 +5,19 @@
 ### HARDWARE ###
 #SBATCH --partition=debug
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=1
+#SBATCH --ntasks-per-node=2
+#SBATCH --gpus-per-node=2
+#SBATCH --cpus-per-task=72
 #SBATCH --time=00:30:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/regression_generation.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/regression_generation.err
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.err
 
 ### ENVIRONMENT ####
-#SBATCH -A c38
+#SBATCH -A a122
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -46,7 +47,5 @@ export OMP_NUM_THREADS=72
 srun --container-writable --environment=modulus_env bash -c "
     cd HiRAD-Gen
     pip install -e . --no-dependencies
-    pip install Cartopy==0.22.0
-    pip install xskillscore
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "

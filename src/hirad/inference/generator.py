@@ -102,7 +102,7 @@ class Generator():
                         lead_time_label=lead_time_label,
                     )
             if self.inference_mode == "regression":
-                image_out = image_reg
+                image_out = image_reg[0:1,::]
             elif self.inference_mode == "diffusion":
                 image_out = image_res
             else:
@@ -130,11 +130,10 @@ class Generator():
                 if self.dist.rank == 0:
                     if self.inference_mode != "regression":
                         return torch.cat(gathered_tensors), image_reg[0:1,::]
-                    return torch.cat(gathered_tensors), None
+                    return torch.cat(gathered_tensors)[0:1,::], None
                 else:
                     return None, None
             else:
-                #TODO do this for multi-gpu setting above too
                 if self.inference_mode != "regression":
-                    return image_out, image_reg
+                    return image_out, image_reg[0:1,::]
                 return image_out, None
