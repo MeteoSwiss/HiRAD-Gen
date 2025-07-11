@@ -42,4 +42,4 @@ io:
   reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
   # reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_test/checkpoints_regression
     # Checkpoint filename for the mean predictor model
-  output_path: /capstor/scratch/cscs/mmcgloho/outputs/era-cosmo-1h/
+  output_path: ./outputs/evaluation

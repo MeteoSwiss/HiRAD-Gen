@@ -13,13 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-<<<<<<< Updated upstream
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.err
-=======
-#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/regression_generation.log
-#SBATCH --error=/capstor/scratch/cscs/mmcgloho/logs/regression_generation.err
->>>>>>> Stashed changes
+#SBATCH --output=./logs/regression_generation.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a122
@@ -53,3 +47,5 @@ srun --environment=./modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "
+    #pip install Cartopy==0.22.0
+    #pip install xskillscore

@@ -1,13 +1,9 @@
 # Hyperparameters
 hp:
-<<<<<<< Updated upstream
     training_duration: 1024
-=======
-    training_duration: 1000
->>>>>>> Stashed changes
     # Training duration based on the number of processed samples
     total_batch_size: 64
-    # Total batch size
+    # Total batch size -- based 8 per GPU -- 2 nodes is 2x8x4 -- see sbatch vars for how many gpus. diffusion need to point to the rgression.
     batch_size_per_gpu: "auto"
     # Batch size per GPU
     lr: 0.0002
