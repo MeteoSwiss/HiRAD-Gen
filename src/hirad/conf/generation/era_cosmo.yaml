@@ -15,12 +15,12 @@ patching: False
 hr_mean_conditioning: True
 # sample_res: full
   # Sampling resolution
-times_range: null
-times:
-  - 20200926-1800
-  - 20200927-0000
-
-has_laed_time: False
+times_range: ['20200101-0000','20200102-0000',1]
+times: null
+#  - 20200926-1800
+  #- 20160101-0600
+  # - 20160101-1200
+has_lead_time: False
 
 perf:
   force_fp16: False
@@ -42,4 +42,4 @@ io:
   reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
   # reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_test/checkpoints_regression
     # Checkpoint filename for the mean predictor model
-  output_path: ./images
+  output_path: /capstor/scratch/cscs/mmcgloho/outputs/era-cosmo-1h/

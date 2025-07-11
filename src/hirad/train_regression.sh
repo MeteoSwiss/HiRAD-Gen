@@ -13,8 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/training_regression_test.log
-#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/training_regression_test.err
+#SBATCH --output=./logs/regression_full_run.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a122

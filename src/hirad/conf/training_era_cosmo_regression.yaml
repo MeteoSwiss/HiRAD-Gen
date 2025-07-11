@@ -15,7 +15,7 @@ defaults:
   # Model
   - model/era_cosmo_regression
 
-  - model_size/normal
+  - model_size/mini
 
   # Training
   - training/era_cosmo_regression

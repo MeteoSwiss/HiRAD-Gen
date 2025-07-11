@@ -3,7 +3,11 @@ hydra:
     chdir: true
     name: diffusion_era5_cosmo_7500000_test
   run:
+<<<<<<< Updated upstream
     dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+=======
+    dir: /capstor/scratch/cscs/mmcgloho/outputs/${hydra:job.name}
+>>>>>>> Stashed changes
 
 # Get defaults
 defaults:

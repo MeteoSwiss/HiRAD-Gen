@@ -1,6 +1,10 @@
 # Hyperparameters
 hp:
+<<<<<<< Updated upstream
     training_duration: 1024
+=======
+    training_duration: 1000
+>>>>>>> Stashed changes
     # Training duration based on the number of processed samples
     total_batch_size: 64
     # Total batch size

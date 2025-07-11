@@ -13,8 +13,13 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
+<<<<<<< Updated upstream
 #SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.log
 #SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/generation_diffusion_test.err
+=======
+#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/regression_generation.log
+#SBATCH --error=/capstor/scratch/cscs/mmcgloho/logs/regression_generation.err
+>>>>>>> Stashed changes
 
 ### ENVIRONMENT ####
 #SBATCH -A a122
