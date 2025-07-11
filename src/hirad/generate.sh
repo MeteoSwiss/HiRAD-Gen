@@ -43,7 +43,7 @@ export OMP_NUM_THREADS=72
 # echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
-srun --environment=./modulus_env.toml bash -c "
+srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "

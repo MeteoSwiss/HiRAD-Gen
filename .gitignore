@@ -175,6 +175,7 @@ pyrightconfig.json
 *.torch
 plots/*
 *.npz
+outputs/*
 
 # conda
 .conda/*

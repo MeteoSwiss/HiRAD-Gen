@@ -1,0 +1,15 @@
+FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
+    
+# setup
+RUN apt-get update && apt-get install python3-pip python3-venv -y
+RUN pip install --upgrade pip
+    
+# Install the rest of dependencies.
+RUN pip install \
+    Cartopy==0.22.0 \
+    xskillscore
+
+
+
+
+
