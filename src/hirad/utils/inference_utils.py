@@ -330,19 +330,20 @@ def plot_crps_over_time(times, dataset, output_path):
     start_time=times[0]
     end_time=times[-1]
 
-    prediction_ensemble = torch.load(os.path.join(output_path, f'{times[0]}-predictions'), weights_only=False)
+    # Load one prediction ensemble to get the shape
+    prediction_ensemble = torch.load(os.path.join(output_path, times[0], f'{times[0]}-predictions'), weights_only=False)
     all_predictions = np.ndarray((len(times), prediction_ensemble.shape[0], prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3]))
     all_targets = np.ndarray((len(times), prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3]))
     for i in range(len(times)):
-        prediction_ensemble = torch.load(os.path.join(output_path, f'{times[i]}-predictions'), weights_only=False)
+        prediction_ensemble = torch.load(os.path.join(output_path, times[i], f'{times[i]}-predictions'), weights_only=False)
         all_predictions[i,::] = prediction_ensemble
-        target = torch.load(os.path.join(output_path, f'{times[i]}-target'), weights_only=False)
+        target = torch.load(os.path.join(output_path, times[i], f'{times[i]}-target'), weights_only=False)
         all_targets[i,::] = target
     score_over_time_channels = crps(all_predictions, all_targets, average_over_area=True, average_over_channels=False, average_over_time=False)
     score_over_area_channels = crps(all_predictions, all_targets, average_over_area=False, average_over_channels=False, average_over_time=True)
     for channel_num in range(score_over_area_channels.shape[0]):
-       _plot_projection(longitudes, latitudes, score_over_area_channels[channel_num,::], os.path.join(output_path, f'crps-time-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
-       _plot_score_vs_t(score_over_time_channels[:, channel_num], times, os.path.join(output_path, f'crps-area-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
+       _plot_projection(longitudes, latitudes, score_over_area_channels[channel_num,::], os.path.join(output_path, f'crps-area-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
+       _plot_score_vs_t(score_over_time_channels[:, channel_num], times, os.path.join(output_path, f'crps-time-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
 
 def _plot_score_vs_t(score: np.array, times: np.array, filename: str):
     fig = plt.figure()
