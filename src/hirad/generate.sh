@@ -16,7 +16,7 @@
 #SBATCH --output=./logs/regression_generation.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a122
+#SBATCH -A a161
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -47,5 +47,3 @@ srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
 "
-    #pip install Cartopy==0.22.0
-    #pip install xskillscore
