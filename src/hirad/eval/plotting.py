@@ -72,7 +72,6 @@ def compute_crps_over_time(times, dataset, output_path):
             index = -1
             for k in range(len(input_channels)):
                 if input_channels[k].name == output_channels[j].name:
-                    logging.info(f'found index of {j}:{output_channels[j].name} at {k}')
                     index = k
             output_to_input_channel_map[j] = index
 
@@ -182,7 +181,7 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
     end_time=times[-1]
 
     crps_ensemble_time = torch.load(os.path.join(output_path, f'crps-ensemble-time-{start_time}-{end_time}'), weights_only=False)
-    crps_area = torch.load(os.path.join(output_path, f'crps-area-{start_time}-{end_time}'), weights_only=False)
+    crps_area = torch.load(os.path.join(output_path, f'crps-ensemble-area-{start_time}-{end_time}'), weights_only=False)
     ensemble_mean_time = torch.load(os.path.join(output_path, f'mae-ensemble-mean-time-{start_time}-{end_time}'), weights_only=False)
     ensemble_mean_area = torch.load(os.path.join(output_path, f'mae-ensemble-mean-area-{start_time}-{end_time}'), weights_only=False)
     interpolation_time = torch.load(os.path.join(output_path, f'mae-interpolation-time-{start_time}-{end_time}'), weights_only=False)
