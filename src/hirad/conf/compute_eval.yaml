@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion_era5_cosmo_7500000_test
+  run:
+    dir: ./outputs/generation/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+  # Dataset
+  - dataset/era_cosmo_inference
