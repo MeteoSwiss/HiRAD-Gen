@@ -52,9 +52,9 @@ def main(cfg: DictConfig) -> None:
     img_out_channels = len(dataset.output_channels())
     output_path = getattr(cfg.generation.io, "output_path", "./outputs")
 
-    #plot_crps_over_time_and_area(times, dataset, output_path)
-    #compute_crps_over_time(times, dataset, output_path)
+    compute_crps_over_time(times, dataset, output_path)
     compute_crps_over_time_and_area(times, dataset, output_path)
+    plot_crps_over_time_and_area(times, dataset, output_path)
     
 
 
