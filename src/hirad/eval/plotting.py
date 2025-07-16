@@ -107,15 +107,8 @@ def compute_crps_over_time(times, dataset, output_path):
         
         # Calculate CRPS
         crps_diffusion_area = crps(prediction_ensemble, target, average_over_area=False, average_over_channels=False)
-        crps_interpolation_area = crps(np.broadcast_to(baseline, np.insert(baseline.shape, 0, 8)), target, average_over_area=False, average_over_channels=False)
-        crps_ensemble_mean_area = crps(np.broadcast_to(ensemble_mean, np.insert(ensemble_mean.shape, 0, 8)), target, average_over_area=False, average_over_channels=False)
-        crps_persistence_area = crps(np.broadcast_to(prev, np.insert(prev.shape, 0, 8)), target, average_over_area=False, average_over_channels=False)
-
 
         torch.save(crps_diffusion_area, os.path.join(output_path, times[i], f'{times[i]}-crps-ensemble'))
-        torch.save(crps_interpolation_area, os.path.join(output_path, times[i], f'{times[i]}-crps-interpolation'))
-        torch.save(crps_ensemble_mean_area, os.path.join(output_path, times[i], f'{times[i]}-crps-ensemble-mean')) 
-        torch.save(crps_persistence_area, os.path.join(output_path, times[i], f'{times[i]}-crps-persistence'))
         torch.save(ensemble_mean_error, os.path.join(output_path, times[i], f'{times[i]}-ensemble-mean-error'))
         torch.save(interpolation_error, os.path.join(output_path, times[i], f'{times[i]}-interpolation-error'))
         torch.save(persistence_error, os.path.join(output_path, times[i], f'{times[i]}-persistence-error'))
@@ -140,9 +133,6 @@ def compute_crps_over_time_and_area(times, dataset, output_path):
     total_persistence_area = np.zeros((crps_area.shape[0],crps_area.shape[1],crps_area.shape[2]))
 
     crps_over_time = np.zeros((crps_area.shape[0], len(times)))
-    crps_ensemble_mean_over_time = np.zeros((crps_area.shape[0], len(times)))
-    crps_persistence_over_time = np.zeros((crps_area.shape[0], len(times)))
-    crps_interpolation_over_time = np.zeros((crps_area.shape[0], len(times)))
     ensemble_mean_over_time = np.zeros((crps_area.shape[0], len(times)))
     interpolation_over_time = np.zeros((crps_area.shape[0], len(times)))
     persistence_over_time = np.zeros((crps_area.shape[0], len(times)))
@@ -151,10 +141,6 @@ def compute_crps_over_time_and_area(times, dataset, output_path):
             logging.info(f'on time {times[i]}')
         crps_area = torch.load(os.path.join(output_path, times[i], f'{times[i]}-crps-ensemble'), weights_only=False)
         total_crps_area = total_crps_area + crps_area
-
-        crps_ensemble_mean_area = torch.load(os.path.join(output_path, times[i], f'{times[i]}-crps-ensemble-mean'), weights_only=False)
-        crps_interpolation_area = torch.load(os.path.join(output_path, times[i], f'{times[i]}-crps-interpolation'), weights_only=False)
-        crps_persistence_area = torch.load(os.path.join(output_path, times[i], f'{times[i]}-crps-persistence'), weights_only=False)
 
         ensemble_mean_area = torch.load(os.path.join(output_path, times[i], f'{times[i]}-ensemble-mean-error'), weights_only=False)
         total_ensemble_mean_area = total_ensemble_mean_area + ensemble_mean_area
@@ -166,9 +152,6 @@ def compute_crps_over_time_and_area(times, dataset, output_path):
 
         for j in range(crps_area.shape[0]):
             crps_over_time[j,i] = np.mean(crps_area[j,::])
-            crps_ensemble_mean_over_time[j,i] = np.mean(crps_ensemble_mean_area[j,::])
-            crps_interpolation_over_time[j,i] = np.mean(crps_interpolation_area[j,::])
-            crps_persistence_over_time[j,i] = np.mean(crps_persistence_area[j,::])
             ensemble_mean_over_time[j,i] = np.mean(ensemble_mean_area[j,::])
             interpolation_over_time[j,i] = np.mean(interpolation_area[j,::])
             persistence_over_time[j,i] = np.mean(persistence_area[j,::])
@@ -185,10 +168,6 @@ def compute_crps_over_time_and_area(times, dataset, output_path):
     persistence_over_time[:,0] = persistence_over_time[:,1]
 
     torch.save(crps_over_time, os.path.join(output_path, f'crps-ensemble-time-{times[0]}-{times[len(times)-1]}'))
-    torch.save(crps_ensemble_mean_over_time, os.path.join(output_path, f'crps-ensemble-mean-time-{times[0]}-{times[len(times)-1]}'))
-    torch.save(crps_interpolation_over_time, os.path.join(output_path, f'crps-interpolation-time-{times[0]}-{times[len(times)-1]}'))
-    torch.save(crps_persistence_over_time, os.path.join(output_path, f'crps-persistence-time-{times[0]}-{times[len(times)-1]}'))
-
     torch.save(ensemble_mean_over_time, os.path.join(output_path, f'mae-ensemble-mean-time-{times[0]}-{times[len(times)-1]}'))
     torch.save(interpolation_over_time, os.path.join(output_path, f'mae-interpolation-time-{times[0]}-{times[len(times)-1]}'))
     torch.save(persistence_over_time, os.path.join(output_path, f'mae-persistence-time-{times[0]}-{times[len(times)-1]}'))
@@ -202,10 +181,7 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
     start_time=times[0]
     end_time=times[-1]
 
-    crps_ensemble_time = torch.load(os.path.join(output_path, f'crps-time-{start_time}-{end_time}'), weights_only=False)
-    crps_ensemble_mean_time = torch.load(os.path.join(output_path, f'crps-ensemble-mean-time-{start_time}-{end_time}'), weights_only=False)
-    crps_interpolation_time = torch.load(os.path.join(output_path, f'crps-interpolation-time-{start_time}-{end_time}'), weights_only=False)
-    crps_persistence_time = torch.load(os.path.join(output_path, f'crps-persistence-time-{start_time}-{end_time}'), weights_only=False)
+    crps_ensemble_time = torch.load(os.path.join(output_path, f'crps-ensemble-time-{start_time}-{end_time}'), weights_only=False)
     crps_area = torch.load(os.path.join(output_path, f'crps-area-{start_time}-{end_time}'), weights_only=False)
     ensemble_mean_time = torch.load(os.path.join(output_path, f'mae-ensemble-mean-time-{start_time}-{end_time}'), weights_only=False)
     ensemble_mean_area = torch.load(os.path.join(output_path, f'mae-ensemble-mean-area-{start_time}-{end_time}'), weights_only=False)
@@ -225,17 +201,10 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
         plot_error_projection(persistence_area[j,::], latitudes, longitudes, os.path.join(output_path, f'NEW-mae-persistence-area-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
                         label=output_channels[j].name)
         
-        crps_scores = {}
-        crps_scores['ensemble predictions'] = crps_ensemble_time[j,::]
-        crps_scores['ensemble mean'] = crps_ensemble_mean_time[j,::]
-        crps_scores['interpolation'] = crps_interpolation_time[j,::]
-        crps_scores['persistence'] = crps_persistence_time[j,::]
-        plot_scores_vs_t(crps_scores, times, os.path.join(output_path, f'NEW-crps-time-{start_time}-{end_time}-{output_channels[j].name}.jpg'), title=f'CRPS: {output_channels[j].name}', xlabel='time', ylabel='CRPS')
-
         maes = {}
         maes['interpolation'] = interpolation_time[j,::]
         maes['ensemble mean'] = ensemble_mean_time[j,::]
         maes['crps'] = crps_ensemble_time[j,:] 
         maes['persistence'] = persistence_time[j,::]
-        plot_scores_vs_t(maes, times, os.path.join(output_path, f'NEW-mae-time-{start_time}-{end_time}-{output_channels[j].name}.jpg'), title=f'Mean absolute error: {output_channels[j].name}', xlabel='time', ylabel='MAE')
+        plot_scores_vs_t(maes, times, os.path.join(output_path, f'NEW-error-plot-time-{start_time}-{end_time}-{output_channels[j].name}.jpg'), title=f'Mean absolute error: {output_channels[j].name}', xlabel='time', ylabel='MAE')
         
