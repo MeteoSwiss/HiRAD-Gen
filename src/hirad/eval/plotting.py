@@ -21,12 +21,19 @@ def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.
     plt.close('all')
 
 def plot_scores_vs_t(scores: dict[str,np.ndarray], times: np.array, filename: str, xlabel='', ylabel='', title=''):
+    
     fig = plt.figure()
     ax = plt.subplot()
-    colors = ['red', 'green', 'blue', 'orange'] # TODO, add more
+    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w'] # TODO, add more
     i=0
     for k in scores.keys():
-        p, = ax.plot(times, scores[k], color=colors[i])
+        style = colors[i]
+        # If more than 50 points, don't connect lines
+        if len(times) > 50:
+            style = style + '.'
+        else:
+            style = style + '-'
+        p, = ax.plot(times, scores[k], style)
         i=i+1
         p.set_label(k)
     ax.legend()

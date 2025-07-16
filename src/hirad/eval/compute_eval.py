@@ -6,6 +6,8 @@ from omegaconf import OmegaConf, DictConfig
 import torch
 import numpy as np
 import contextlib
+import datetime
+from pandas import to_datetime
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -48,7 +50,7 @@ def main(cfg: DictConfig) -> None:
     output_path = getattr(cfg.generation.io, "output_path", "./outputs")
 
     compute_crps_per_time(times, dataset, output_path)
-    compute_crps_over_time_and_area(times, dataset, output_path)
+    compute_crps_over_time_and_area(times, output_path)
     plot_crps_over_time_and_area(times, dataset, output_path)
 
 def _get_data_path(output_path, time=None, filename=None):
@@ -122,7 +124,7 @@ def compute_crps_per_time(times, dataset, output_path):
         save_data(interpolation_error, output_path, time=curr_time, filename=f'{curr_time}-interpolation-error')
         save_data(persistence_error, output_path, time=curr_time, filename=f'{curr_time}-persistence-error')
 
-def compute_crps_over_time_and_area(times, dataset, output_path):
+def compute_crps_over_time_and_area(times, output_path):
     logging.info('computing crps and errors')  
     start_time=times[0]
     end_time=times[-1]
@@ -215,6 +217,8 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
         maes['ensemble mean'] = ensemble_mean_time[j,::]
         maes['crps'] = crps_ensemble_time[j,:] 
         maes['persistence'] = persistence_time[j,::]
+        # TODO: consider casting times to datetime objects to avoid warnings.
+        # However, this seems to be working OK, and a direct cast causes plotting errors
         plot_scores_vs_t(maes, times,
                          _get_data_path(output_path, filename=f'NEW-error-plot-time-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
                          title=f'Mean absolute error: {output_channels[j].name}', xlabel='time', ylabel='MAE')
