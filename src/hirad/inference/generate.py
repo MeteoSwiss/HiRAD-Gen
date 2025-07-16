@@ -225,7 +225,7 @@ def main(cfg: DictConfig) -> None:
             ):
                 time_index += 1
                 if dist.rank == 0:
-                    logger0.info(f"starting index: {time_index}")
+                    logger0.info(f"starting index: {time_index} time: {times[sampler[time_index]]}")
 
                 if time_index == warmup_steps:
                     start.record()
