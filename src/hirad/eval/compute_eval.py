@@ -52,7 +52,10 @@ def main(cfg: DictConfig) -> None:
     plot_crps_over_time_and_area(times, dataset, output_path)
 
 def _get_data_path(output_path, time=None, filename=None):
-    return os.path.join(output_path, time, filename)
+    if time:
+        return os.path.join(output_path, time, filename)
+    else:
+        return os.path.join(output_path, filename)
 
 def load_data(output_path, time=None, filename=None):
     return torch.load(_get_data_path(output_path, time, filename), weights_only=False)
@@ -66,7 +69,6 @@ def compute_crps_per_time(times, dataset, output_path):
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
     start_time=times[0]
-    end_time=times[-1]
 
     # Load one prediction ensemble to get the shape
     prediction_ensemble = torch.load(os.path.join(output_path, start_time, f'{start_time}-predictions'), weights_only=False)
@@ -205,7 +207,7 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
                               _get_data_path(output_path, filename=f'NEW-mae-interpolation-area-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
                         label=output_channels[j].name, title=f'Mean absolute error: Interpolation: {output_channels[j].name}')
         plot_error_projection(persistence_area[j,::], latitudes, longitudes,
-                              _get_data_path(output_path, f'NEW-mae-persistence-area-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
+                              _get_data_path(output_path, filename=f'NEW-mae-persistence-area-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
                         label=output_channels[j].name, title=f'Mean absolute error: Persistence: {output_channels[j].name}')
     
         maes = {}
@@ -217,8 +219,6 @@ def plot_crps_over_time_and_area(times, dataset, output_path):
                          _get_data_path(output_path, filename=f'NEW-error-plot-time-{start_time}-{end_time}-{output_channels[j].name}.jpg'),
                          title=f'Mean absolute error: {output_channels[j].name}', xlabel='time', ylabel='MAE')
         
-
-
 
 if __name__ == "__main__":
     main()

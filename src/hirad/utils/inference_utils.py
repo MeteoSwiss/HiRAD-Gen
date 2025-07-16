@@ -239,14 +239,6 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
 
-    #  Plot CRPS
-    if prediction.shape[0] > 1:
-        crps_score = crps(prediction, target, average_over_area=False, average_over_channels=True)
-        _plot_projection(longitudes, latitudes, crps_score, os.path.join(output_path, f'{time_step}-crps-all.jpg'))
-        crps_score_channels = crps(prediction, target, average_over_area=False, average_over_channels=False)
-        for channel_num in range(crps_score_channels.shape[0]):
-            _plot_projection(longitudes, latitudes, crps_score_channels[channel_num,::], os.path.join(output_path, f'{time_step}-crps-{output_channels[channel_num].name}.jpg'))
-
     #  Plot power spectra
     freqs = {}
     power = {}
@@ -258,11 +250,11 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         input_channel_idx = input_channels.index(channel)
 
         if channel.name=="tp":
-            target[idx,::] = _prepare_precipitaiton(target[idx,:,:])
-            prediction[:,idx,::] = _prepare_precipitaiton(prediction[:,idx,:,:])
-            baseline[input_channel_idx,:,:] = _prepare_precipitaiton(baseline[input_channel_idx,::])
+            target[idx,::] = _prepare_precipitation(target[idx,:,:])
+            prediction[:,idx,::] = _prepare_precipitation(prediction[:,idx,:,:])
+            baseline[input_channel_idx,:,:] = _prepare_precipitation(baseline[input_channel_idx,::])
             if mean_pred is not None:
-                mean_pred[idx,::] = _prepare_precipitaiton(mean_pred[idx,::])
+                mean_pred[idx,::] = _prepare_precipitation(mean_pred[idx,::])
         
         if mean_pred is not None:
             vmin, vmax = calculate_bounds(target[idx,:,:],
@@ -322,40 +314,7 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
             power['mean_prediction'] = mp_power
         plot_power_spectra(freqs, power, channel.name, os.path.join(output_path_channel, f'{time_step}-{channel.name}-spectra.jpg'))
 
-def plot_crps_over_time(times, dataset, output_path):    
-    longitudes = dataset.longitude()
-    latitudes = dataset.latitude()
-    input_channels = dataset.input_channels()
-    output_channels = dataset.output_channels()
-    start_time=times[0]
-    end_time=times[-1]
-
-    # Load one prediction ensemble to get the shape
-    prediction_ensemble = torch.load(os.path.join(output_path, times[0], f'{times[0]}-predictions'), weights_only=False)
-    all_predictions = np.ndarray((len(times), prediction_ensemble.shape[0], prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3]))
-    all_targets = np.ndarray((len(times), prediction_ensemble.shape[1], prediction_ensemble.shape[2], prediction_ensemble.shape[3]))
-    for i in range(len(times)):
-        prediction_ensemble = torch.load(os.path.join(output_path, times[i], f'{times[i]}-predictions'), weights_only=False)
-        all_predictions[i,::] = prediction_ensemble
-        target = torch.load(os.path.join(output_path, times[i], f'{times[i]}-target'), weights_only=False)
-        all_targets[i,::] = target
-    score_over_time_channels = crps(all_predictions, all_targets, average_over_area=True, average_over_channels=False, average_over_time=False)
-    score_over_area_channels = crps(all_predictions, all_targets, average_over_area=False, average_over_channels=False, average_over_time=True)
-    for channel_num in range(score_over_area_channels.shape[0]):
-       _plot_projection(longitudes, latitudes, score_over_area_channels[channel_num,::], os.path.join(output_path, f'crps-area-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
-       _plot_score_vs_t(score_over_time_channels[:, channel_num], times, os.path.join(output_path, f'crps-time-{start_time}-{end_time}-{output_channels[channel_num].name}.jpg'))
-
-def _plot_score_vs_t(score: np.array, times: np.array, filename: str):
-    fig = plt.figure()
-    ax = plt.subplot()
-    p = plt.plot(times, score)
-    #plt.ylabel('CRPS')
-    #plt.xlabel('time')
-    plt.xticks([times[0],times[-1]])
-    plt.savefig(filename)
-    plt.close('all')
-
-def _prepare_precipitaiton(precip_array):
+def _prepare_precipitation(precip_array):
     precip_array = np.clip(precip_array, 0, None)
     precip_array = np.where(precip_array == 0, 1e-6, precip_array)
     # epsilon = 1e-2
