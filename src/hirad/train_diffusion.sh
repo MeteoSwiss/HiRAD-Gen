@@ -38,7 +38,7 @@ export MASTER_PORT=29500
 export OMP_NUM_THREADS=72
 
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
-srun --environment=./modulus_env.toml bash -c "
+srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/training/train.py --config-name=training_era_cosmo_diffusion.yaml
 "
