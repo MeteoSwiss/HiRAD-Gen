@@ -7,7 +7,7 @@ from omegaconf import OmegaConf, DictConfig
 import sys
 
 from hirad.distributed import DistributedManager
-from hirad.utils.inference_utils import save_images, _plot_projection, calculate_bounds
+from hirad.utils.inference_utils import save_images, _plot_projection, calculate_bounds, _prepare_precipitation
 from hirad.utils.function_utils import get_time_from_range
 
 from hirad.datasets import get_dataset_and_sampler_inference
@@ -75,6 +75,13 @@ def main(cfg: DictConfig) -> None:
             os.makedirs(output_path_channel, exist_ok=True)
 
             input_channel_idx = output_to_input_channel_map[idx]
+
+            # Specialized handling for precipitation data
+            if channel.name == "tp":
+                target[idx, :, :] = _prepare_precipitation(target[idx, :, :])
+                prediction[:, idx, :, :] = _prepare_precipitation(prediction[:, idx, :, :])
+                baseline[input_channel_idx, :, :] = _prepare_precipitation(baseline[input_channel_idx, :, :])
+
             vmin, vmax = calculate_bounds(target[idx,:,:],
                                           prediction[:,idx,:,:],
                                           baseline[input_channel_idx,:,:])
