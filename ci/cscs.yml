@@ -14,12 +14,12 @@ build_job:
   variables:
     DOCKERFILE: ci/docker/Dockerfile.ci
 
-#test_job:
-#  stage: test
-#  extends: .container-runner-clariden-gh200
-#  image: $PERSIST_IMAGE_NAME
-#  script:
-#    - /opt/helloworld/bin/hello
-#  variables:
-#    SLURM_JOB_NUM_NODES: 2
-#    SLURM_NTASKS: 2
+test_job:
+  stage: test
+  extends: .container-runner-clariden-gh200
+  image: $PERSIST_IMAGE_NAME
+  script:
+    - hirad/train_regression_test.sh
+  variables:
+    SLURM_JOB_NUM_NODES: 2
+    SLURM_NTASKS: 2
