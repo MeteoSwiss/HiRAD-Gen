@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label: str, title='', vmin=None, vmax=None):
+def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):
     """Plot observed or interpolated data in a scatter plot."""
     fig = plt.figure()
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
