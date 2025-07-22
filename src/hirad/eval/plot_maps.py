@@ -7,8 +7,9 @@ from omegaconf import OmegaConf, DictConfig
 import sys
 
 from hirad.distributed import DistributedManager
-from hirad.utils.inference_utils import save_images, _plot_projection, calculate_bounds, _prepare_precipitation
+from hirad.utils.inference_utils import calculate_bounds, _prepare_precipitation
 from hirad.utils.function_utils import get_time_from_range
+from hirad.eval import compute_mae, plot_error_projection
 
 from hirad.datasets import get_dataset_and_sampler_inference
 
@@ -85,26 +86,92 @@ def main(cfg: DictConfig) -> None:
             vmin, vmax = calculate_bounds(target[idx,:,:],
                                           prediction[:,idx,:,:],
                                           baseline[input_channel_idx,:,:])
+            
+                        # set limits and colorscales   
+            if channel.name == "2t":
+                err_vmin, err_vmax = 0, 4.5
+                err_colormap = "RdBu"
+            else:
+                err_vmin, err_vmax = vmin, vmax
 
             # Plot target
-            _plot_projection(
-                longitudes, latitudes, target[idx, :, :],
+            plot_error_projection(
+                target[idx, :, :], latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-target.jpg'),
                 vmin=vmin, vmax=vmax
             )
 
             # Plot baseline
-            _plot_projection(
-                longitudes, latitudes, baseline[input_channel_idx, :, :],
+            plot_error_projection(
+                baseline[input_channel_idx, :, :], latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline.jpg'),
                 vmin=vmin, vmax=vmax
             )
 
+            # Plot baseline MAE
+            _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[idx, :, :])
+
+            plot_error_projection(
+                baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), latitudes, longitudes,
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae.jpg'),
+                vmin=err_vmin, vmax=err_vmax
+            )
+
+            # Plot baseline mean error (difference)
+            baseline_me = (baseline[input_channel_idx, :, :] - target[idx, :, :])
+            baseline_me_cmap = err_colormap if channel.name == "2t" else None
+            plot_error_projection(
+                baseline_me, latitudes, longitudes,
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me.jpg'),
+                vmin=-err_vmax, vmax=err_vmax,
+                cmap=baseline_me_cmap
+            )
+
             if prediction.shape[0] > 1:
                 for member_idx in range(prediction.shape[0]):
-                    _plot_projection(longitudes, latitudes, prediction[member_idx,idx,:,:],
-                                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}.jpg'), 
-                                    vmin=vmin, vmax=vmax)
+                    plot_error_projection(
+                        prediction[member_idx,idx,:,:], latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}.jpg'), 
+                        vmin=vmin, vmax=vmax
+                    )
+                    # Plot prediction MAE for each ensemble member
+                    _, prediction_mae = compute_mae(prediction[member_idx,idx,:,:], target[idx, :, :])
+                    plot_error_projection(
+                        prediction_mae.reshape(prediction[member_idx,idx,:,:].shape), latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae.jpg'),
+                        vmin=err_vmin, vmax=err_vmax
+                    )
+                    # Plot prediction mean error for each ensemble member
+                    prediction_me = (prediction[member_idx,idx,:,:] - target[idx, :, :])
+                    prediction_me_cmap = err_colormap if channel.name == "2t" else None
+                    plot_error_projection(
+                        prediction_me, latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me.jpg'),
+                        vmin=-err_vmax, vmax=err_vmax,
+                        cmap=prediction_me_cmap
+                    )
+            else:
+                plot_error_projection(
+                    prediction[0,idx,:,:], latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction.jpg'), 
+                    vmin=vmin, vmax=vmax
+                )
+                # Plot prediction MAE for single prediction
+                _, prediction_mae = compute_mae(prediction[0,idx,:,:], target[idx, :, :])
+                plot_error_projection(
+                    prediction_mae, latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae.jpg'),
+                    vmin=err_vmin, vmax=err_vmax
+                )
+                # Plot prediction mean error for single prediction
+                prediction_me = (prediction[0,idx,:,:] - target[idx, :, :])
+                prediction_me_cmap = err_colormap if channel.name == "2t" else None
+                plot_error_projection(
+                    prediction_me, latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me.jpg'),
+                    vmin=-err_vmax, vmax=err_vmax,
+                    cmap=prediction_me_cmap
+                )
                     
     logger.info("Image loading and plotting completed.")
 
