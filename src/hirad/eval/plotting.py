@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None):
+def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None):
     """Plot observed or interpolated data in a scatter plot."""
     # Initialize logger
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
@@ -19,6 +19,19 @@ def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.
     ax.gridlines(draw_labels=True)
     plt.colorbar(contour, label=label, orientation="horizontal")
     plt.title(title)
+    plt.savefig(filename)
+    plt.close('all')
+
+@DeprecationWarning
+def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):
+    """Plot observed or interpolated data in a scatter plot."""
+    fig = plt.figure()
+    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    logging.info(f'plotting values to {filename}')
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    plt.colorbar(p, label=label, orientation="horizontal")
     plt.savefig(filename)
     plt.close('all')
 
