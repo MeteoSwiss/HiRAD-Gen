@@ -8,15 +8,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):
+def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None):
     """Plot observed or interpolated data in a scatter plot."""
-    fig = plt.figure()
+    # Initialize logger
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-    logging.info(f'plotting values to {filename}')
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, vmin=vmin, vmax=vmax)
+    lat2d = latitudes.reshape(values.shape)
+    lon2d = longitudes.reshape(values.shape)
+    contour = ax.pcolormesh(lon2d, lat2d, values, cmap=cmap, vmin=vmin, vmax=vmax, transform=ccrs.PlateCarree())
     ax.coastlines()
     ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label=label, orientation="horizontal")
+    plt.colorbar(contour, label=label, orientation="horizontal")
+    plt.title(title)
     plt.savefig(filename)
     plt.close('all')
 
