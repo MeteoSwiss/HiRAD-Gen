@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name="testrun"
+#SBATCH --job-name="plot"
 
 ### HARDWARE ###
 #SBATCH --partition=normal
