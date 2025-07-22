@@ -4,22 +4,29 @@ import os
 from hirad.eval import crps, absolute_error
 
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
 def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None):
     """Plot observed or interpolated data in a scatter plot."""
-    # Initialize logger
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    logging.info(f'plotting values to {filename}')
+
+    fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": ccrs.Mercator()})
     lat2d = latitudes.reshape(values.shape)
     lon2d = longitudes.reshape(values.shape)
-    contour = ax.pcolormesh(lon2d, lat2d, values, cmap=cmap, vmin=vmin, vmax=vmax, transform=ccrs.PlateCarree())
+    contour = ax.pcolormesh(lon2d, lat2d, values, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto", transform=ccrs.PlateCarree())
     ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(contour, label=label, orientation="horizontal")
+    ax.add_feature(cfeature.BORDERS, linewidth=1)  # Add country borders
+    ax.gridlines(visible=False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    plt.colorbar(contour, label=label, orientation="horizontal",shrink=0.5)
     plt.title(title)
-    plt.savefig(filename)
+    plt.tight_layout()
+    out_file = f"{filename}.png"
+    fig.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close('all')
 
 @DeprecationWarning

@@ -110,7 +110,7 @@ def main(cfg: DictConfig) -> None:
             # Plot target
             plot_map(
                 target[idx, :, :], latitudes, longitudes,
-                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-target.jpg'),
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-target'),
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit
@@ -119,7 +119,7 @@ def main(cfg: DictConfig) -> None:
             # Plot baseline
             plot_map(
                 baseline[input_channel_idx, :, :], latitudes, longitudes,
-                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline.jpg'),
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline'),
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit
@@ -130,7 +130,7 @@ def main(cfg: DictConfig) -> None:
 
             plot_map(
                 baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), latitudes, longitudes,
-                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae.jpg'),
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae'),
                 vmin=err_vmin, vmax=err_vmax,
                 title=f"{plot_title} MAE",
                 label=unit
@@ -141,7 +141,7 @@ def main(cfg: DictConfig) -> None:
             baseline_me_cmap = err_colormap if channel.name == "2t" else None
             plot_map(
                 baseline_me, latitudes, longitudes,
-                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me.jpg'),
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me'),
                 vmin=-err_vmax, vmax=err_vmax,
                 cmap=baseline_me_cmap,
                 title=f"{plot_title} Mean Error",
@@ -152,7 +152,7 @@ def main(cfg: DictConfig) -> None:
                 for member_idx in range(prediction.shape[0]):
                     plot_map(
                         prediction[member_idx,idx,:,:], latitudes, longitudes,
-                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}.jpg'), 
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}'), 
                         vmin=vmin, vmax=vmax,
                         title=plot_title,
                         label=unit
@@ -161,7 +161,7 @@ def main(cfg: DictConfig) -> None:
                     _, prediction_mae = compute_mae(prediction[member_idx,idx,:,:], target[idx, :, :])
                     plot_map(
                         prediction_mae.reshape(prediction[member_idx,idx,:,:].shape), latitudes, longitudes,
-                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae.jpg'),
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae'),
                         vmin=err_vmin, vmax=err_vmax,
                         title=f"{plot_title} MAE",
                         label=unit
@@ -171,7 +171,7 @@ def main(cfg: DictConfig) -> None:
                     prediction_me_cmap = err_colormap if channel.name == "2t" else None
                     plot_map(
                         prediction_me, latitudes, longitudes,
-                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me.jpg'),
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me'),
                         vmin=-err_vmax, vmax=err_vmax,
                         cmap=prediction_me_cmap,
                         title=f"{plot_title} Mean Error",
@@ -180,7 +180,7 @@ def main(cfg: DictConfig) -> None:
             else:
                 plot_map(
                     prediction[0,idx,:,:], latitudes, longitudes,
-                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction.jpg'), 
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction'), 
                     vmin=vmin, vmax=vmax,
                     title=plot_title,
                     label=unit
@@ -189,7 +189,7 @@ def main(cfg: DictConfig) -> None:
                 _, prediction_mae = compute_mae(prediction[0,idx,:,:], target[idx, :, :])
                 plot_map(
                     prediction_mae, latitudes, longitudes,
-                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae.jpg'),
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae'),
                     vmin=err_vmin, vmax=err_vmax,
                     title=f"{plot_title} MAE",
                     label=unit
@@ -199,7 +199,7 @@ def main(cfg: DictConfig) -> None:
                 prediction_me_cmap = err_colormap if channel.name == "2t" else None
                 plot_map(
                     prediction_me, latitudes, longitudes,
-                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me.jpg'),
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me'),
                     vmin=-err_vmax, vmax=err_vmax,
                     cmap=prediction_me_cmap,
                     title=f"{plot_title} Mean Error",
