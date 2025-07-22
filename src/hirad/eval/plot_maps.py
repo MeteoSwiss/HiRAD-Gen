@@ -87,25 +87,42 @@ def main(cfg: DictConfig) -> None:
                                           prediction[:,idx,:,:],
                                           baseline[input_channel_idx,:,:])
             
-                        # set limits and colorscales   
+             # set metadata 
             if channel.name == "2t":
                 err_vmin, err_vmax = 0, 4.5
                 err_colormap = "RdBu"
+                unit = "K"
+            elif channel.name == "tp":
+                err_vmin, err_vmax = 0, 10
+                err_colormap = "blues"
+                unit = "mm/h"
+            elif channel.name == "u10" or channel.name == "v10":
+                err_vmin, err_vmax = -10, 10
+                err_colormap = "BrBG"
+                unit = "m/s"
             else:
                 err_vmin, err_vmax = vmin, vmax
+
+            # Prepare title and label
+            plot_title = f"{getattr(channel, 'title', channel.name)}"
+
 
             # Plot target
             plot_map(
                 target[idx, :, :], latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-target.jpg'),
-                vmin=vmin, vmax=vmax
+                vmin=vmin, vmax=vmax,
+                title=plot_title,
+                label=unit
             )
 
             # Plot baseline
             plot_map(
                 baseline[input_channel_idx, :, :], latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline.jpg'),
-                vmin=vmin, vmax=vmax
+                vmin=vmin, vmax=vmax,
+                title=plot_title,
+                label=unit
             )
 
             # Plot baseline MAE
@@ -114,7 +131,9 @@ def main(cfg: DictConfig) -> None:
             plot_map(
                 baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae.jpg'),
-                vmin=err_vmin, vmax=err_vmax
+                vmin=err_vmin, vmax=err_vmax,
+                title=f"{plot_title} MAE",
+                label=unit
             )
 
             # Plot baseline mean error (difference)
@@ -124,7 +143,9 @@ def main(cfg: DictConfig) -> None:
                 baseline_me, latitudes, longitudes,
                 os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me.jpg'),
                 vmin=-err_vmax, vmax=err_vmax,
-                cmap=baseline_me_cmap
+                cmap=baseline_me_cmap,
+                title=f"{plot_title} Mean Error",
+                label=unit
             )
 
             if prediction.shape[0] > 1:
@@ -132,14 +153,18 @@ def main(cfg: DictConfig) -> None:
                     plot_map(
                         prediction[member_idx,idx,:,:], latitudes, longitudes,
                         os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}.jpg'), 
-                        vmin=vmin, vmax=vmax
+                        vmin=vmin, vmax=vmax,
+                        title=plot_title,
+                        label=unit
                     )
                     # Plot prediction MAE for each ensemble member
                     _, prediction_mae = compute_mae(prediction[member_idx,idx,:,:], target[idx, :, :])
                     plot_map(
                         prediction_mae.reshape(prediction[member_idx,idx,:,:].shape), latitudes, longitudes,
                         os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae.jpg'),
-                        vmin=err_vmin, vmax=err_vmax
+                        vmin=err_vmin, vmax=err_vmax,
+                        title=f"{plot_title} MAE",
+                        label=unit
                     )
                     # Plot prediction mean error for each ensemble member
                     prediction_me = (prediction[member_idx,idx,:,:] - target[idx, :, :])
@@ -148,20 +173,26 @@ def main(cfg: DictConfig) -> None:
                         prediction_me, latitudes, longitudes,
                         os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me.jpg'),
                         vmin=-err_vmax, vmax=err_vmax,
-                        cmap=prediction_me_cmap
+                        cmap=prediction_me_cmap,
+                        title=f"{plot_title} Mean Error",
+                        label=unit
                     )
             else:
                 plot_map(
                     prediction[0,idx,:,:], latitudes, longitudes,
                     os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction.jpg'), 
-                    vmin=vmin, vmax=vmax
+                    vmin=vmin, vmax=vmax,
+                    title=plot_title,
+                    label=unit
                 )
                 # Plot prediction MAE for single prediction
                 _, prediction_mae = compute_mae(prediction[0,idx,:,:], target[idx, :, :])
                 plot_map(
                     prediction_mae, latitudes, longitudes,
                     os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae.jpg'),
-                    vmin=err_vmin, vmax=err_vmax
+                    vmin=err_vmin, vmax=err_vmax,
+                    title=f"{plot_title} MAE",
+                    label=unit
                 )
                 # Plot prediction mean error for single prediction
                 prediction_me = (prediction[0,idx,:,:] - target[idx, :, :])
@@ -170,7 +201,9 @@ def main(cfg: DictConfig) -> None:
                     prediction_me, latitudes, longitudes,
                     os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me.jpg'),
                     vmin=-err_vmax, vmax=err_vmax,
-                    cmap=prediction_me_cmap
+                    cmap=prediction_me_cmap,
+                    title=f"{plot_title} Mean Error",
+                    label=unit
                 )
                     
     logger.info("Image loading and plotting completed.")
