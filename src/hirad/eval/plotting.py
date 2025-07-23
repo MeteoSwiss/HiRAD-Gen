@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None):
+def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None, extend='neither'):
     """Plot observed or interpolated data in a scatter plot."""
     logging.info(f'plotting values to {filename}')
 
@@ -22,7 +22,7 @@ def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filena
     ax.gridlines(visible=False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.colorbar(contour, label=label, orientation="horizontal",shrink=0.5)
+    plt.colorbar(contour, label=label, orientation="horizontal", shrink=0.7, extend=extend)
     plt.title(title)
     plt.tight_layout()
     out_file = f"{filename}.png"

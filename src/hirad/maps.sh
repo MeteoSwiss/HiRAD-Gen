@@ -3,12 +3,12 @@
 #SBATCH --job-name="plot"
 
 ### HARDWARE ###
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-##SBATCH --time=00:30:00
+#SBATCH --time=00:10:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
