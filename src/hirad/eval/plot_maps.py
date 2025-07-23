@@ -241,7 +241,110 @@ def main(cfg: DictConfig) -> None:
                         label=unit,
                         extend='both'
                     )
-                        
+
+        # Plot Windspeed and direction
+        # Find indices for 10u and 10v channels
+        wind_channels = {ch.name: idx for idx, ch in enumerate(output_channels) if ch.name in ("10u", "10v")}
+        if "10u" in wind_channels and "10v" in wind_channels:
+            idx_10u = wind_channels["10u"]
+            idx_10v = wind_channels["10v"]
+            input_idx_10u = output_to_input_channel_map[idx_10u]
+            input_idx_10v = output_to_input_channel_map[idx_10v]
+
+            # Compute windspeed and direction for target, baseline, prediction
+            def compute_wind(u, v):
+                speed = np.sqrt(u**2 + v**2)
+                direction = (np.arctan2(-u, -v) * 180 / np.pi) % 360
+                return speed, direction
+
+            target_wind_speed, target_wind_dir = compute_wind(target[idx_10u, :, :], target[idx_10v, :, :])
+            baseline_wind_speed, baseline_wind_dir = compute_wind(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
+            prediction_wind_speed = []
+            prediction_wind_dir = []
+            for member_idx in range(prediction.shape[0]):
+                ws, wd = compute_wind(prediction[member_idx, idx_10u, :, :], prediction[member_idx, idx_10v, :, :])
+                prediction_wind_speed.append(ws)
+                prediction_wind_dir.append(wd)
+            prediction_wind_speed = np.stack(prediction_wind_speed)
+            prediction_wind_dir = np.stack(prediction_wind_dir)
+
+            # Reformat curr_time for plot title
+            dt_str = curr_time
+            from datetime import datetime
+            dt = datetime.strptime(dt_str, "%Y%m%d-%H%M")
+            formatted_time = dt.strftime("%d-%m-%Y %H:%M")
+
+            # Plot windspeed
+            wind_cmap = "viridis"
+            wind_vmin, wind_vmax = 0, 10
+            wind_unit = "m/s"
+            plot_title_speed = f"{formatted_time}: FF10m"
+            os.makedirs(os.path.join(output_path, "FF10m"), exist_ok=True)
+            plot_map(
+                target_wind_speed, latitudes, longitudes,
+                os.path.join(output_path, "FF10m", f'{curr_time}-FF10m-target'),
+                vmin=wind_vmin, vmax=wind_vmax,
+                title=plot_title_speed,
+                label=wind_unit,
+                extend='max',
+                cmap=wind_cmap
+            )
+            plot_map(
+                baseline_wind_speed, latitudes, longitudes,
+                os.path.join(output_path, "FF10m", f'{curr_time}-FF10m-baseline'),
+                vmin=wind_vmin, vmax=wind_vmax,
+                title=plot_title_speed,
+                label=wind_unit,
+                extend='max',
+                cmap=wind_cmap
+            )
+            for member_idx in range(prediction.shape[0]):
+                plot_map(
+                    prediction_wind_speed[member_idx], latitudes, longitudes,
+                    os.path.join(output_path, "FF10m", f'{curr_time}-FF10m-prediction_{member_idx}'),
+                    vmin=wind_vmin, vmax=wind_vmax,
+                    title=plot_title_speed,
+                    label=wind_unit,
+                    extend='max',
+                    cmap=wind_cmap
+                )
+
+            # Plot wind direction
+            dir_cmap = "twilight"
+            dir_vmin, dir_vmax = 0, 360
+            dir_unit = "deg"
+            plot_title_dir = f"{formatted_time}: DD10m"
+            os.makedirs(os.path.join(output_path, "DD10m"), exist_ok=True)
+            plot_map(
+                target_wind_dir, latitudes, longitudes,
+                os.path.join(output_path, "DD10m", f'{curr_time}-DD10m-target'),
+                vmin=dir_vmin, vmax=dir_vmax,
+                title=plot_title_dir,
+                label=dir_unit,
+                extend='both',
+                cmap=dir_cmap
+            )
+            plot_map(
+                baseline_wind_dir, latitudes, longitudes,
+                os.path.join(output_path, "DD10m", f'{curr_time}-DD10m-baseline'),
+                vmin=dir_vmin, vmax=dir_vmax,
+                title=plot_title_dir,
+                label=dir_unit,
+                extend='both',
+                cmap=dir_cmap
+            )
+            for member_idx in range(prediction.shape[0]):
+                plot_map(
+                    prediction_wind_dir[member_idx], latitudes, longitudes,
+                    os.path.join(output_path, "DD10m", f'{curr_time}-DD10m-prediction_{member_idx}'),
+                    vmin=dir_vmin, vmax=dir_vmax,
+                    title=plot_title_dir,
+                    label=dir_unit,
+                    extend='both',
+                    cmap=dir_cmap
+                )
+
+
     logger.info("Image loading and plotting completed.")
 
 if __name__ == "__main__":
