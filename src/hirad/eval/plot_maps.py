@@ -208,15 +208,8 @@ def main(cfg: DictConfig) -> None:
             target_wind_dir = wind_direction(target[idx_10u, :, :], target[idx_10v, :, :])
             baseline_wind_speed = np.hypot(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
             baseline_wind_dir = wind_direction(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
-            prediction_wind_speed = []
-            prediction_wind_dir = []
-            for member_idx in range(prediction.shape[0]):
-                ws = np.hypot(prediction[member_idx, idx_10u, :, :], prediction[member_idx, idx_10v, :, :])
-                wd = wind_direction(prediction[member_idx, idx_10u, :, :], prediction[member_idx, idx_10v, :, :])
-                prediction_wind_speed.append(ws)
-                prediction_wind_dir.append(wd)
-            prediction_wind_speed = np.stack(prediction_wind_speed)
-            prediction_wind_dir = np.stack(prediction_wind_dir)
+            prediction_wind_speed = np.hypot(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
+            prediction_wind_dir = wind_direction(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
 
             plot_title_speed = f"{format_time_str(curr_time)}: FF10m"
             plot_title_dir = f"{format_time_str(curr_time)}: DD10m"
@@ -227,20 +220,20 @@ def main(cfg: DictConfig) -> None:
             # Save windspeed plots
             save_field(
                 "FF10m-target", target_wind_speed, wind_meta, files, None, curr_time,
-                cmap="viridis", vmin=0, vmax=10,
+                cmap="viridis", vmin=0, vmax=10, extend='max',
                 custom_path=files.wind_file("FF10m", curr_time, "FF10m-target"),
                 plot_func=plot_map, title=plot_title_speed
             )
             save_field(
                 "FF10m-baseline", baseline_wind_speed, wind_meta, files, None, curr_time,
-                cmap="viridis", vmin=0, vmax=10,
+                cmap="viridis", vmin=0, vmax=10, extend='max',
                 custom_path=files.wind_file("FF10m", curr_time, "FF10m-baseline"),
                 plot_func=plot_map, title=plot_title_speed
             )
             for member_idx in range(prediction.shape[0]):
                 save_field(
                     "FF10m-prediction", prediction_wind_speed[member_idx], wind_meta, files, None, curr_time,
-                    member=member_idx, cmap="viridis", vmin=0, vmax=10,
+                    member=member_idx, cmap="viridis", vmin=0, vmax=10, extend='max',
                     custom_path=files.wind_file("FF10m", curr_time, "FF10m-prediction", member_idx),
                     plot_func=plot_map, title=plot_title_speed
                 )
