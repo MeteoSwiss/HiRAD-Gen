@@ -97,7 +97,7 @@ def map_output_to_input_channels(output_channels, input_channels):
         for j, output_channel in enumerate(output_channels)
     }
 
-def save_field(name, data, meta, files, channel, t, lat, lon, member=None, kind="value", cmap=None, vmin=None, vmax=None, custom_path=None, plot_func=None, base_title=None, **plot_kwargs):
+def save_field(name, data, meta, files, channel, t, member=None, kind="value", cmap=None, vmin=None, vmax=None, custom_path=None, plot_func=None, base_title=None, **plot_kwargs):
     """Save a field by plotting it with the appropriate function and parameters. Handles precipitation specially and supports custom paths."""
     # Determine output path
     suffix = f"{name}-{kind}" + (f"_{member}" if member is not None else "")
@@ -114,9 +114,9 @@ def save_field(name, data, meta, files, channel, t, lat, lon, member=None, kind=
     # Precipitation case
     if plot.__name__ == 'plot_map_precipitation':
         precip_args = {**meta.precip_kwargs, **{k: plot_kwargs[k] for k in meta.precip_kwargs if k in plot_kwargs}}
-        plot(data, lat, lon, out_path, title=title, **precip_args)
+        plot(data, out_path, title=title, **precip_args)
     else:
-        plot(data, lat, lon, out_path, vmin=vmin if vmin is not None else meta.vmin, vmax=vmax if vmax is not None else meta.vmax, cmap=cmap or meta.cmap, label=meta.unit, **common)
+        plot(data, out_path, vmin=vmin if vmin is not None else meta.vmin, vmax=vmax if vmax is not None else meta.vmax, cmap=cmap or meta.cmap, label=meta.unit, **common)
 
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
@@ -145,9 +145,6 @@ def main(cfg: DictConfig) -> None:
         prediction = files.load(curr_time, f'{curr_time}-predictions')
         baseline = files.load(curr_time, f'{curr_time}-baseline')
         target = files.load(curr_time, f'{curr_time}-target')
-
-        longitudes = dataset.longitude()
-        latitudes = dataset.latitude()
         
         input_channels = dataset.input_channels()
         output_channels = dataset.output_channels()
@@ -165,44 +162,44 @@ def main(cfg: DictConfig) -> None:
 
             if channel.name == "tp":
                 save_field(
-                    "target", target[idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes,
+                    "target", target[idx, :, :], metadata, files, channel, curr_time,
                     plot_func=plot_map_precipitation, base_title=plot_title
                 )
                 save_field(
-                    "baseline", baseline[input_channel_idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes,
+                    "baseline", baseline[input_channel_idx, :, :], metadata, files, channel, curr_time,
                     plot_func=plot_map_precipitation, base_title=plot_title
                 )
                 if prediction.shape[0] > 1:
                     for member_idx in range(prediction.shape[0]):
                         save_field(
-                            "prediction", prediction[member_idx, idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes,
+                            "prediction", prediction[member_idx, idx, :, :], metadata, files, channel, curr_time,
                             member=member_idx, plot_func=plot_map_precipitation, base_title=plot_title
                         )
                 else:
                     save_field(
-                        "prediction", prediction[0, idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes,
+                        "prediction", prediction[0, idx, :, :], metadata, files, channel, curr_time,
                         plot_func=plot_map_precipitation, base_title=plot_title
                     )
                 continue
 
             # Plot target and baseline
-            save_field("target", target[idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes, base_title=plot_title)
-            save_field("baseline", baseline[input_channel_idx, :, :], metadata, files, channel, curr_time, latitudes, longitudes, base_title=plot_title)
+            save_field("target", target[idx, :, :], metadata, files, channel, curr_time, base_title=plot_title)
+            save_field("baseline", baseline[input_channel_idx, :, :], metadata, files, channel, curr_time, base_title=plot_title)
 
             # Baseline MAE and ME
             _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[idx, :, :])
             baseline_me = (baseline[input_channel_idx, :, :] - target[idx, :, :])
-            save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, files, channel, curr_time, latitudes, longitudes, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, base_title=plot_title)
-            save_field("baseline", baseline_me, metadata, files, channel, curr_time, latitudes, longitudes, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, base_title=plot_title)
+            save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, base_title=plot_title)
+            save_field("baseline", baseline_me, metadata, files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, base_title=plot_title)
 
             # Ensemble predictions
             for member_idx in range(prediction.shape[0]):
                 member = prediction[member_idx, idx, :, :]
-                save_field("prediction", member, metadata, files, channel, curr_time, latitudes, longitudes, member=member_idx, base_title=plot_title)
+                save_field("prediction", member, metadata, files, channel, curr_time, member=member_idx, base_title=plot_title)
                 _, prediction_mae = compute_mae(member, target[idx, :, :])
-                save_field("prediction", prediction_mae.reshape(member.shape), metadata, files, channel, curr_time, latitudes, longitudes, member=member_idx, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, base_title=plot_title)
+                save_field("prediction", prediction_mae.reshape(member.shape), metadata, files, channel, curr_time, member=member_idx, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, base_title=plot_title)
                 prediction_me = (member - target[idx, :, :])
-                save_field("prediction", prediction_me, metadata, files, channel, curr_time, latitudes, longitudes, member=member_idx, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, base_title=plot_title)
+                save_field("prediction", prediction_me, metadata, files, channel, curr_time, member=member_idx, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, base_title=plot_title)
 
         # Plot Windspeed and direction
         wind_channels = {ch.name: idx for idx, ch in enumerate(output_channels) if ch.name in ("10u", "10v")}
@@ -230,25 +227,25 @@ def main(cfg: DictConfig) -> None:
             plot_title_speed = f"{format_time_str(curr_time)}: FF10m"
             plot_title_dir = f"{format_time_str(curr_time)}: DD10m"
 
-            wind_meta = ChannelMeta.update("10u", 0, 10)
-            dir_meta = ChannelMeta.update("10u", 0, 360)
+            wind_meta = ChannelMeta.get("10u", vmin=0, vmax=10)
+            dir_meta = ChannelMeta.get("10u", vmin=0, vmax=360)
 
             # Save windspeed plots
             save_field(
-                "FF10m-target", target_wind_speed, wind_meta, files, None, curr_time, latitudes, longitudes,
+                "FF10m-target", target_wind_speed, wind_meta, files, None, curr_time,
                 kind="value", cmap="viridis", vmin=0, vmax=10,
                 custom_path=files.wind_file("FF10m", curr_time, "FF10m-target"),
                 plot_func=plot_map, base_title=plot_title_speed
             )
             save_field(
-                "FF10m-baseline", baseline_wind_speed, wind_meta, files, None, curr_time, latitudes, longitudes,
+                "FF10m-baseline", baseline_wind_speed, wind_meta, files, None, curr_time,
                 kind="value", cmap="viridis", vmin=0, vmax=10,
                 custom_path=files.wind_file("FF10m", curr_time, "FF10m-baseline"),
                 plot_func=plot_map, base_title=plot_title_speed
             )
             for member_idx in range(prediction.shape[0]):
                 save_field(
-                    "FF10m-prediction", prediction_wind_speed[member_idx], wind_meta, files, None, curr_time, latitudes, longitudes,
+                    "FF10m-prediction", prediction_wind_speed[member_idx], wind_meta, files, None, curr_time,
                     member=member_idx, kind="value", cmap="viridis", vmin=0, vmax=10,
                     custom_path=files.wind_file("FF10m", curr_time, "FF10m-prediction", member_idx),
                     plot_func=plot_map, base_title=plot_title_speed
@@ -256,20 +253,20 @@ def main(cfg: DictConfig) -> None:
 
             # Save wind direction plots
             save_field(
-                "DD10m-target", target_wind_dir, dir_meta, files, None, curr_time, latitudes, longitudes,
+                "DD10m-target", target_wind_dir, dir_meta, files, None, curr_time,
                 kind="value", cmap="twilight", vmin=0, vmax=360,
                 custom_path=files.wind_file("DD10m", curr_time, "DD10m-target"),
                 plot_func=plot_map, base_title=plot_title_dir
             )
             save_field(
-                "DD10m-baseline", baseline_wind_dir, dir_meta, files, None, curr_time, latitudes, longitudes,
+                "DD10m-baseline", baseline_wind_dir, dir_meta, files, None, curr_time,
                 kind="value", cmap="twilight", vmin=0, vmax=360,
                 custom_path=files.wind_file("DD10m", curr_time, "DD10m-baseline"),
                 plot_func=plot_map, base_title=plot_title_dir
             )
             for member_idx in range(prediction.shape[0]):
                 save_field(
-                    "DD10m-prediction", prediction_wind_dir[member_idx], dir_meta, files, None, curr_time, latitudes, longitudes,
+                    "DD10m-prediction", prediction_wind_dir[member_idx], dir_meta, files, None, curr_time,
                     member=member_idx, kind="value", cmap="twilight", vmin=0, vmax=360,
                     custom_path=files.wind_file("DD10m", curr_time, "DD10m-prediction", member_idx),
                     plot_func=plot_map, base_title=plot_title_dir
