@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-
 def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None, extend='neither', norm=None, ticks=None):
     """Plot observed or interpolated data in a scatter plot."""
     logging.info(f'plotting values to {filename}')
@@ -23,7 +22,7 @@ def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filena
     ax.gridlines(visible=False)
     ax.set_xticks([])
     ax.set_yticks([])
-    cbar = plt.colorbar(contour, label=label, orientation="horizontal", shrink=0.7, extend=extend)
+    cbar = plt.colorbar(contour, label=label, orientation="horizontal", shrink=0.75, extend=extend)
     if ticks is not None:
         cbar.set_ticks(ticks)
     plt.title(title)
@@ -57,6 +56,10 @@ def plot_map_precipitation(values, latitudes, longitudes, filename, title='', th
         label='mm/h',
         extend='max'
     )
+
+def wind_direction(u, v):
+    """Compute wind direction from u and v components."""
+    return(np.arctan2(-u, -v) * 180 / np.pi) % 360
 
 @DeprecationWarning
 def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):
