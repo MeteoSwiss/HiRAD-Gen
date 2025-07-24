@@ -1,19 +1,18 @@
-import hydra
-import os
 import logging
-import torch
+import os
+
+import hydra
 import numpy as np
-from omegaconf import OmegaConf, DictConfig
-import sys
-
-from matplotlib.colors import BoundaryNorm, ListedColormap
-
-from hirad.distributed import DistributedManager
-from hirad.utils.inference_utils import calculate_bounds, _prepare_precipitation
-from hirad.utils.function_utils import get_time_from_range
-from hirad.eval import compute_mae, plot_map
+import torch
+from omegaconf import DictConfig, OmegaConf
 
 from hirad.datasets import get_dataset_and_sampler_inference
+from hirad.distributed import DistributedManager
+from hirad.eval import compute_mae, plot_map
+from hirad.eval.plotting import plot_map_precipitation
+from hirad.utils.function_utils import get_time_from_range
+from hirad.utils.inference_utils import calculate_bounds
+
 
 def load_data(output_path, time=None, filename=None):
     return torch.load(os.path.join(output_path, time, filename), weights_only=False)
@@ -80,21 +79,34 @@ def main(cfg: DictConfig) -> None:
             input_channel_idx = output_to_input_channel_map[idx]
 
             if channel.name == "tp":
-                PRECIP_TRESHOLD = 1e-1  # Adjust threshold to match observed data range
-                rfac = 100.0  # m/g --> mm/h
-                target[idx, :, :] = np.ma.masked_where(rfac * target[idx, :, :] <= PRECIP_TRESHOLD, rfac*target[idx, :, :])
-                prediction[:, idx, :, :] =  np.ma.masked_where(rfac*prediction[:, idx, :, :] <= PRECIP_TRESHOLD, rfac*prediction[:, idx, :, :])
-                baseline[input_channel_idx, :, :] =  np.ma.masked_where(rfac*baseline[input_channel_idx, :, :] <= PRECIP_TRESHOLD, rfac*baseline[input_channel_idx, :, :])
 
-                # Adjust bounds to match observed data range
-                colorlist_tot_prec = ['none', 'powderblue', 'dodgerblue', 'mediumblue',
-                                      'forestgreen', 'limegreen', 'lawngreen',
-                                      'yellow', 'gold', 'darkorange', 'red',
-                                      'darkviolet', 'violet', 'thistle']
-                bounds = [1e-1, 2e-1, 5e-1, 1, 2, 5, 10, 20, 30, 50, 70, 100, 150, 200]
-                cmap_tot_prec = ListedColormap(colors=colorlist_tot_prec)
-                norm = BoundaryNorm(bounds, ncolors=len(colorlist_tot_prec), clip=False)
-                logging.info(f'Adjusted precipitation bounds: {bounds}, norm: {norm}')
+
+                # Plot precipitation using the new function (raw values, scaling/masking inside)
+                plot_map_precipitation(
+                    target[idx, :, :], latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-target'),
+                    title=f"{curr_time}: {getattr(channel, 'title', channel.name)}",
+
+                )
+                plot_map_precipitation(
+                    baseline[input_channel_idx, :, :], latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline'),
+                    title=f"{curr_time}: {getattr(channel, 'title', channel.name)}",
+                )
+                if prediction.shape[0] > 1:
+                    for member_idx in range(prediction.shape[0]):
+                        plot_map_precipitation(
+                            prediction[member_idx, idx, :, :], latitudes, longitudes,
+                            os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}'),
+                            title=f"{curr_time}: {getattr(channel, 'title', channel.name)}",
+                        )
+                else:
+                    plot_map_precipitation(
+                        prediction[0, idx, :, :], latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction'),
+                        title=f"{curr_time}: {getattr(channel, 'title', channel.name)}",
+                    )
+                continue  # Skip rest of loop for "tp"
 
             cmap = "viridis"
             vmin, vmax = calculate_bounds(target[idx,:,:],
@@ -108,11 +120,6 @@ def main(cfg: DictConfig) -> None:
                 me_cmap = "RdBu"
                 unit = "K"
                 norm = None
-            elif channel.name == "tp":
-                err_vmin, err_vmax = -10, 10 # Remove?
-                cmap = cmap_tot_prec
-                me_cmap = cmap
-                unit = "mm/h"
             elif channel.name == "10u" or channel.name == "10v":
                 vmin, vmax = -10, 10
                 err_vmin, err_vmax = vmin, vmax # err_vmin hard coded to 0 for mae
@@ -141,10 +148,9 @@ def main(cfg: DictConfig) -> None:
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit,
-                extend=None if channel.name == "tp" else 'both',
+                extend='both',
                 cmap=cmap,
-                norm=norm,
-                ticks=bounds if channel.name == "tp" else None
+                norm=norm
             )
 
             # Plot baseline
@@ -154,40 +160,37 @@ def main(cfg: DictConfig) -> None:
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit,
-                extend=None if channel.name == "tp" else 'both',
+                extend='both',
                 cmap=cmap,
-                norm=norm,
-                ticks=bounds if channel.name == "tp" else None
+                norm=norm
             )
 
             # Plot baseline MAE
             _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[idx, :, :])
 
-            if channel.name != "tp":
-                plot_map(
-                    baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), latitudes, longitudes,
-                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae'),
-                    vmin=0, vmax=err_vmax,
-                    title=f"{plot_title} MAE",
-                    label=unit,
-                    extend='max',
-                    cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
-                )
+            plot_map(
+                baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), latitudes, longitudes,
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-mae'),
+                vmin=0, vmax=err_vmax,
+                title=f"{plot_title} MAE",
+                label=unit,
+                extend='max',
+                cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
+            )
 
             # Plot baseline mean error (difference)
             baseline_me = (baseline[input_channel_idx, :, :] - target[idx, :, :])
             baseline_me_cmap = me_cmap if channel.name == "2t" else None
 
-            if channel.name != "tp":
-                plot_map(
-                    baseline_me, latitudes, longitudes,
-                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me'),
-                    vmin=err_vmin, vmax=err_vmax,
-                    cmap=me_cmap,
-                    title=f"{plot_title} Mean Error",
-                    label=unit,
-                    extend='both'
-                )
+            plot_map(
+                baseline_me, latitudes, longitudes,
+                os.path.join(output_path_channel, f'{curr_time}-{channel.name}-baseline-me'),
+                vmin=err_vmin, vmax=err_vmax,
+                cmap=me_cmap,
+                title=f"{plot_title} Mean Error",
+                label=unit,
+                extend='both'
+            )
 
             if prediction.shape[0] > 1:
                 for member_idx in range(prediction.shape[0]):
@@ -197,37 +200,34 @@ def main(cfg: DictConfig) -> None:
                         vmin=vmin, vmax=vmax,
                         title=plot_title,
                         label=unit,
-                        extend=None if channel.name == "tp" else 'both',
+                        extend='both',
                         cmap=cmap,
-                        norm=norm,
-                        ticks=bounds if channel.name == "tp" else None
+                        norm=norm
                     )
                     # Plot prediction MAE for each ensemble member
                     _, prediction_mae = compute_mae(prediction[member_idx,idx,:,:], target[idx, :, :])
-                    if channel.name != "tp":
-                        plot_map(
-                            prediction_mae.reshape(prediction[member_idx,idx,:,:].shape), latitudes, longitudes,
-                            os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae'),
-                            vmin=0, vmax=err_vmax,
-                            title=f"{plot_title} MAE",
-                            label=unit,
-                            extend='max',
-                            cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
-                        )
+                    plot_map(
+                        prediction_mae.reshape(prediction[member_idx,idx,:,:].shape), latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-mae'),
+                        vmin=0, vmax=err_vmax,
+                        title=f"{plot_title} MAE",
+                        label=unit,
+                        extend='max',
+                        cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
+                    )
                     # Plot prediction mean error for each ensemble member
                     prediction_me = (prediction[member_idx,idx,:,:] - target[idx, :, :])
                     prediction_me_cmap = me_cmap if channel.name == "2t" else None
 
-                    if channel.name != "tp":
-                        plot_map(
-                            prediction_me, latitudes, longitudes,
-                            os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me'),
-                            vmin=err_vmin, vmax=err_vmax,
-                            cmap=me_cmap,
-                            title=f"{plot_title} Mean Error",
-                            label=unit,
-                            extend='both'
-                        )
+                    plot_map(
+                        prediction_me, latitudes, longitudes,
+                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction_{member_idx}-me'),
+                        vmin=err_vmin, vmax=err_vmax,
+                        cmap=me_cmap,
+                        title=f"{plot_title} Mean Error",
+                        label=unit,
+                        extend='both'
+                    )
             else:
                 plot_map(
                     prediction[0,idx,:,:], latitudes, longitudes,
@@ -235,37 +235,34 @@ def main(cfg: DictConfig) -> None:
                     vmin=vmin, vmax=vmax,
                     title=plot_title,
                     label=unit,
-                    extend=None if channel.name == "tp" else 'both',
+                    extend='both',
                     cmap=cmap,
-                    norm=norm,
-                    ticks=bounds if channel.name == "tp" else None
+                    norm=norm
                 )
                 # Plot prediction MAE for single prediction
                 _, prediction_mae = compute_mae(prediction[0,idx,:,:], target[idx, :, :])
-                if channel.name != "tp":
-                    plot_map(
-                        prediction_mae, latitudes, longitudes,
-                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae'),
-                        vmin=0, vmax=err_vmax,
-                        title=f"{plot_title} MAE",
-                        label=unit,
-                        extend='max',
-                        cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
-                    )
+                plot_map(
+                    prediction_mae, latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-mae'),
+                    vmin=0, vmax=err_vmax,
+                    title=f"{plot_title} MAE",
+                    label=unit,
+                    extend='max',
+                    cmap=cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
+                )
                 # Plot prediction mean error for single prediction
                 prediction_me = (prediction[0,idx,:,:] - target[idx, :, :])
                 prediction_me_cmap = me_cmap if channel.name == "2t" else None
 
-                if channel.name != "tp":
-                    plot_map(
-                        prediction_me, latitudes, longitudes,
-                        os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me'),
-                        vmin=err_vmin, vmax=err_vmax,
-                        cmap=me_cmap,
-                        title=f"{plot_title} Mean Error",
-                        label=unit,
-                        extend='both'
-                    )
+                plot_map(
+                    prediction_me, latitudes, longitudes,
+                    os.path.join(output_path_channel, f'{curr_time}-{channel.name}-prediction-me'),
+                    vmin=err_vmin, vmax=err_vmax,
+                    cmap=me_cmap,
+                    title=f"{plot_title} Mean Error",
+                    label=unit,
+                    extend='both'
+                )
 
         # Plot Windspeed and direction
         # Find indices for 10u and 10v channels

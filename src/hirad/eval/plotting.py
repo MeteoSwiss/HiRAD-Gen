@@ -1,13 +1,11 @@
 import logging
-import os
-
-from hirad.eval import crps, absolute_error
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
+from matplotlib.colors import BoundaryNorm, ListedColormap
+
 
 def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None, extend='neither', norm=None, ticks=None):
     """Plot observed or interpolated data in a scatter plot."""
@@ -33,6 +31,32 @@ def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filena
     out_file = f"{filename}.png"
     fig.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close('all')
+
+def plot_map_precipitation(values, latitudes, longitudes, filename, title='', threshold=0.1, rfac=100.0):
+    """Plot precipitation data with specific colormap and thresholds."""
+    # Scale and mask values below threshold
+    values = rfac * values # m/h --> mm/h
+    values = np.ma.masked_where(values <= threshold, values)
+
+    # Predefined colors and bounds specific for precipitation
+    colors = ['none', 'powderblue', 'dodgerblue', 'mediumblue',
+              'forestgreen', 'limegreen', 'lawngreen',
+              'yellow', 'gold', 'darkorange', 'red',
+              'darkviolet', 'violet', 'thistle']
+    bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50, 70, 100, 150, 200]
+
+    cmap = ListedColormap(colors)
+    norm = BoundaryNorm(bounds, ncolors=len(colors), clip=False)
+
+    plot_map(
+        values, latitudes, longitudes, filename,
+        cmap=cmap,
+        norm=norm,
+        ticks=bounds,
+        title=title,
+        label='mm/h',
+        extend='max'
+    )
 
 @DeprecationWarning
 def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):
