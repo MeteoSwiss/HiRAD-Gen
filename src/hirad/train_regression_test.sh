@@ -1,22 +1,7 @@
 #!/bin/bash
 
-#SBATCH --job-name="corrdiff-test-first-stage"
-
-### HARDWARE ###
-#SBATCH --partition=debug
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=4
-#SBATCH --gpus-per-node=4
-#SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
-#SBATCH --no-requeue
-#SBATCH --exclusive
-
 ### OUTPUT ###
 #SBATCH --output=./logs/training_regression_test.log
-
-### ENVIRONMENT ####
-#SBATCH -A a161
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -36,7 +21,5 @@ export MASTER_PORT=29500
 # export OMP_NUM_THREADS=$OMP_THREADS
 export OMP_NUM_THREADS=72
 
-srun --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e . --no-dependencies
-    python src/hirad/training/train.py --config-name=training_era_cosmo_regression_test.yaml
-"
+pip install -e . --no-dependencies
+python src/hirad/training/train.py --config-name=training_era_cosmo_regression_test.yaml
