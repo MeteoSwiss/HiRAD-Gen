@@ -9,20 +9,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None, extend='neither'):
+def plot_map(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None, cmap=None, extend='neither', norm=None, ticks=None):
     """Plot observed or interpolated data in a scatter plot."""
     logging.info(f'plotting values to {filename}')
-
+    
     fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": ccrs.Mercator()})
     lat2d = latitudes.reshape(values.shape)
     lon2d = longitudes.reshape(values.shape)
-    contour = ax.pcolormesh(lon2d, lat2d, values, cmap=cmap, vmin=vmin, vmax=vmax, shading="auto", transform=ccrs.PlateCarree())
+    contour = ax.pcolormesh(
+        lon2d, lat2d, values, cmap=cmap, shading="auto", transform=ccrs.PlateCarree(),
+        norm=norm if norm else None, vmin=None if norm else vmin, vmax=None if norm else vmax
+    )
     ax.coastlines()
     ax.add_feature(cfeature.BORDERS, linewidth=1)  # Add country borders
     ax.gridlines(visible=False)
     ax.set_xticks([])
     ax.set_yticks([])
-    plt.colorbar(contour, label=label, orientation="horizontal", shrink=0.7, extend=extend)
+    cbar = plt.colorbar(contour, label=label, orientation="horizontal", shrink=0.7, extend=extend)
+    if ticks is not None:
+        cbar.set_ticks(ticks)
     plt.title(title)
     plt.tight_layout()
     out_file = f"{filename}.png"

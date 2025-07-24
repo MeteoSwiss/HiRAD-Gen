@@ -6,6 +6,8 @@ import numpy as np
 from omegaconf import OmegaConf, DictConfig
 import sys
 
+from matplotlib.colors import BoundaryNorm, ListedColormap
+
 from hirad.distributed import DistributedManager
 from hirad.utils.inference_utils import calculate_bounds, _prepare_precipitation
 from hirad.utils.function_utils import get_time_from_range
@@ -77,11 +79,22 @@ def main(cfg: DictConfig) -> None:
 
             input_channel_idx = output_to_input_channel_map[idx]
 
-            # Specialized handling for precipitation data
             if channel.name == "tp":
-                target[idx, :, :] = _prepare_precipitation(target[idx, :, :])
-                prediction[:, idx, :, :] = _prepare_precipitation(prediction[:, idx, :, :])
-                baseline[input_channel_idx, :, :] = _prepare_precipitation(baseline[input_channel_idx, :, :])
+                PRECIP_TRESHOLD = 1e-1  # Adjust threshold to match observed data range
+                rfac = 100.0  # m/g --> mm/h
+                target[idx, :, :] = np.ma.masked_where(rfac * target[idx, :, :] <= PRECIP_TRESHOLD, rfac*target[idx, :, :])
+                prediction[:, idx, :, :] =  np.ma.masked_where(rfac*prediction[:, idx, :, :] <= PRECIP_TRESHOLD, rfac*prediction[:, idx, :, :])
+                baseline[input_channel_idx, :, :] =  np.ma.masked_where(rfac*baseline[input_channel_idx, :, :] <= PRECIP_TRESHOLD, rfac*baseline[input_channel_idx, :, :])
+
+                # Adjust bounds to match observed data range
+                colorlist_tot_prec = ['none', 'powderblue', 'dodgerblue', 'mediumblue',
+                                      'forestgreen', 'limegreen', 'lawngreen',
+                                      'yellow', 'gold', 'darkorange', 'red',
+                                      'darkviolet', 'violet', 'thistle']
+                bounds = [1e-1, 2e-1, 5e-1, 1, 2, 5, 10, 20, 30, 50, 70, 100, 150, 200]
+                cmap_tot_prec = ListedColormap(colors=colorlist_tot_prec)
+                norm = BoundaryNorm(bounds, ncolors=len(colorlist_tot_prec), clip=False)
+                logging.info(f'Adjusted precipitation bounds: {bounds}, norm: {norm}')
 
             cmap = "viridis"
             vmin, vmax = calculate_bounds(target[idx,:,:],
@@ -94,9 +107,11 @@ def main(cfg: DictConfig) -> None:
                 cmap = "RdYlBu_r"
                 me_cmap = "RdBu"
                 unit = "K"
+                norm = None
             elif channel.name == "tp":
                 err_vmin, err_vmax = -10, 10 # Remove?
-                me_cmap = "blues"
+                cmap = cmap_tot_prec
+                me_cmap = cmap
                 unit = "mm/h"
             elif channel.name == "10u" or channel.name == "10v":
                 vmin, vmax = -10, 10
@@ -104,8 +119,10 @@ def main(cfg: DictConfig) -> None:
                 cmap = "BrBG"
                 me_cmap = cmap
                 unit = "m/s"
+                norm = None
             else:
                 err_vmin, err_vmax = vmin, vmax
+                norm = None
 
             # Reformat curr_time for plot title
             dt_str = curr_time
@@ -124,8 +141,10 @@ def main(cfg: DictConfig) -> None:
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit,
-                extend='max' if channel.name == "tp" else 'both',
-                cmap=cmap
+                extend=None if channel.name == "tp" else 'both',
+                cmap=cmap,
+                norm=norm,
+                ticks=bounds if channel.name == "tp" else None
             )
 
             # Plot baseline
@@ -135,8 +154,10 @@ def main(cfg: DictConfig) -> None:
                 vmin=vmin, vmax=vmax,
                 title=plot_title,
                 label=unit,
-                extend='max' if channel.name == "tp" else 'both',
-                cmap=cmap
+                extend=None if channel.name == "tp" else 'both',
+                cmap=cmap,
+                norm=norm,
+                ticks=bounds if channel.name == "tp" else None
             )
 
             # Plot baseline MAE
@@ -176,8 +197,10 @@ def main(cfg: DictConfig) -> None:
                         vmin=vmin, vmax=vmax,
                         title=plot_title,
                         label=unit,
-                        extend='max' if channel.name == "tp" else 'both',
-                        cmap=cmap
+                        extend=None if channel.name == "tp" else 'both',
+                        cmap=cmap,
+                        norm=norm,
+                        ticks=bounds if channel.name == "tp" else None
                     )
                     # Plot prediction MAE for each ensemble member
                     _, prediction_mae = compute_mae(prediction[member_idx,idx,:,:], target[idx, :, :])
@@ -212,8 +235,10 @@ def main(cfg: DictConfig) -> None:
                     vmin=vmin, vmax=vmax,
                     title=plot_title,
                     label=unit,
-                    extend='max' if channel.name == "tp" else 'both',
-                    cmap=cmap
+                    extend=None if channel.name == "tp" else 'both',
+                    cmap=cmap,
+                    norm=norm,
+                    ticks=bounds if channel.name == "tp" else None
                 )
                 # Plot prediction MAE for single prediction
                 _, prediction_mae = compute_mae(prediction[0,idx,:,:], target[idx, :, :])
