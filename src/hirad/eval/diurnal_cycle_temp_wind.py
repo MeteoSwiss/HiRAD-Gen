@@ -13,22 +13,16 @@ from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
 
-# Constants
-CONV_FACTOR = 100    # Convert meters to mm/h
-WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
-LOG_INTERVAL = 24    # Log progress every N timesteps
-
+LOG_INTERVAL = 24
 
 def hour_of(dt: str, fmt: str = "%Y%m%d-%H%M") -> int:
     return datetime.strptime(dt, fmt).hour
-
 
 def compute_ensemble(hourly_values):
     hours = sorted(hourly_values)
     means = [np.mean(hourly_values[h]) for h in hours]
     stds  = [np.std(hourly_values[h])  for h in hours]
     return hours, means, stds
-
 
 def save_plot(hours, lines, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -54,15 +48,13 @@ def save_plot(hours, lines, labels, ylabel, title, out_path):
     plt.savefig(out_path)
     plt.close()
 
-
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
-    # Setup logging
     DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting diurnal cycle computation")
+    logger.info("Starting diurnal cycle computation for 2m temperature and windspeed")
     times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
     logger.info(f"Loaded {len(times)} timesteps to process")
 
@@ -73,75 +65,75 @@ def main(cfg: DictConfig):
     logger.info("Dataset and sampler initialized")
 
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    load = lambda ts, fn: torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
+    load = lambda ts, fn: torch.load(out_root/ts/fn, weights_only=False)
 
     # Find channel indices
     out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
     in_ch  = {c.name: i for i, c in enumerate(dataset.input_channels())}
-    tp_out = out_ch['tp']; tp_in = in_ch.get('tp', tp_out)
-    logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
+    t2m_out = out_ch.get('2t', out_ch.get('t2m'))
+    t2m_in = in_ch.get('2t', in_ch.get('t2m', t2m_out))
+    u_out = out_ch.get('10u')
+    v_out = out_ch.get('10v')
+    u_in = in_ch.get('10u', u_out)
+    v_in = in_ch.get('10v', v_out)
+    logger.info(f"2T channel indices - output: {t2m_out}, input: {t2m_in}")
+    logger.info(f"10U/10V channel indices - output: {u_out}/{v_out}, input: {u_in}/{v_in}")
 
-    # Prepare data structures
-    stats = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
-    wet_stats = {mode: defaultdict(list) for mode in stats}
+    stats_temp = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
+    stats_wind = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
 
-    # Collect data
     for idx, ts in enumerate(times, 1):
         hr = hour_of(ts)
-        target = load(ts, f"{ts}-target")[tp_out]
-        baseline = load(ts, f"{ts}-baseline")[tp_in]
-        stats['target'][hr].append(target)
-        stats['baseline'][hr].append(baseline)
-        wet_stats['target'][hr].append((target > WET_THRESHOLD).mean())
-        wet_stats['baseline'][hr].append((baseline > WET_THRESHOLD).mean())
+        target = load(ts, f"{ts}-target")
+        baseline = load(ts, f"{ts}-baseline")
+        # 2m temperature
+        stats_temp['target'][hr].append(target[t2m_out].mean())
+        stats_temp['baseline'][hr].append(baseline[t2m_in].mean())
+        # windspeed using np.hypot
+        stats_wind['target'][hr].append(np.hypot(target[u_out], target[v_out]).mean())
+        stats_wind['baseline'][hr].append(np.hypot(baseline[u_in], baseline[v_in]).mean())
 
-        preds = load(ts, f"{ts}-predictions")[:, tp_out]
+        preds = load(ts, f"{ts}-predictions")
         for member in preds:
-            stats['prediction'][hr].append(member.mean())
-            wet_stats['prediction'][hr].append((member > WET_THRESHOLD).mean())
+            stats_temp['prediction'][hr].append(member[t2m_out].mean())
+            stats_wind['prediction'][hr].append(np.hypot(member[u_out], member[v_out]).mean())
 
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
     # Compute hourly means
-    mean_cycle = {
-        mode: [np.mean(stats[mode][h]) for h in sorted(stats[mode])]
+    mean_cycle_temp = {
+        mode: [np.mean(stats_temp[mode][h]) for h in sorted(stats_temp[mode])]
         for mode in ['target','baseline']
     }
-    wet_cycle = {
-        mode: [np.mean(wet_stats[mode][h]) * 100. for h in sorted(wet_stats[mode])]
+    mean_cycle_wind = {
+        mode: [np.mean(stats_wind[mode][h]) for h in sorted(stats_wind[mode])]
         for mode in ['target','baseline']
     }
-    logger.info("Computed hourly mean and wet-cycle statistics")
+    logger.info("Computed hourly mean statistics")
 
     # Ensemble cycles (mean ± std)
-    hrs, pred_mean, pred_std = compute_ensemble(stats['prediction'])
-    _, wet_mean, wet_std = compute_ensemble(wet_stats['prediction'])
-    # Multiply ensemble wet-hour statistics by 100 for percentage
-    wet_mean = [v * 100. for v in wet_mean]
-    wet_std = [v * 100. for v in wet_std]
+    hrs, pred_mean_temp, pred_std_temp = compute_ensemble(stats_temp['prediction'])
+    hrs_w, pred_mean_wind, pred_std_wind = compute_ensemble(stats_wind['prediction'])
     logger.info("Computed ensemble statistics")
 
     # Prepare cyclic series
     cycle = lambda x: x + [x[0]]
     hrs_c = hrs + [24]
-    amount_lines = [cycle(mean_cycle['target']), cycle(mean_cycle['baseline']), (cycle(pred_mean), cycle(pred_std))]
-    wet_lines = [cycle(wet_cycle['target']), cycle(wet_cycle['baseline']), (cycle(wet_mean), cycle(wet_std))]
-
-    # Log the lines to be plotted (debug)
-    logger.info(f"amount_lines: {amount_lines}")
-    logger.info(f"wet_lines: {wet_lines}")
+    hrs_w_c = hrs_w + [24]
+    temp_lines = [cycle(mean_cycle_temp['target']), cycle(mean_cycle_temp['baseline']), (cycle(pred_mean_temp), cycle(pred_std_temp))]
+    wind_lines = [cycle(mean_cycle_wind['target']), cycle(mean_cycle_wind['baseline']), (cycle(pred_mean_wind), cycle(pred_std_wind))]
 
     # Plot
     plot_paths = []
-    fn1 = out_root/'diurnal_cycle_precip_amount.png'
-    save_plot(hrs_c, amount_lines, ['COSMO-2','ERA5','CorrDiff ± Std(Members)'], 'Rain Rate (mm/h)',
-              'Diurnal Cycle of Precip Amount', fn1)
+    fn1 = out_root/'diurnal_cycle_2t.png'
+    save_plot(hrs_c, temp_lines, ['COSMO-2','ERA5','CorrDiff ± Std(Members)'], '2m Temperature [K]',
+              'Diurnal Cycle of 2m Temperature', fn1)
     plot_paths.append(fn1)
 
-    fn2 = out_root/'diurnal_cycle_precip_wethours.png'
-    save_plot(hrs_c, wet_lines, ['COSMO-2','ERA5','Pred Mean ± Std'], 'Wet-Hour Fraction [%]',
-              'Diurnal Cycle of Wet-Hours (>0.1 mm/h)', fn2)
+    fn2 = out_root/'diurnal_cycle_windspeed.png'
+    save_plot(hrs_w_c, wind_lines, ['COSMO-2','ERA5','CorrDiff ± Std(Members)'], 'Windspeed [m/s]',
+              'Diurnal Cycle of Windspeed', fn2)
     plot_paths.append(fn2)
 
     logger.info(f"Plots saved: {', '.join(str(p) for p in plot_paths)}")
