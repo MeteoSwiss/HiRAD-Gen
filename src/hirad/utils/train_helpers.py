@@ -18,6 +18,7 @@ import torch
 import numpy as np
 import warnings
 import mlflow
+from omegaconf import DictConfig, OmegaConf
 
 from hirad.distributed import DistributedManager
 from hirad.utils.env_info import get_env_info, flatten_dict
@@ -114,7 +115,7 @@ def is_time_for_periodic_task(
         return cur_nimg % freq < batch_size
 
 
-def init_mlflow(cfg: dict, dist: DistributedManager) -> None:
+def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
     if dist.rank==0:
         if dist.world_size>4:
             mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
@@ -128,7 +129,7 @@ def init_mlflow(cfg: dict, dist: DistributedManager) -> None:
         with open("run_id.txt", 'w') as f:
             f.write(run.info.run_id)
         # log environment info
-        mlflow.log_params(flatten_dict(cfg))
+        mlflow.log_params(flatten_dict(OmegaConf.to_object(cfg)))
         mlflow.log_dict(cfg, "config.json")
         python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
         mlflow.log_dict(python_environment, "environment.json")

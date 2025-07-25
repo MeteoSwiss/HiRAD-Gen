@@ -70,10 +70,9 @@ def main(cfg: DictConfig) -> None:
     dist = DistributedManager()
 
     OmegaConf.resolve(cfg)
-    cfg_dict = OmegaConf.to_object(cfg)
 
     if cfg.logging.method == "mlflow":
-        init_mlflow(cfg_dict, dist)
+        init_mlflow(cfg, dist)
         if dist.world_size > 1:
             torch.distributed.barrier()
     elif cfg.logging.method is not None:
