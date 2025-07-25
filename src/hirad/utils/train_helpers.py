@@ -19,6 +19,7 @@ import numpy as np
 import warnings
 import mlflow
 from omegaconf import DictConfig, OmegaConf
+import os
 
 from hirad.distributed import DistributedManager
 from hirad.utils.env_info import get_env_info, flatten_dict
@@ -117,24 +118,27 @@ def is_time_for_periodic_task(
 
 def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
     if dist.rank==0:
-        if dist.world_size>4:
-            mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
-            mlflow.start_run(run_name=cfg.logging.run_name) #, log_system_metrics=True)
-        else:
+        run_id = None
+        if os.path.isfile('run_id.txt'):
+            with open('run_id.txt','r') as f:
+                run_id = f.read()
+        if dist.world_size<=4:
             mlflow.system_metrics.set_system_metrics_node_id("node-0")
-            # mlflow.set_system_metrics_sampling_interval(1)
-            mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
-            mlflow.start_run(run_name=cfg.logging.run_name, log_system_metrics=True)
-        run = mlflow.active_run()
-        with open("run_id.txt", 'w') as f:
-            f.write(run.info.run_id)
-        # log environment info
-        mlflow.log_params(flatten_dict(OmegaConf.to_object(cfg)))
-        mlflow.log_dict(cfg, "config.json")
-        python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
-        mlflow.log_dict(python_environment, "environment.json")
-        if git_diff:
-            mlflow.log_text(git_diff, "git_diff.txt")
+        if run_id:
+            mlflow.start_run(run_id=run_id, log_system_metrics=False if dist.world_size>4 else True)
+        else:
+            mlflow.start_run(run_name=cfg.logging.run_name, log_system_metrics=False if dist.world_size>4 else True)
+        if run_id is None:
+            run = mlflow.active_run()
+            with open("run_id.txt", 'w') as f:
+                f.write(run.info.run_id)
+            # log environment info if run is not continuing from previous checkpoint
+            mlflow.log_params(flatten_dict(OmegaConf.to_object(cfg)))
+            mlflow.log_dict(cfg, "config.json")
+            python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
+            mlflow.log_dict(python_environment, "environment.json")
+            if git_diff:
+                mlflow.log_text(git_diff, "git_diff.txt")
 
     if dist.world_size > 4:
         torch.distributed.barrier()
@@ -143,8 +147,6 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
         mlflow.system_metrics.set_system_metrics_node_id(f"node-{(dist.rank//4)}" 
                                                          if dist.rank!=1
                                                          else "node-0")
-        # mlflow.set_system_metrics_sampling_interval(1)
-        # mlflow.set_system_metrics_samples_before_logging(10)
         mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
         with open("run_id.txt", 'r') as f:
             run_id = f.read()

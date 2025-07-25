@@ -782,7 +782,7 @@ def main(cfg: DictConfig) -> None:
                     torch.distributed.barrier()
                 if is_time_for_periodic_task(
                     cur_nimg,
-                    cfg.training.io.save_checkpoint_freq,
+                    cfg.training.io.visualization_freq,
                     done,
                     cfg.training.hp.total_batch_size,
                     dist.rank,
