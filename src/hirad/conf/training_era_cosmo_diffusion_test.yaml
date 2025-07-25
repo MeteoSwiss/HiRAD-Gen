@@ -1,0 +1,24 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion_era5_cosmo_test
+  run:
+    dir: ./outputs/training/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/era_cosmo
+
+  # Model
+  - model/era_cosmo_diffusion
+
+  - model_size/mini
+
+  # Training
+  - training/era_cosmo_diffusion
+
+  # Inference visualization
+  - generation/era_cosmo_training

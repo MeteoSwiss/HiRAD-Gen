@@ -1,0 +1,25 @@
+hydra:
+  job:
+    chdir: true
+    name: regression_era5_cosmo_test
+  run:
+    dir: ./outputs/training/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/era_cosmo
+
+  # Model
+  - model/era_cosmo_regression
+
+  - model_size/mini
+
+  # Training
+  # Leave same as prod
+  - training/era_cosmo_regression
+
+  # Inference visualization
+  - generation/era_cosmo_training
