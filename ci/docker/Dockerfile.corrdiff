@@ -7,4 +7,5 @@ RUN pip install --upgrade pip
 # Install the rest of dependencies.
 RUN pip install \
     Cartopy==0.22.0 \
-    xskillscore
+    xskillscore \
+    mlflow

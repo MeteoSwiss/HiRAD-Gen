@@ -22,3 +22,6 @@ defaults:
 
   # Inference visualization
   - generation/era_cosmo_training
+
+  # Logging
+  - logging/era_cosmo_diffusion

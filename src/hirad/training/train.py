@@ -11,19 +11,22 @@ from contextlib import nullcontext
 import nvtx
 import torch
 from hydra.utils import to_absolute_path
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
+import mlflow
 # from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_precision, \
                                         set_patch_shape, compute_num_accumulation_rounds, \
-                                        is_time_for_periodic_task, handle_and_clip_gradients
+                                        is_time_for_periodic_task, handle_and_clip_gradients, \
+                                        init_mlflow
 from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.inference_utils import save_images
+from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.models import UNet, EDMPrecondSuperResolution
 from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
@@ -66,12 +69,19 @@ def main(cfg: DictConfig) -> None:
     DistributedManager.initialize()
     dist = DistributedManager()
 
-    if dist.rank==0:
-        writer = SummaryWriter(log_dir='tensorboard')
+    OmegaConf.resolve(cfg)
+    cfg_dict = OmegaConf.to_object(cfg)
+
+    if cfg.logging.method == "mlflow":
+        init_mlflow(cfg_dict, dist)
+        if dist.world_size > 1:
+            torch.distributed.barrier()
+    elif cfg.logging.method is not None:
+        raise ValueError("The only available logging method is mlflow. To disable logging set the method to null.")
+
     logger = PythonLogger("main") # general logger
     logger0 = RankZeroLoggingWrapper(logger, dist) # rank 0 logger
 
-    OmegaConf.resolve(cfg)
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
     if hasattr(cfg.dataset, "validation_path"):
         train_test_split = True
@@ -96,14 +106,22 @@ def main(cfg: DictConfig) -> None:
         if dist.rank==0 and not os.path.exists(visualization_dir):
             os.makedirs(visualization_dir) # added creating checkpoint dir
         visualize_checkpoints = True
+    if cfg.training.hp.batch_size_per_gpu == "auto" and \
+            cfg.training.hp.total_batch_size == "auto":
+        raise ValueError("batch_size_per_gpu and total_batch_size can't be both set to 'auto'.")
     if cfg.training.hp.batch_size_per_gpu == "auto":
         cfg.training.hp.batch_size_per_gpu = (
             cfg.training.hp.total_batch_size // dist.world_size
         )
+    elif cfg.training.hp.total_batch_size == "auto":
+        cfg.training.hp.total_batch_size = (
+            cfg.training.hp.batch_size_per_gpu * dist.world_size
+        )
+
 
     set_seed(dist.rank)
     configure_cuda_for_consistent_precision()
-    
+
     # Instantiate the dataset
     data_loader_kwargs = {
         "pin_memory": True,
@@ -143,7 +161,7 @@ def main(cfg: DictConfig) -> None:
         if cfg.generation.times_range and cfg.generation.times:
             raise ValueError("Either times_range or times must be provided, but not both")
         if cfg.generation.times_range:
-            times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
+            times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M")
         else:
             times = cfg.generation.times
         viz_dataset_cfg = OmegaConf.to_container(cfg.generation.dataset)
@@ -291,7 +309,6 @@ def main(cfg: DictConfig) -> None:
             raise FileNotFoundError(
                 f"Expected this regression checkpoint but not found: {regression_checkpoint_path}"
             )
-        #regression_net = torch.nn.Module() #TODO Module.from_checkpoint(regression_checkpoint_path) figure out how to save and load models, also, some basic functions like num_params, device
         #TODO make regression model loading more robust (model type is both in rergession_checkpoint_path and regression_name)
         #TODO add the option to choose epoch to load from / regression_checkpoint_path is now a folder
         regression_model_args_path = os.path.join(regression_checkpoint_path, 'model_args.json')
@@ -567,9 +584,9 @@ def main(cfg: DictConfig) -> None:
                     ) / n_average_loss_running_mean
                     n_average_loss_running_mean += 1
 
-                    if dist.rank == 0:
-                        writer.add_scalar("training_loss", average_loss, cur_nimg)
-                        writer.add_scalar(
+                    if dist.rank == 0 and cfg.logging.method == "mlflow":
+                        mlflow.log_metric("training_loss", average_loss, cur_nimg)
+                        mlflow.log_metric(
                             "training_loss_running_mean",
                             average_loss_running_mean,
                             cur_nimg,
@@ -598,8 +615,8 @@ def main(cfg: DictConfig) -> None:
                             if cur_nimg >= lr_rampup:
                                 g["lr"] *= cfg.training.hp.lr_decay ** ((cur_nimg - lr_rampup) // cfg.training.hp.lr_decay_rate)
                             current_lr = g["lr"]
-                            if dist.rank == 0:
-                                writer.add_scalar("learning_rate", current_lr, cur_nimg)
+                            if dist.rank == 0 and cfg.logging.method == "mlflow":
+                                mlflow.log_metric("learning_rate", current_lr, cur_nimg)
                         handle_and_clip_gradients(
                             model, grad_clip_threshold=cfg.training.hp.grad_clip_threshold
                         )
@@ -737,9 +754,9 @@ def main(cfg: DictConfig) -> None:
                                         valid_loss_sum, op=torch.distributed.ReduceOp.SUM
                                     )
                                 average_valid_loss = valid_loss_sum / dist.world_size
-                                if dist.rank == 0:
-                                    writer.add_scalar(
-                                        "validation_loss", average_valid_loss, cur_nimg
+                                if dist.rank == 0 and cfg.logging.method == "mlflow":
+                                    mlflow.log_metric(
+                                        "validation_loss", average_valid_loss, cur_nimg                                        
                                     )
 
 
@@ -770,83 +787,84 @@ def main(cfg: DictConfig) -> None:
                     done,
                     cfg.training.hp.total_batch_size,
                     dist.rank,
-                ):
-                    if visualize_checkpoints:
-                        with nvtx.annotate("validation", color="red"):                    
-                            if dist.rank == 0:
-                                writer_executor = ThreadPoolExecutor(
-                                    max_workers=cfg.generation.perf.num_writer_workers
+                ) and visualize_checkpoints:
+                    with nvtx.annotate("visualization", color="red"):                    
+                        if dist.rank == 0:
+                            writer_executor = ThreadPoolExecutor(
+                                max_workers=cfg.generation.perf.num_writer_workers
+                            )
+                            writer_threads = []
+
+                        times = visualization_dataset.time()
+                        time_index = -1
+                        for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
+                            iter(visualization_data_loader)
+                        ):
+                            time_index += 1
+                            logger0.info(f"starting index: {time_index}")
+
+                            # continue
+                            if lead_time_label_viz:
+                                lead_time_label_viz = lead_time_label_viz[0].to(dist.device).contiguous()
+                            else:
+                                lead_time_label_viz = None
+
+                            if use_apex_gn:
+                                img_clean_viz = img_clean_viz.to(
+                                    dist.device,
+                                    dtype=input_dtype,
+                                    non_blocking=True,
+                                ).to(memory_format=torch.channels_last)
+                                img_lr_viz = img_lr_viz.to(
+                                    dist.device,
+                                    dtype=input_dtype,
+                                    non_blocking=True,
+                                ).to(memory_format=torch.channels_last)
+                            else:
+                                img_clean_viz = (
+                                    img_clean_viz.to(dist.device)
+                                    .to(input_dtype)
+                                    .contiguous()
                                 )
-                                writer_threads = []
-
-                            times = visualization_dataset.time()
-                            time_index = -1
-                            for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
-                                iter(visualization_data_loader)
-                            ):
-                                time_index += 1
-                                logger0.info(f"starting index: {time_index}")
-
-                                # continue
-                                if lead_time_label_viz:
-                                    lead_time_label_viz = lead_time_label_viz[0].to(dist.device).contiguous()
-                                else:
-                                    lead_time_label_viz = None
-
-                                if use_apex_gn:
-                                    img_clean_viz = img_clean_viz.to(
-                                        dist.device,
-                                        dtype=input_dtype,
-                                        non_blocking=True,
-                                    ).to(memory_format=torch.channels_last)
-                                    img_lr_viz = img_lr_viz.to(
-                                        dist.device,
-                                        dtype=input_dtype,
-                                        non_blocking=True,
-                                    ).to(memory_format=torch.channels_last)
-                                else:
-                                    img_clean_viz = (
-                                        img_clean_viz.to(dist.device)
-                                        .to(input_dtype)
-                                        .contiguous()
-                                    )
-                                    img_lr_viz = (
-                                        img_lr_viz.to(dist.device)
-                                        .to(input_dtype)
-                                        .contiguous()
-                                    )
-                                with torch.autocast(
-                                        "cuda", dtype=amp_dtype, enabled=enable_amp
-                                    ):
-                                    image_pred_viz, image_reg_viz = generator.generate(img_lr_viz, lead_time_label_viz)
-                                if dist.rank == 0:
-                                    # write out data in a seperate thread so we don't hold up inferencing
-                                    output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
-                                    if dist.rank==0 and not os.path.exists(output_path):
-                                        os.makedirs(output_path)
-                                    writer_threads.append(
-                                        writer_executor.submit(
-                                            save_images,
-                                            output_path,
-                                            times[visualization_sampler[time_index]],
-                                            visualization_dataset,
-                                            image_pred_viz.cpu().numpy(),
-                                            img_clean_viz.cpu().numpy(),
-                                            img_lr_viz.cpu().numpy(),
-                                            image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
-                                        )
-                                    )
-                            # make sure all the workers are done writing
+                                img_lr_viz = (
+                                    img_lr_viz.to(dist.device)
+                                    .to(input_dtype)
+                                    .contiguous()
+                                )
+                            with torch.autocast(
+                                    "cuda", dtype=amp_dtype, enabled=enable_amp
+                                ):
+                                image_pred_viz, image_reg_viz = generator.generate(img_lr_viz, lead_time_label_viz)
                             if dist.rank == 0:
-                                for thread in list(writer_threads):
-                                    thread.result()
-                                    writer_threads.remove(thread)
-                                writer_executor.shutdown()
+                                # write out data in a seperate thread so we don't hold up inferencing
+                                output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
+                                if dist.rank==0 and not os.path.exists(output_path):
+                                    os.makedirs(output_path)
+                                writer_threads.append(
+                                    writer_executor.submit(
+                                        save_images,
+                                        output_path,
+                                        times[visualization_sampler[time_index]],
+                                        visualization_dataset,
+                                        image_pred_viz.cpu().numpy(),
+                                        img_clean_viz.cpu().numpy(),
+                                        img_lr_viz.cpu().numpy(),
+                                        image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
+                                    )
+                                )
+                        # make sure all the workers are done writing
+                        if dist.rank == 0:
+                            for thread in list(writer_threads):
+                                thread.result()
+                                writer_threads.remove(thread)
+                            writer_executor.shutdown()
 
 
+
+    if dist.world_size > 1:
+        torch.distributed.barrier()
     # Done.
     logger0.info("Training Completed.")
-
 
 if __name__ == "__main__":
     main()

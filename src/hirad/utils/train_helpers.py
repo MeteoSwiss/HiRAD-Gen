@@ -17,7 +17,10 @@
 import torch
 import numpy as np
 import warnings
+import mlflow
 
+from hirad.distributed import DistributedManager
+from hirad.utils.env_info import get_env_info, flatten_dict
 
 def set_patch_shape(img_shape, patch_shape):
     img_shape_y, img_shape_x = img_shape
@@ -109,3 +112,39 @@ def is_time_for_periodic_task(
         return True
     else:
         return cur_nimg % freq < batch_size
+
+
+def init_mlflow(cfg: dict, dist: DistributedManager) -> None:
+    if dist.rank==0:
+        if dist.world_size>4:
+            mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
+            mlflow.start_run(run_name=cfg.logging.run_name) #, log_system_metrics=True)
+        else:
+            mlflow.system_metrics.set_system_metrics_node_id("node-0")
+            # mlflow.set_system_metrics_sampling_interval(1)
+            mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
+            mlflow.start_run(run_name=cfg.logging.run_name, log_system_metrics=True)
+        run = mlflow.active_run()
+        with open("run_id.txt", 'w') as f:
+            f.write(run.info.run_id)
+        # log environment info
+        mlflow.log_params(flatten_dict(cfg))
+        mlflow.log_dict(cfg, "config.json")
+        python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
+        mlflow.log_dict(python_environment, "environment.json")
+        if git_diff:
+            mlflow.log_text(git_diff, "git_diff.txt")
+
+    if dist.world_size > 4:
+        torch.distributed.barrier()
+
+    if (dist.rank!=0 and dist._local_rank==0) or (dist.rank==1 and dist.world_size>4):
+        mlflow.system_metrics.set_system_metrics_node_id(f"node-{(dist.rank//4)}" 
+                                                         if dist.rank!=1
+                                                         else "node-0")
+        # mlflow.set_system_metrics_sampling_interval(1)
+        # mlflow.set_system_metrics_samples_before_logging(10)
+        mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
+        with open("run_id.txt", 'r') as f:
+            run_id = f.read()
+        mlflow.start_run(run_id=run_id, log_system_metrics=True)
