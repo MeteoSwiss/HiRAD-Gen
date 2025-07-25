@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import hydra
 import numpy as np
-torch = __import__('torch')
+import torch
 from omegaconf import DictConfig, OmegaConf
 import matplotlib.pyplot as plt
 
@@ -34,13 +34,10 @@ def save_plot(hours, lines, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(8,4))
     for data, label in zip(lines, labels):
-        if isinstance(data, tuple):  # (mean, std)
+        if isinstance(data, tuple):
             mean, std = data
-            plt.plot(hours, mean, label=label)
-            plt.fill_between(hours,
-                             np.array(mean)-std,
-                             np.array(mean)+std,
-                             alpha=0.3)
+            line, = plt.plot(hours, mean, label=label)
+            plt.fill_between(hours, np.maximum(np.array(mean)-std, 0), np.array(mean)+std, alpha=0.3, color=line.get_color())
         else:
             plt.plot(hours, data, label=label)
     plt.xlabel('Hour (UTC)')
