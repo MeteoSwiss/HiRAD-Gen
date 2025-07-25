@@ -118,6 +118,7 @@ def is_time_for_periodic_task(
 
 def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
     if dist.rank==0:
+        mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
         run_id = None
         if os.path.isfile('run_id.txt'):
             with open('run_id.txt','r') as f:
@@ -134,11 +135,11 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
                 f.write(run.info.run_id)
             # log environment info if run is not continuing from previous checkpoint
             mlflow.log_params(flatten_dict(OmegaConf.to_object(cfg)))
-            mlflow.log_dict(cfg, "config.json")
-            python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
-            mlflow.log_dict(python_environment, "environment.json")
-            if git_diff:
-                mlflow.log_text(git_diff, "git_diff.txt")
+        python_environment, git_diff = get_env_info(exclude_prefixes=['hirad', '__mp_main__'])
+        mlflow.log_dict(python_environment, "environment.json")
+        if git_diff:
+            mlflow.log_text(git_diff, "git_diff.txt")
+        mlflow.log_dict(cfg, "config.json")
 
     if dist.world_size > 4:
         torch.distributed.barrier()

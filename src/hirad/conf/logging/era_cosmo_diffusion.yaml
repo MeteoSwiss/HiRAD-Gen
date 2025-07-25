@@ -3,3 +3,4 @@ method: null
 experiment_name: hirad-corrdiff-diffusion
 run_name: era-cosmo-1h
 uri: null
+log_images: false

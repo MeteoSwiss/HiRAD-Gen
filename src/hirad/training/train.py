@@ -796,6 +796,7 @@ def main(cfg: DictConfig) -> None:
 
                         times = visualization_dataset.time()
                         time_index = -1
+                        output_paths_list = []
                         for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
                             iter(visualization_data_loader)
                         ):
@@ -837,6 +838,7 @@ def main(cfg: DictConfig) -> None:
                             if dist.rank == 0:
                                 # write out data in a seperate thread so we don't hold up inferencing
                                 output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
+                                output_paths_list.append(output_path)
                                 if dist.rank==0 and not os.path.exists(output_path):
                                     os.makedirs(output_path)
                                 writer_threads.append(
@@ -857,7 +859,12 @@ def main(cfg: DictConfig) -> None:
                                 thread.result()
                                 writer_threads.remove(thread)
                             writer_executor.shutdown()
-
+                            if cfg.logging.method == "mlflow" and cfg.logging.log_images:
+                                for output_path in output_paths_list:
+                                    mlflow.log_artifacts(output_path,
+                                                          os.path.join(
+                                                              'visualization',
+                                                              os.path.split(output_path)[-1]))
 
 
     if dist.world_size > 1:
