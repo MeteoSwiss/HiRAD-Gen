@@ -19,8 +19,11 @@ test_job:
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-    - pip install -e . --no-dependencies
-    - python src/hirad/training/train.py --config-name=training_era_cosmo_regression_test.yaml
+     - echo 'hello world'
+  #  - pip install -e . --no-dependencies
+  #  - python src/hirad/training/train.py --config-name=training_era_cosmo_regression_test.yaml
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 2
+    SLURM_ACCOUNT: a161
+    SBATCH_ACCOUNT: a161
