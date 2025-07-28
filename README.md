@@ -2,10 +2,10 @@
 
 HiRAD-Gen is short for high-resolution atmospheric downscaling using generative models. This repository contains the code and configuration required to train and use the model.
 
-[Setup clariden/santis](#setup-claridensantis) 
-[Regression training - clariden/santis](#run-regression-model-training-alps) 
-[Diffusion training - clariden/santis](#run-diffusion-model-training-alps) 
-[Inference - clariden/santis](#running-inference-on-alps)
+[Setup clariden/santis](#setup-claridensantis)   
+[Regression training - clariden/santis](#run-regression-model-training-alps)  
+[Diffusion training - clariden/santis](#run-diffusion-model-training-alps)  
+[Inference - clariden/santis](#running-inference-on-alps)  
 [Installation - uenv/venv - deprecated](#installation-alps-uenvvenv---deprecated)
 
 ## Setup clariden/santis
