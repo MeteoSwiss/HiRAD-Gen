@@ -577,32 +577,11 @@ def main(cfg: DictConfig) -> None:
                             )
                         average_loss = (loss_sum / dist.world_size).cpu().item()
 
-                    # update running mean of average loss since last periodic task
-                    average_loss_running_mean += (
-                        average_loss - average_loss_running_mean
-                    ) / n_average_loss_running_mean
-                    n_average_loss_running_mean += 1
-
-                    if dist.rank == 0 and cfg.logging.method == "mlflow":
-                        mlflow.log_metric("training_loss", average_loss, cur_nimg)
-                        mlflow.log_metric(
-                            "training_loss_running_mean",
-                            average_loss_running_mean,
-                            cur_nimg,
-                        )
-
-                    ptt = is_time_for_periodic_task(
-                        cur_nimg,
-                        cfg.training.io.print_progress_freq,
-                        done,
-                        cfg.training.hp.total_batch_size,
-                        dist.rank,
-                        rank_0_only=True,
-                    )
-                    if ptt:
-                        # reset running mean of average loss
-                        average_loss_running_mean = 0
-                        n_average_loss_running_mean = 1
+                        # update running mean of average loss since last periodic task
+                        average_loss_running_mean += (
+                            average_loss - average_loss_running_mean
+                        ) / n_average_loss_running_mean
+                        n_average_loss_running_mean += 1
 
                     # Update weights.
                     with nvtx.annotate("update weights", color="blue"):
@@ -625,38 +604,49 @@ def main(cfg: DictConfig) -> None:
                     cur_nimg += cfg.training.hp.total_batch_size
                     done = cur_nimg >= cfg.training.hp.training_duration
 
-                if is_time_for_periodic_task(
-                    cur_nimg,
-                    cfg.training.io.print_progress_freq,
-                    done,
-                    cfg.training.hp.total_batch_size,
-                    dist.rank,
-                    rank_0_only=True,
-                ):
-                    # Print stats if we crossed the printing threshold with this batch
-                    tick_end_time = time.time()
-                    fields = []
-                    fields += [f"samples {cur_nimg:<9.1f}"]
-                    fields += [f"training_loss {average_loss:<7.2f}"]
-                    fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
-                    fields += [f"learning_rate {current_lr:<7.8f}"]
-                    fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
-                    fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
-                    fields += [
-                        f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
-                    ]
-                    fields += [
-                        f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
-                    ]
-                    if torch.cuda.is_available():
+                    if is_time_for_periodic_task(
+                        cur_nimg,
+                        cfg.training.io.print_progress_freq,
+                        done,
+                        cfg.training.hp.total_batch_size,
+                        dist.rank,
+                        rank_0_only=True,
+                    ):
+                        # Print stats if we crossed the printing threshold with this batch
+                        tick_end_time = time.time()
+                        fields = []
+                        fields += [f"samples {cur_nimg:<9.1f}"]
+                        fields += [f"training_loss {average_loss:<7.2f}"]
+                        fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
+                        fields += [f"learning_rate {current_lr:<7.8f}"]
+                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
+                        fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
                         fields += [
-                            f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
+                            f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
                         ]
                         fields += [
-                            f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
+                            f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
                         ]
-                        torch.cuda.reset_peak_memory_stats()
-                    logger0.info(" ".join(fields))
+                        if torch.cuda.is_available():
+                            fields += [
+                                f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
+                            ]
+                            fields += [
+                                f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
+                            ]
+                            torch.cuda.reset_peak_memory_stats()
+                        logger0.info(" ".join(fields))
+
+                        if cfg.logging.method == "mlflow":
+                            mlflow.log_metric("training_loss", average_loss, cur_nimg)
+                            mlflow.log_metric(
+                                "training_loss_running_mean",
+                                average_loss_running_mean,
+                                cur_nimg,
+                            )
+                        # reset running mean of average loss
+                        average_loss_running_mean = 0
+                        n_average_loss_running_mean = 1
 
                 with nvtx.annotate("validation", color="red"):
                     # Validation
