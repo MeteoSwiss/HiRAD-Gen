@@ -118,6 +118,9 @@ def is_time_for_periodic_task(
 
 def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
     if dist.rank==0:
+        print("Started activating initial mlflow run")
+        if cfg.logging.uri is not None:
+            mlflow.set_tracking_uri(cfg.logging.uri)
         mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
         run_id = None
         if os.path.isfile('run_id.txt'):
@@ -145,6 +148,9 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
         torch.distributed.barrier()
 
     if (dist.rank!=0 and dist._local_rank==0) or (dist.rank==1 and dist.world_size>4):
+        print("Started actvating sub mlflow run.")
+        if cfg.logging.uri is not None:
+            mlflow.set_tracking_uri(cfg.logging.uri)
         mlflow.system_metrics.set_system_metrics_node_id(f"node-{(dist.rank//4)}" 
                                                          if dist.rank!=1
                                                          else "node-0")
