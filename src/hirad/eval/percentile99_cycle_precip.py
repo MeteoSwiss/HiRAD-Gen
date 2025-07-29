@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting 99th-percentile diurnal cycle computation")
+    logger.info("Starting computation for diurnal cycle of 99th-percentile of precipitation")
     times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
     logger.info(f"Loaded {len(times)} timesteps to process")
 

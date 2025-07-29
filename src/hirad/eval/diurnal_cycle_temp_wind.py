@@ -55,7 +55,7 @@ def main(cfg: DictConfig):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting diurnal cycle computation for 2m temperature and windspeed")
+    logger.info("Starting computation for diurnal cyles of 2m temperature and windspeed")
     times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
     logger.info(f"Loaded {len(times)} timesteps to process")
 
