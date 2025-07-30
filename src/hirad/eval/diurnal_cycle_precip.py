@@ -1,55 +1,22 @@
 import logging
 from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
 
 import hydra
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import xarray as xr
 from omegaconf import DictConfig, OmegaConf
-import matplotlib.pyplot as plt
 
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
 
 # Constants
-CONV_FACTOR = 100    # Convert meters to mm/h
+CONV_FACTOR = 100*24    # Convert meters to mm/day
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
 LOG_INTERVAL = 24    # Log progress every N timesteps
-
-def hour_of(dt: str, fmt: str = "%Y%m%d-%H%M") -> int:
-    return datetime.strptime(dt, fmt).hour
-
-
-def compute_ensemble(hourly_values):
-    hours = sorted(hourly_values)
-    means = [np.mean(hourly_values[h]) for h in hours]
-    stds  = [np.std(hourly_values[h])  for h in hours]
-    return hours, means, stds
-
-
-def save_plot(hours, lines, labels, ylabel, title, out_path):
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    plt.figure(figsize=(8,4))
-    for data, label in zip(lines, labels):
-        if isinstance(data, tuple):
-            mean, std = data
-            line, = plt.plot(hours, mean, label=label)
-            plt.fill_between(hours, np.maximum(np.array(mean)-std, 0), np.array(mean)+std, alpha=0.3, color=line.get_color())
-        else:
-            plt.plot(hours, data, label=label)
-    plt.xlabel('Hour (UTC)')
-    plt.xticks(range(0,25,3))
-    plt.xlim(0,24)
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(out_path)
-    plt.close()
-
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
@@ -60,6 +27,7 @@ def main(cfg: DictConfig):
 
     logger.info("Starting computations for diurnal cycle of precipitation amount and wet-hours")
     times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
     ds_cfg = OmegaConf.to_container(cfg.dataset)
@@ -69,90 +37,113 @@ def main(cfg: DictConfig):
     logger.info("Dataset and sampler initialized")
 
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    load = lambda ts, fn: torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
+    def load(ts, fn):
+        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
 
     # Find channel indices
     out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
     in_ch  = {c.name: i for i, c in enumerate(dataset.input_channels())}
-    tp_out = out_ch['tp']; tp_in = in_ch.get('tp', tp_out)
+    tp_out = out_ch['tp']
+    tp_in = in_ch.get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
-    # Prepare data structures
-    stats = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
-    wet_stats = {mode: defaultdict(list) for mode in stats}
-    
-    # Load land mask
-    lsm_dat = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy')
-    lsm=np.flip(lsm_dat.reshape(352,544),0)
+    # Land-sea mask
+    lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
+    land_mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
+    coords = {"lat": np.arange(land_mask.shape[0]), "lon": np.arange(land_mask.shape[1])}
 
+    # Prepare lists to collect DataArrays
+    target_precip, baseline_precip, pred_precip = [], [], []
+    target_wet, baseline_wet, pred_wet = [], [], []
 
     # Collect data
     for idx, ts in enumerate(times, 1):
-        hr = hour_of(ts)
-        target = load(ts, f"{ts}-target")[tp_out]
-        baseline = load(ts, f"{ts}-baseline")[tp_in]
-        
-        # Mask target, baseline, and preds where lsm < 0.5
-        land_mask = lsm >= 0.5
-        target = target * land_mask
-        baseline = baseline * land_mask
+        dt = datetimes[idx-1]
+        target = load(ts, f"{ts}-target")[tp_out] * land_mask
+        baseline = load(ts, f"{ts}-baseline")[tp_in] * land_mask / 6 # 6 becasue 1h -> 6h bug in dataset?
+        preds = load(ts, f"{ts}-predictions")[:, tp_out, :, :] * land_mask
 
-        stats['target'][hr].append(target)
-        stats['baseline'][hr].append(baseline)
-        wet_stats['target'][hr].append((target > WET_THRESHOLD).mean())
-        wet_stats['baseline'][hr].append((baseline > WET_THRESHOLD).mean())
+        # DataArrays for spatial mean
+        da_target = xr.DataArray(target, dims=("lat","lon"), coords=coords)
+        da_baseline = xr.DataArray(baseline, dims=("lat","lon"), coords=coords)
+        da_preds = xr.DataArray(preds, dims=("member","lat","lon"), coords={"member": np.arange(preds.shape[0]), **coords})
 
-        preds = load(ts, f"{ts}-predictions")[:, tp_out]
-        preds = preds * land_mask
-        for member in preds:
-            stats['prediction'][hr].append(member.mean())
-            wet_stats['prediction'][hr].append((member > WET_THRESHOLD).mean())
+        # Spatial mean
+        target_precip.append(da_target.mean(dim=("lat","lon")).assign_coords(time=dt))
+        baseline_precip.append(da_baseline.mean(dim=("lat","lon")).assign_coords(time=dt))
+        pred_precip.append(da_preds.mean(dim=("lat","lon")).assign_coords(time=dt))
+
+        # Wet-hour fraction (percentage)
+        target_wet.append(((da_target / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
+        baseline_wet.append(((da_baseline / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
+        pred_wet.append(((da_preds / 24> WET_THRESHOLD).mean(dim=("lat","lon")).assign_coords(time=dt)))
 
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
-    # Compute hourly means
-    mean_cycle = {
-        mode: [np.mean(stats[mode][h]) for h in sorted(stats[mode])]
-        for mode in ['target','baseline']
-    }
-    wet_cycle = {
-        mode: [np.mean(wet_stats[mode][h]) * 100. for h in sorted(wet_stats[mode])]
-        for mode in ['target','baseline']
-    }
-    logger.info("Computed hourly mean and wet-cycle statistics")
+    # Helper to concat and compute diurnal stats
+    def concat_and_group(list_of_da, is_member=False, scale=1.0):
+        da = xr.concat(list_of_da, dim="time").groupby("time.hour")
+        if is_member:
+            mean = da.mean(dim=[d for d in da.dims if d in ['time', 'member']]) * scale
+            std = da.std(dim=[d for d in da.dims if d in ['time', 'member']]) * scale
+        else:
+            mean = da.mean(dim="time") * scale
+            std = None
+        return mean, std
 
-    # Ensemble cycles (mean ± std)
-    hrs, pred_mean, pred_std = compute_ensemble(stats['prediction'])
-    _, wet_mean, wet_std = compute_ensemble(wet_stats['prediction'])
-    # Multiply ensemble wet-hour statistics by 100 for percentage
-    wet_mean = [v * 100. for v in wet_mean]
-    wet_std = [v * 100. for v in wet_std]
-    logger.info("Computed ensemble statistics")
+    # Compute diurnal means and stds
+    amount_target_mean, _ = concat_and_group(target_precip)
+    amount_baseline_mean, _ = concat_and_group(baseline_precip)
+    amount_pred_mean, amount_pred_std = concat_and_group(pred_precip, is_member=True)
 
-    # Prepare cyclic series
-    cycle = lambda x: x + [x[0]]
-    hrs_c = hrs + [24]
-    amount_lines = [cycle(mean_cycle['target']), cycle(mean_cycle['baseline']), (cycle(pred_mean), cycle(pred_std))]
-    wet_lines = [cycle(wet_cycle['target']), cycle(wet_cycle['baseline']), (cycle(wet_mean), cycle(wet_std))]
+    wet_target_mean, _ = concat_and_group(target_wet, scale=100.0)
+    wet_baseline_mean, _ = concat_and_group(baseline_wet, scale=100.0)
+    wet_pred_mean, wet_pred_std = concat_and_group(pred_wet, is_member=True, scale=100.0)
 
-    # Log the lines to be plotted (debug)
-    # logger.info(f"amount_lines: {amount_lines}")
-    # logger.info(f"wet_lines: {wet_lines}")
+    # Plot helper
+    def save_plot(hour, means, stds, labels, ylabel, title, out_path):
+        hrs = np.concatenate([hour.values, [24]])
+        plt.figure(figsize=(8,4))
+        for mean, std, label in zip(means, stds, labels):
+            vals = np.append(mean.values, mean.values[0])
+            line, = plt.plot(hrs, vals, label=label)
+            if std is not None:
+                stdv = np.append(std.values, std.values[0])
+                plt.fill_between(hrs, np.maximum(vals - stdv, 0), vals + stdv, color=line.get_color(), alpha=0.3)
+        plt.xlabel('Hour (UTC)')
+        plt.xticks(range(0,25,3))
+        plt.xlim(0,24)
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(out_path)
+        plt.close()
 
-    # Plot
-    plot_paths = []
-    fn1 = out_root/'diurnal_cycle_precip_amount.png'
-    save_plot(hrs_c, amount_lines, ['COSMO-2','ERA5','CorrDiff ± Std(Members)'], 'Rain Rate (mm/h)',
-              'Diurnal Cycle of Precip Amount', fn1)
-    plot_paths.append(fn1)
+    # Generate plots
+    save_plot(
+        amount_target_mean.hour,
+        [amount_target_mean, amount_baseline_mean, amount_pred_mean],
+        [None, None, amount_pred_std],
+        ['COSMO-2','ERA5','CorrDiff ± Std(Members)'],
+        'Precipitation (mm/day)',
+        'Diurnal Cycle of Precip Amount',
+        out_root / 'diurnal_cycle_precip_amount.png'
+    )
+    save_plot(
+        wet_target_mean.hour,
+        [wet_target_mean, wet_baseline_mean, wet_pred_mean],
+        [None, None, wet_pred_std],
+        ['COSMO-2','ERA5','CorrDiff ± Std(Members)'],
+        'Wet-Hour Fraction [%]',
+        'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
+        out_root / 'diurnal_cycle_precip_wethours.png'
+    )
 
-    fn2 = out_root/'diurnal_cycle_precip_wethours.png'
-    save_plot(hrs_c, wet_lines, ['COSMO-2','ERA5','Pred Mean ± Std'], 'Wet-Hour Fraction [%]',
-              'Diurnal Cycle of Wet-Hours (>0.1 mm/h)', fn2)
-    plot_paths.append(fn2)
-
-    logger.info(f"Plots saved: {', '.join(str(p) for p in plot_paths)}")
+    logger.info("Plots saved.")
 
 if __name__ == '__main__':
     main()

@@ -20,7 +20,7 @@ from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
 
 # Constants
-CONV_FACTOR = 100    # Convert meters to mm/h
+CONV_FACTOR = 100 * 24   # Convert meters to mm/day
 LOG_INTERVAL = 24    # Log progress every N timesteps
 
 
@@ -80,10 +80,9 @@ def main(cfg: DictConfig):
     tp_out = out_ch['tp']; tp_in = in_ch.get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
-    # Load land-sea mask
-    lsm_dat = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy')
-    lsm = np.flip(lsm_dat.reshape(352,544), 0)
-    land_mask = lsm >= 0.5
+    # Land-sea mask
+    lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
+    land_mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
 
     # Storage for diurnal cycles
     pct99_mean = {'target': [], 'baseline': [], 'prediction': []}
@@ -99,8 +98,7 @@ def main(cfg: DictConfig):
             ]
             stack = np.stack(arrs, axis=0)
             f99 = np.percentile(stack, 99, axis=0)
-            pct99_mean[mode].append(f99.mean())
-            pct99_std[mode].append(np.std(f99, axis=None))
+            pct99_mean[mode].append(np.nanmean(f99) if mode == 'target' else np.nanmean(f99) / 6.0)  # / 6 because bug in dataset?
             del arrs, stack, f99
             
     # -- Predictions: compute per hour per member, then mean+std across members --
@@ -123,10 +121,10 @@ def main(cfg: DictConfig):
             # stack over time and compute 99th percentile at each grid point
             stack_m = np.stack(arrs, axis=0)
             f99_m   = np.percentile(stack_m, 99, axis=0)
-            mem_f99.append(f99_m.mean())
+            mem_f99.append(np.nanmean(f99_m))  # mean over grid points
         # ensemble-level mean and std over member-wise percentiles
-        pct99_mean['prediction'].append(np.mean(mem_f99))
-        pct99_std['prediction'].append(np.std(mem_f99, axis=None))
+        pct99_mean['prediction'].append(np.nanmean(mem_f99))
+        pct99_std['prediction'].append(np.std(pct99_mean['prediction']))
         # clean up per-hour buffers
         del mem_f99, stack_m, f99_m
 
@@ -135,7 +133,7 @@ def main(cfg: DictConfig):
     hrs_c = list(range(24)) + [list(range(24))[0] + 24]
     pct99_lines = [
         cycle_fn(pct99_mean['target']),
-        cycle_fn(pct99_mean['baseline']),
+        cycle_fn(pct99_mean['baseline']), # 6 becasue bug in dataset?
         (
             cycle_fn(pct99_mean['prediction']),
             cycle_fn(pct99_std['prediction'])
@@ -148,7 +146,7 @@ def main(cfg: DictConfig):
         hrs_c,
         pct99_lines,
         ['COSMO-2','ERA5','CorrDiff 99th Pct ± Std'],
-        'Rain Rate (mm/h)',
+        'Precipitation (mm/day)',
         'Diurnal Cycle of 99th-Percentile Precipitation',
         fn
     )
