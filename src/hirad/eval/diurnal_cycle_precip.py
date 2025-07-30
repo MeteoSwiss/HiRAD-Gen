@@ -18,7 +18,6 @@ CONV_FACTOR = 100    # Convert meters to mm/h
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
 LOG_INTERVAL = 24    # Log progress every N timesteps
 
-
 def hour_of(dt: str, fmt: str = "%Y%m%d-%H%M") -> int:
     return datetime.strptime(dt, fmt).hour
 
@@ -81,18 +80,30 @@ def main(cfg: DictConfig):
     # Prepare data structures
     stats = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
     wet_stats = {mode: defaultdict(list) for mode in stats}
+    
+    # Load land mask
+    lsm_dat = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy')
+    lsm=np.flip(lsm_dat.reshape(352,544),0)
+
 
     # Collect data
     for idx, ts in enumerate(times, 1):
         hr = hour_of(ts)
         target = load(ts, f"{ts}-target")[tp_out]
         baseline = load(ts, f"{ts}-baseline")[tp_in]
+        
+        # Mask target, baseline, and preds where lsm < 0.5
+        land_mask = lsm >= 0.5
+        target = target * land_mask
+        baseline = baseline * land_mask
+
         stats['target'][hr].append(target)
         stats['baseline'][hr].append(baseline)
         wet_stats['target'][hr].append((target > WET_THRESHOLD).mean())
         wet_stats['baseline'][hr].append((baseline > WET_THRESHOLD).mean())
 
         preds = load(ts, f"{ts}-predictions")[:, tp_out]
+        preds = preds * land_mask
         for member in preds:
             stats['prediction'][hr].append(member.mean())
             wet_stats['prediction'][hr].append((member > WET_THRESHOLD).mean())
@@ -126,8 +137,8 @@ def main(cfg: DictConfig):
     wet_lines = [cycle(wet_cycle['target']), cycle(wet_cycle['baseline']), (cycle(wet_mean), cycle(wet_std))]
 
     # Log the lines to be plotted (debug)
-    logger.info(f"amount_lines: {amount_lines}")
-    logger.info(f"wet_lines: {wet_lines}")
+    # logger.info(f"amount_lines: {amount_lines}")
+    # logger.info(f"wet_lines: {wet_lines}")
 
     # Plot
     plot_paths = []

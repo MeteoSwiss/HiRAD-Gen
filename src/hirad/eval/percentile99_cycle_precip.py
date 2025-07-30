@@ -80,6 +80,11 @@ def main(cfg: DictConfig):
     tp_out = out_ch['tp']; tp_in = in_ch.get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
+    # Load land-sea mask
+    lsm_dat = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy')
+    lsm = np.flip(lsm_dat.reshape(352,544), 0)
+    land_mask = lsm >= 0.5
+
     # Storage for diurnal cycles
     pct99_mean = {'target': [], 'baseline': [], 'prediction': []}
     pct99_std  = {'target': [], 'baseline': [], 'prediction': []}
@@ -89,7 +94,7 @@ def main(cfg: DictConfig):
         logger.info(f"Processing mode: {mode}")
         for h in list(range(24)):
             arrs = [
-                load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in]
+                load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in] * land_mask
                 for ts in times if hour_of(ts) == h
             ]
             stack = np.stack(arrs, axis=0)
@@ -114,7 +119,7 @@ def main(cfg: DictConfig):
                 if hour_of(ts) != h:
                     continue
                 preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, ...]
-                arrs.append(preds[m, tp_out])  # one field
+                arrs.append(preds[m, tp_out] * land_mask)  # apply mask
             # stack over time and compute 99th percentile at each grid point
             stack_m = np.stack(arrs, axis=0)
             f99_m   = np.percentile(stack_m, 99, axis=0)

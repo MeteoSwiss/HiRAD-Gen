@@ -83,10 +83,18 @@ def main(cfg: DictConfig):
     stats_temp = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
     stats_wind = {mode: defaultdict(list) for mode in ['target','baseline','prediction']}
 
+    # Load land-sea mask
+    lsm_dat = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy')
+    lsm = np.flip(lsm_dat.reshape(352,544), 0)
+    land_mask = lsm >= 0.5
+
     for idx, ts in enumerate(times, 1):
         hr = hour_of(ts)
         target = load(ts, f"{ts}-target")
         baseline = load(ts, f"{ts}-baseline")
+        # Apply land mask
+        target = target * land_mask
+        baseline = baseline * land_mask
         # 2m temperature
         stats_temp['target'][hr].append(target[t2m_out].mean())
         stats_temp['baseline'][hr].append(baseline[t2m_in].mean())
@@ -95,6 +103,7 @@ def main(cfg: DictConfig):
         stats_wind['baseline'][hr].append(np.hypot(baseline[u_in], baseline[v_in]).mean())
 
         preds = load(ts, f"{ts}-predictions")
+        preds = preds * land_mask
         for member in preds:
             stats_temp['prediction'][hr].append(member[t2m_out].mean())
             stats_wind['prediction'][hr].append(np.hypot(member[u_out], member[v_out]).mean())
