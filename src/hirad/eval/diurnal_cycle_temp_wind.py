@@ -111,10 +111,15 @@ def main(cfg: DictConfig):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
     # Helper to concat and compute diurnal stats
-    def concat_and_group(list_of_da):
+    def concat_and_group(list_of_da, is_member=False, scale=1.0):
         da = xr.concat(list_of_da, dim="time").groupby("time.hour")
-        mean = da.mean(dim=[d for d in da.dims if d in ['time', 'member']])
-        std = da.std(dim=[d for d in da.dims if d in ['time', 'member']])
+        if is_member:
+            timmean = da.mean(dim='time') * scale
+            mean = timmean.mean(dim='member')
+            std = timmean.std(dim='member')
+        else:
+            mean = da.mean(dim='time') * scale
+            std = None
         return mean, std
 
     # Compute diurnal means and stds

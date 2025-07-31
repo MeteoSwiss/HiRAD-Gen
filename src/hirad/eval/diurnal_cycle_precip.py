@@ -62,7 +62,7 @@ def main(cfg: DictConfig):
         baseline = load(ts, f"{ts}-baseline")[tp_in] * land_mask / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
         preds = load(ts, f"{ts}-predictions")[:, tp_out, :, :] * land_mask
 
-        # DataArrays for spatial mean
+        # DataArrays for spatial means at each timestep
         da_target = xr.DataArray(target, dims=("lat","lon"), coords=coords)
         da_baseline = xr.DataArray(baseline, dims=("lat","lon"), coords=coords)
         da_preds = xr.DataArray(preds, dims=("member","lat","lon"), coords={"member": np.arange(preds.shape[0]), **coords})
@@ -72,7 +72,7 @@ def main(cfg: DictConfig):
         baseline_precip.append(da_baseline.mean(dim=("lat","lon")).assign_coords(time=dt))
         pred_precip.append(da_preds.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction (percentage)
+        # Wet-hour fraction, i.e., freq(precip) > WET_THRESHOLD
         target_wet.append(((da_target / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
         baseline_wet.append(((da_baseline / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
         pred_wet.append(((da_preds / 24> WET_THRESHOLD).mean(dim=("lat","lon")).assign_coords(time=dt)))
@@ -84,10 +84,11 @@ def main(cfg: DictConfig):
     def concat_and_group(list_of_da, is_member=False, scale=1.0):
         da = xr.concat(list_of_da, dim="time").groupby("time.hour")
         if is_member:
-            mean = da.mean(dim=[d for d in da.dims if d in ['time', 'member']]) * scale
-            std = da.std(dim=[d for d in da.dims if d in ['time', 'member']]) * scale
+            timmean = da.mean(dim='time') * scale
+            mean = timmean.mean(dim='member')
+            std = timmean.std(dim='member')
         else:
-            mean = da.mean(dim="time") * scale
+            mean = da.mean(dim='time') * scale
             std = None
         return mean, std
 
@@ -96,7 +97,7 @@ def main(cfg: DictConfig):
     amount_baseline_mean, _ = concat_and_group(baseline_precip)
     amount_pred_mean, amount_pred_std = concat_and_group(pred_precip, is_member=True)
 
-    wet_target_mean, _ = concat_and_group(target_wet, scale=100.0)
+    wet_target_mean, _ = concat_and_group(target_wet, scale=100.0) # scale to percentage
     wet_baseline_mean, _ = concat_and_group(baseline_wet, scale=100.0)
     wet_pred_mean, wet_pred_std = concat_and_group(pred_wet, is_member=True, scale=100.0)
 
