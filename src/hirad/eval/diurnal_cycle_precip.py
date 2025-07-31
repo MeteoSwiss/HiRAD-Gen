@@ -14,7 +14,7 @@ from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
 
 # Constants
-CONV_FACTOR = 100*24    # Convert meters to mm/day
+CONV_FACTOR = 100*24 # Convert meters to mm/day
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
 LOG_INTERVAL = 24    # Log progress every N timesteps
 
@@ -34,7 +34,6 @@ def main(cfg: DictConfig):
     dataset, _ = get_dataset_and_sampler_inference(
         ds_cfg, times, cfg.generation.get('has_lead_time', False)
     )
-    logger.info("Dataset and sampler initialized")
 
     out_root = Path(cfg.generation.io.output_path or './outputs')
     def load(ts, fn):
@@ -60,7 +59,7 @@ def main(cfg: DictConfig):
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
         target = load(ts, f"{ts}-target")[tp_out] * land_mask
-        baseline = load(ts, f"{ts}-baseline")[tp_in] * land_mask / 6 # 6 becasue 1h -> 6h bug in dataset?
+        baseline = load(ts, f"{ts}-baseline")[tp_in] * land_mask / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
         preds = load(ts, f"{ts}-predictions")[:, tp_out, :, :] * land_mask
 
         # DataArrays for spatial mean

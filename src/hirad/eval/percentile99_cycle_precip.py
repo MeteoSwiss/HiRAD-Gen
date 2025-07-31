@@ -98,7 +98,7 @@ def main(cfg: DictConfig):
             ]
             stack = np.stack(arrs, axis=0)
             f99 = np.percentile(stack, 99, axis=0)
-            pct99_mean[mode].append(np.nanmean(f99) if mode == 'target' else np.nanmean(f99) / 6.0)  # / 6 because bug in dataset?
+            pct99_mean[mode].append(np.nanmean(f99) if mode == 'target' else np.nanmean(f99) / 6.0)  # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
             del arrs, stack, f99
             
     # -- Predictions: compute per hour per member, then mean+std across members --
