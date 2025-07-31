@@ -131,7 +131,7 @@ def main(cfg: DictConfig) -> None:
     else:
         net_reg = None
 
-        # Reset since we are using a different mode.
+    # Reset since we are using a different mode.
     if cfg.generation.perf.use_torch_compile:
         torch._dynamo.reset()
         # Only compile residual network

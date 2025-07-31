@@ -180,10 +180,11 @@ def stochastic_sampler(
 
     # input and position padding + patching
     if patching:
+        # print(f"Input for generator beofre patching {x_lr.shape}")
         # Patched conditioning [x_lr, mean_hr]
         # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
         x_lr = patching.apply(input=x_lr, additional_input=img_lr)
-
+        # print(f"Input for generator after patching {x_lr.shape}")
         # Function to select the correct positional embedding for each patch
         def patch_embedding_selector(emb):
             # emb: (N_pe, image_shape_y, image_shape_x)
