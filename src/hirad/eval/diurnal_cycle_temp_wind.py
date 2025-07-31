@@ -125,13 +125,12 @@ def main(cfg: DictConfig):
     # Compute diurnal means and stds
     temp_target_mean, _ = concat_and_group(target_temp)
     temp_baseline_mean, _ = concat_and_group(baseline_temp)
-    temp_pred_mean, temp_pred_std = concat_and_group(pred_temp)
+    temp_pred_mean, temp_pred_std = concat_and_group(pred_temp, is_member=True)
 
     wind_target_mean, _ = concat_and_group(target_wind)
     wind_baseline_mean, _ = concat_and_group(baseline_wind)
-    wind_pred_mean, wind_pred_std = concat_and_group(pred_wind)
+    wind_pred_mean, wind_pred_std = concat_and_group(pred_wind, is_member=True)
 
-    # Plot helper
     def save_plot(hour, means, stds, labels, ylabel, title, out_path):
         hrs = np.concatenate([hour.values, [24]])
         plt.figure(figsize=(8,4))
@@ -140,7 +139,7 @@ def main(cfg: DictConfig):
             line, = plt.plot(hrs, vals, label=label)
             if std is not None:
                 stdv = np.append(std.values, std.values[0])
-                plt.fill_between(hrs, vals - stdv, vals + stdv, color=line.get_color(), alpha=0.3)
+                plt.fill_between(hrs, np.maximum(vals - stdv, 0), vals + stdv, color=line.get_color(), alpha=0.3)
         plt.xlabel('Hour (UTC)')
         plt.xticks(range(0,25,3))
         plt.xlim(0,24)
@@ -163,6 +162,7 @@ def main(cfg: DictConfig):
         'Diurnal Cycle of 2m Temperature',
         out_root / 'diurnal_cycle_2t.png'
     )
+
     save_plot(
         wind_target_mean.hour,
         [wind_target_mean, wind_baseline_mean, wind_pred_mean],
@@ -174,10 +174,6 @@ def main(cfg: DictConfig):
     )
 
     logger.info("Plots saved.")
-
-    plt.imshow(target[t2m_out], cmap='viridis')
-    plt.colorbar(label='2m Temperature [°C]')
-    plt.savefig('lsm.png')
 
 if __name__ == '__main__':
     main()

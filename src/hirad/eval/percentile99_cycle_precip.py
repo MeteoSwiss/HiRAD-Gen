@@ -124,7 +124,7 @@ def main(cfg: DictConfig):
             mem_f99.append(np.nanmean(f99_m))  # mean over grid points
         # ensemble-level mean and std over member-wise percentiles
         pct99_mean['prediction'].append(np.nanmean(mem_f99))
-        pct99_std['prediction'].append(np.std(pct99_mean['prediction']))
+        pct99_std['prediction'].append(np.nanstd(mem_f99))
         # clean up per-hour buffers
         del mem_f99, stack_m, f99_m
 
@@ -133,7 +133,7 @@ def main(cfg: DictConfig):
     hrs_c = list(range(24)) + [list(range(24))[0] + 24]
     pct99_lines = [
         cycle_fn(pct99_mean['target']),
-        cycle_fn(pct99_mean['baseline']), # 6 becasue bug in dataset?
+        cycle_fn(pct99_mean['baseline']),
         (
             cycle_fn(pct99_mean['prediction']),
             cycle_fn(pct99_std['prediction'])

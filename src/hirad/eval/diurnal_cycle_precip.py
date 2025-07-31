@@ -101,7 +101,6 @@ def main(cfg: DictConfig):
     wet_baseline_mean, _ = concat_and_group(baseline_wet, scale=100.0)
     wet_pred_mean, wet_pred_std = concat_and_group(pred_wet, is_member=True, scale=100.0)
 
-    # Plot helper
     def save_plot(hour, means, stds, labels, ylabel, title, out_path):
         hrs = np.concatenate([hour.values, [24]])
         plt.figure(figsize=(8,4))
