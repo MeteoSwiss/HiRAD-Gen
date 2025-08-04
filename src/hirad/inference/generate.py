@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_images, save_results_as_torch
+from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 
@@ -250,19 +250,6 @@ def main(cfg: DictConfig) -> None:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
                     
-                    if not cfg.generation.times_range:
-                        writer_threads.append(
-                            writer_executor.submit(
-                                save_images,
-                                savedir,
-                                times[sampler[time_index]],
-                                dataset,
-                                image_out.cpu().numpy(),
-                                image_tar.cpu().numpy(),
-                                image_lr.cpu().numpy(),
-                                image_reg.cpu().numpy() if image_reg is not None else None,
-                            )
-                        )
                     writer_threads.append(
                         writer_executor.submit(
                             save_results_as_torch,
