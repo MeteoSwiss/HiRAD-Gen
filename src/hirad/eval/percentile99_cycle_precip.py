@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+import xarray as xr
 
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
@@ -82,55 +83,67 @@ def main(cfg: DictConfig):
 
     # Land-sea mask
     lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
-    land_mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
+    land_mask = xr.DataArray(
+        np.where(lsm_data >= 0.5, 1.0, np.nan),
+        dims=['lat', 'lon']
+    )
 
     # Storage for diurnal cycles
-    pct99_mean = {'target': [], 'baseline': [], 'prediction': []}
-    pct99_std  = {'target': [], 'baseline': [], 'prediction': []}
-
-    # -- Target and Baseline: compute per hour --
+    pct99_mean = {}
+    pct99_std = {}
+    
+    # -- Process target and baseline --
     for mode in ['target', 'baseline']:
         logger.info(f"Processing mode: {mode}")
-        for h in list(range(24)):
-            arrs = [
-                load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in] * land_mask
-                for ts in times if hour_of(ts) == h
-            ]
-            stack = np.stack(arrs, axis=0)
-            f99 = np.percentile(stack, 99, axis=0)
-            pct99_mean[mode].append(np.nanmean(f99) if mode == 'target' else np.nanmean(f99) / 6.0)  # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
-            del arrs, stack, f99
+        
+        data_list = []
+        for ts in times:
+            data = load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in] * land_mask
+            data_list.append(data)
+        
+        da = xr.DataArray(
+            np.stack(data_list, axis=0),
+            dims=['time', 'lat', 'lon'],
+            coords={'time': [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]}
+        )
+        
+        # Group by hour and compute 99th percentile
+        hourly_p99 = da.groupby('time.hour').quantile(0.99, dim='time')
+        
+        # Apply scaling factor for baseline
+        if mode == 'baseline':
+            hourly_p99 = hourly_p99 / 6.0
+        
+        pct99_mean[mode] = hourly_p99.mean(dim=['lat', 'lon'])
             
     # -- Predictions: compute per hour per member, then mean+std across members --
-    # Determine number of ensemble members
-    sample = load(times[0], f"{times[0]}-predictions")  # [n_members, n_channels, lat, lon]
-    data_sample = sample[:, tp_out]
-    n_members = data_sample.shape[0]
-
-    for h in list(range(24)):
-        logger.info(f"Processing predictions for hour {h}")
-        mem_f99 = []
-        # for each ensemble member, gather its hourly fields
-        for m in range(n_members):
-            arrs = []
-            for ts in times:
-                if hour_of(ts) != h:
-                    continue
-                preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, ...]
-                arrs.append(preds[m, tp_out] * land_mask)  # apply mask
-            # stack over time and compute 99th percentile at each grid point
-            stack_m = np.stack(arrs, axis=0)
-            f99_m   = np.percentile(stack_m, 99, axis=0)
-            mem_f99.append(np.nanmean(f99_m))  # mean over grid points
-        # ensemble-level mean and std over member-wise percentiles
-        pct99_mean['prediction'].append(np.nanmean(mem_f99))
-        pct99_std['prediction'].append(np.nanstd(mem_f99))
-        # clean up per-hour buffers
-        del mem_f99, stack_m, f99_m
-
-    # Prepare cyclic series
-    cycle_fn = lambda x: x + [x[0]]
-    hrs_c = list(range(24)) + [list(range(24))[0] + 24]
+    logger.info("Processing predictions")
+    
+    # Load all prediction data at once into xarray
+    pred_data_list = []
+    for ts in times:
+        preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, lat, lon]
+        pred_data_list.append(preds[:, tp_out] * land_mask)  # apply mask
+    
+    pred_da = xr.DataArray(
+        np.stack(pred_data_list, axis=1),  # [n_members, time, lat, lon]
+        dims=['member', 'time', 'lat', 'lon'],
+        coords={
+            'member': range(len(pred_data_list[0])),
+            'time': [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
+        }
+    )
+    
+    # Group by hour, compute 99th percentile across time, then spatial mean
+    hourly_p99_by_member = pred_da.groupby('time.hour').quantile(0.99, dim='time').mean(dim=['lat', 'lon'])
+    
+    # Store ensemble statistics as xarray DataArrays
+    pct99_mean['prediction'] = hourly_p99_by_member.mean(dim='member')
+    pct99_std['prediction'] = hourly_p99_by_member.std(dim='member')
+    
+    # Prepare cyclic lists for plotting
+    cycle_fn = lambda x: x.values.tolist() + [x.values.tolist()[0]]
+    hrs_c = list(range(24)) + [0 + 24]
     pct99_lines = [
         cycle_fn(pct99_mean['target']),
         cycle_fn(pct99_mean['baseline']),
