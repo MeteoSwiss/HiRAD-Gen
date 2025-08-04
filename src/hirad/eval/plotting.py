@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
 
-# COSMO‑2 GRID:
+# COSMO‑2 GRID: TODO: Add to dataset config
 LAT = np.arange(-4.42, 3.36 + 0.02, 0.02)
 LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
 RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
