@@ -179,18 +179,14 @@ def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: 
         A tuple of ERA and COSMO 2m temperature data, in anemoi Dataset format, restricted to COSMO's date ranges
         (optionally the COSMO area as well).
     """
-    if not os.path.isdir(outfile_data_path):
-        raise ValueError(f'Output path {outfile_data_path} does not exist.') 
+    os.makedirs(outfile_data_path, exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "info"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "era"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "cosmo"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "era-interpolated"), exist_ok=True)
 
-    # Check for existence of subdirectories. TODO: Create them if missing.
-    if not (os.path.isdir(os.path.join(outfile_data_path, "info")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "era")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "cosmo")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "era-interpolated"))):
-        raise ValueError('Not all output subdirectories exist.') 
-    
-    if outfile_plots_path and not os.path.isdir(outfile_plots_path):
-        raise ValueError('plots directory does not exist.') 
+    if outfile_plots_path:  
+        os.makedirs(outfile_plots_path, exist_ok=True)
 
     logging.info(f'reading input according to configs {infile_era} and {infile_cosmo}')
     era, cosmo = _read_input(infile_era, infile_cosmo, bound_to_cosmo_area=True)
@@ -220,11 +216,11 @@ def main():
 
 
     logging.basicConfig(
-        #filename='interpolate_basic.log',
+        filename=os.path.join(output_directory, 'interpolate_basic.log'),
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
-    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=True, outfile_plots_path=os.path.join(output_directory, "plots/"))
+    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=os.path.join(output_directory, "plots/"))
 
 if __name__ == "__main__":
     main()

@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import torch
 import xskillscore
+import scoringrules as sr
 
 from scipy.signal import periodogram
 
