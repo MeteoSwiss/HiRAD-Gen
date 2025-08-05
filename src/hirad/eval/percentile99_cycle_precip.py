@@ -73,12 +73,14 @@ def main(cfg: DictConfig):
 
     # Output root and loader
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    load = lambda ts, fn: torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
+    def load(ts, fn):
+        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
 
     # Find channel indices
     out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
     in_ch  = {c.name: i for i, c in enumerate(dataset.input_channels())}
-    tp_out = out_ch['tp']; tp_in = in_ch.get('tp', tp_out)
+    tp_out = out_ch['tp']
+    tp_in = in_ch.get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
@@ -123,16 +125,17 @@ def main(cfg: DictConfig):
     pred_data_list = []
     for ts in times:
         preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, lat, lon]
-        pred_data_list.append(preds[:, tp_out] * land_mask)  # apply mask
+        # Extract precipitation channel and convert to xarray for proper broadcasting
+        tp_data = preds[:, tp_out]  # [n_members, lat, lon]
+        tp_da = xr.DataArray(tp_data, dims=['member', 'lat', 'lon'])
+        pred_data_list.append(tp_da * land_mask)  # apply mask
     
-    pred_da = xr.DataArray(
-        np.stack(pred_data_list, axis=1),  # [n_members, time, lat, lon]
-        dims=['member', 'time', 'lat', 'lon'],
-        coords={
-            'member': range(len(pred_data_list[0])),
-            'time': [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
-        }
-    )
+    pred_da = xr.concat(pred_data_list, dim='time')  # [n_members, time, lat, lon]
+    pred_da = pred_da.assign_coords({
+        'time': [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
+    })
+    # Transpose to get the expected dimension order: [member, time, lat, lon]
+    pred_da = pred_da.transpose('member', 'time', 'lat', 'lon')
     
     # Group by hour, compute 99th percentile across time, then spatial mean
     hourly_p99_by_member = pred_da.groupby('time.hour').quantile(0.99, dim='time').mean(dim=['lat', 'lon'])
@@ -142,7 +145,9 @@ def main(cfg: DictConfig):
     pct99_std['prediction'] = hourly_p99_by_member.std(dim='member')
     
     # Prepare cyclic lists for plotting
-    cycle_fn = lambda x: x.values.tolist() + [x.values.tolist()[0]]
+    def cycle_fn(x):
+        return x.values.tolist() + [x.values.tolist()[0]]
+    
     hrs_c = list(range(24)) + [0 + 24]
     pct99_lines = [
         cycle_fn(pct99_mean['target']),

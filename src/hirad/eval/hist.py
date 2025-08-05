@@ -2,7 +2,7 @@
 Plots the domain-mean precipitation distribution over land.
 
 This script computes and visualizes the distribution of precipitation values
-across the land domain for different data sources (target, baseline, predictions).
+over land.
 """
 import logging
 from pathlib import Path
@@ -50,57 +50,52 @@ def save_distribution_plot(hist_data_dict, bin_edges, labels, colors, title, yla
     plt.yscale('log')
     plt.xlabel(ylabel)
     plt.ylabel('Probability Density')
+    plt.ylim(1e-8, 1)
+    plt.xlim(bin_edges[1], bin_edges[-1])
     plt.title(title)
     plt.grid(True, alpha=0.3)
     
     # Add percentile lines if provided
     if percentiles_data:        
-        # Define colors for different datasets
-        percentile_colors = {'target': 'blue', 'baseline': 'orange', 'predictions': 'green'}
-        # Track if we've added legend labels for line styles
-        legend_added = {'99': False, '99.9': False, '99.99': False}
+        # Calculate y-range for percentile lines (lowest 10% of log scale)
+        y_bottom, y_top = plt.ylim()
+        log_bottom, log_top = np.log10(y_bottom), np.log10(y_top)
+        vline_ymax = 10**(log_bottom + 0.1 * (log_top - log_bottom))
+        vline_ymin = y_bottom
         
-        for dataset_name, percentiles in percentiles_data.items():
-            if dataset_name in ['target', 'baseline']:
-                # Plot percentiles for target and baseline
-                color = percentile_colors[dataset_name]
-                for percentile, value in percentiles.items():
-                    if percentile == 99:
-                        linestyle = '--'
-                        legend_label = '99th percentiles' if not legend_added['99'] else None
-                        legend_added['99'] = True
-                    elif percentile == 99.9:
-                        linestyle = ':'
-                        legend_label = '99.9th percentiles' if not legend_added['99.9'] else None
-                        legend_added['99.9'] = True
-                    elif percentile == 99.99:
-                        linestyle = '-.'
-                        legend_label = '99.99th percentiles' if not legend_added['99.99'] else None
-                        legend_added['99.99'] = True
-                    
-                    plt.vlines(x=value, colors=color, 
-                              linestyles=linestyle, alpha=0.8, label=legend_label)
+        # Define line styles for percentiles
+        percentile_styles = {99: '--', 99.9: ':', 99.99: '-.'}
+        percentile_labels = {99: '99th all-hour percentiles', 99.9: '99.9th all-hour percentiles', 99.99: '99.99th all-hour percentiles'}
+        colors = {'target': 'blue', 'baseline': 'orange', 'predictions': 'green'}
+        legend_added = set()
+        
+        # Plot all percentile lines
+        for dataset_name, data in percentiles_data.items():
+            color = colors[dataset_name]
             
-            elif dataset_name == 'predictions':
-                # Plot percentiles for ensemble members
-                color = percentile_colors[dataset_name]
-                for member_name, member_percentiles in percentiles.items():
-                    for percentile, value in member_percentiles.items():
-                        if percentile == 99:
-                            linestyle = '--'
-                            legend_label = '99th percentiles' if not legend_added['99'] else None
-                            legend_added['99'] = True
-                        elif percentile == 99.9:
-                            linestyle = ':'
-                            legend_label = '99.9th percentiles' if not legend_added['99.9'] else None
-                            legend_added['99.9'] = True
-                        elif percentile == 99.99:
-                            linestyle = '-.'
-                            legend_label = '99.99th percentiles' if not legend_added['99.99'] else None
-                            legend_added['99.99'] = True
+            if dataset_name in ['target', 'baseline']:
+                # Single dataset
+                for percentile, value in data.items():
+                    linestyle = percentile_styles[percentile]
+                    legend_added.add(percentile)  # Track percentiles for black legend entries
+                    
+                    plt.vlines(x=value, colors=color, ymin=vline_ymin, ymax=vline_ymax,
+                              linestyles=linestyle, alpha=0.8)  # No label here
+            else:
+                # Ensemble members
+                for member_data in data.values():
+                    for percentile, value in member_data.items():
+                        linestyle = percentile_styles[percentile]
+                        legend_added.add(percentile)  # Track percentiles for black legend entries
                         
-                        plt.vlines(x=value, colors=color, 
-                                  linestyles=linestyle, alpha=0.6, label=legend_label)
+                        plt.vlines(x=value, colors=color, ymin=vline_ymin, ymax=vline_ymax,
+                                  linestyles=linestyle, alpha=0.6)  # No label here
+        
+        # Add black legend entries for percentiles (override the colored ones)
+        for percentile in [99, 99.9, 99.99]:
+            if percentile in legend_added:
+                plt.plot([], [], color='black', linestyle=percentile_styles[percentile], 
+                        label=percentile_labels[percentile])
     
     plt.legend()
     plt.tight_layout()
