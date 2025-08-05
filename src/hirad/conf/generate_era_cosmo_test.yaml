@@ -1,0 +1,20 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_era5_cosmo_test
+  run:
+    dir: ./outputs/generation/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+  # Dataset
+  - dataset/era_cosmo_inference
+
+  # Sampler
+  - sampler/stochastic
+  #- sampler/deterministic
+
+  # Generation
+  - generation/era_cosmo_test
+    #- generation/patched_based

@@ -11,19 +11,22 @@ from contextlib import nullcontext
 import nvtx
 import torch
 from hydra.utils import to_absolute_path
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
+import mlflow
 # from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_precision, \
                                         set_patch_shape, compute_num_accumulation_rounds, \
-                                        is_time_for_periodic_task, handle_and_clip_gradients
+                                        is_time_for_periodic_task, handle_and_clip_gradients, \
+                                        init_mlflow
 from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.inference_utils import save_images
+from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.models import UNet, EDMPrecondSuperResolution
 from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
@@ -66,14 +69,20 @@ def main(cfg: DictConfig) -> None:
     DistributedManager.initialize()
     dist = DistributedManager()
 
-    if dist.rank==0:
-        writer = SummaryWriter(log_dir='tensorboard')
+    OmegaConf.resolve(cfg)
+
+    if cfg.logging.method == "mlflow":
+        init_mlflow(cfg, dist)
+        if dist.world_size > 1:
+            torch.distributed.barrier()
+    elif cfg.logging.method is not None:
+        raise ValueError("The only available logging method is mlflow. To disable logging set the method to null.")
+
     logger = PythonLogger("main") # general logger
     logger0 = RankZeroLoggingWrapper(logger, dist) # rank 0 logger
 
-    OmegaConf.resolve(cfg)
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
-    if hasattr(cfg.dataset, "validation_path"):
+    if hasattr(cfg.dataset, "validation_path") and cfg.dataset.validation_path is not None:
         train_test_split = True
     else:
         train_test_split = False
@@ -96,14 +105,22 @@ def main(cfg: DictConfig) -> None:
         if dist.rank==0 and not os.path.exists(visualization_dir):
             os.makedirs(visualization_dir) # added creating checkpoint dir
         visualize_checkpoints = True
+    if cfg.training.hp.batch_size_per_gpu == "auto" and \
+            cfg.training.hp.total_batch_size == "auto":
+        raise ValueError("batch_size_per_gpu and total_batch_size can't be both set to 'auto'.")
     if cfg.training.hp.batch_size_per_gpu == "auto":
         cfg.training.hp.batch_size_per_gpu = (
             cfg.training.hp.total_batch_size // dist.world_size
         )
+    elif cfg.training.hp.total_batch_size == "auto":
+        cfg.training.hp.total_batch_size = (
+            cfg.training.hp.batch_size_per_gpu * dist.world_size
+        )
+
 
     set_seed(dist.rank)
     configure_cuda_for_consistent_precision()
-    
+
     # Instantiate the dataset
     data_loader_kwargs = {
         "pin_memory": True,
@@ -143,7 +160,7 @@ def main(cfg: DictConfig) -> None:
         if cfg.generation.times_range and cfg.generation.times:
             raise ValueError("Either times_range or times must be provided, but not both")
         if cfg.generation.times_range:
-            times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
+            times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M")
         else:
             times = cfg.generation.times
         viz_dataset_cfg = OmegaConf.to_container(cfg.generation.dataset)
@@ -205,19 +222,12 @@ def main(cfg: DictConfig) -> None:
     if hasattr(cfg.model, "model_args"):  # override defaults from config file
         model_args.update(OmegaConf.to_container(cfg.model.model_args))
 
-    use_torch_compile = False
-    use_apex_gn = False
-    profile_mode = False
+    use_torch_compile = getattr(cfg.training.perf, "torch_compile", False)
+    use_apex_gn = getattr(cfg.training.perf, "use_apex_gn", False)
+    profile_mode = getattr(cfg.training.perf, "profile_mode", False)
 
-    if hasattr(cfg.training.perf, "torch_compile"):
-        use_torch_compile = cfg.training.perf.torch_compile
-    if hasattr(cfg.training.perf, "use_apex_gn"):
-        use_apex_gn = cfg.training.perf.use_apex_gn
-        model_args["use_apex_gn"] = use_apex_gn
-
-    if hasattr(cfg.training.perf, "profile_mode"):
-        profile_mode = cfg.training.perf.profile_mode
-        model_args["profile_mode"] = profile_mode
+    model_args["use_apex_gn"] = use_apex_gn
+    model_args["profile_mode"] = profile_mode
 
     if enable_amp:
         model_args["amp_mode"] = enable_amp
@@ -291,7 +301,6 @@ def main(cfg: DictConfig) -> None:
             raise FileNotFoundError(
                 f"Expected this regression checkpoint but not found: {regression_checkpoint_path}"
             )
-        #regression_net = torch.nn.Module() #TODO Module.from_checkpoint(regression_checkpoint_path) figure out how to save and load models, also, some basic functions like num_params, device
         #TODO make regression model loading more robust (model type is both in rergession_checkpoint_path and regression_name)
         #TODO add the option to choose epoch to load from / regression_checkpoint_path is now a folder
         regression_model_args_path = os.path.join(regression_checkpoint_path, 'model_args.json')
@@ -561,32 +570,11 @@ def main(cfg: DictConfig) -> None:
                             )
                         average_loss = (loss_sum / dist.world_size).cpu().item()
 
-                    # update running mean of average loss since last periodic task
-                    average_loss_running_mean += (
-                        average_loss - average_loss_running_mean
-                    ) / n_average_loss_running_mean
-                    n_average_loss_running_mean += 1
-
-                    if dist.rank == 0:
-                        writer.add_scalar("training_loss", average_loss, cur_nimg)
-                        writer.add_scalar(
-                            "training_loss_running_mean",
-                            average_loss_running_mean,
-                            cur_nimg,
-                        )
-
-                    ptt = is_time_for_periodic_task(
-                        cur_nimg,
-                        cfg.training.io.print_progress_freq,
-                        done,
-                        cfg.training.hp.total_batch_size,
-                        dist.rank,
-                        rank_0_only=True,
-                    )
-                    if ptt:
-                        # reset running mean of average loss
-                        average_loss_running_mean = 0
-                        n_average_loss_running_mean = 1
+                        # update running mean of average loss since last periodic task
+                        average_loss_running_mean += (
+                            average_loss - average_loss_running_mean
+                        ) / n_average_loss_running_mean
+                        n_average_loss_running_mean += 1
 
                     # Update weights.
                     with nvtx.annotate("update weights", color="blue"):
@@ -598,8 +586,8 @@ def main(cfg: DictConfig) -> None:
                             if cur_nimg >= lr_rampup:
                                 g["lr"] *= cfg.training.hp.lr_decay ** ((cur_nimg - lr_rampup) // cfg.training.hp.lr_decay_rate)
                             current_lr = g["lr"]
-                            if dist.rank == 0:
-                                writer.add_scalar("learning_rate", current_lr, cur_nimg)
+                            if dist.rank == 0 and cfg.logging.method == "mlflow":
+                                mlflow.log_metric("learning_rate", current_lr, cur_nimg)
                         handle_and_clip_gradients(
                             model, grad_clip_threshold=cfg.training.hp.grad_clip_threshold
                         )
@@ -609,38 +597,49 @@ def main(cfg: DictConfig) -> None:
                     cur_nimg += cfg.training.hp.total_batch_size
                     done = cur_nimg >= cfg.training.hp.training_duration
 
-                if is_time_for_periodic_task(
-                    cur_nimg,
-                    cfg.training.io.print_progress_freq,
-                    done,
-                    cfg.training.hp.total_batch_size,
-                    dist.rank,
-                    rank_0_only=True,
-                ):
-                    # Print stats if we crossed the printing threshold with this batch
-                    tick_end_time = time.time()
-                    fields = []
-                    fields += [f"samples {cur_nimg:<9.1f}"]
-                    fields += [f"training_loss {average_loss:<7.2f}"]
-                    fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
-                    fields += [f"learning_rate {current_lr:<7.8f}"]
-                    fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
-                    fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
-                    fields += [
-                        f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
-                    ]
-                    fields += [
-                        f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
-                    ]
-                    if torch.cuda.is_available():
+                    if is_time_for_periodic_task(
+                        cur_nimg,
+                        cfg.training.io.print_progress_freq,
+                        done,
+                        cfg.training.hp.total_batch_size,
+                        dist.rank,
+                        rank_0_only=True,
+                    ):
+                        # Print stats if we crossed the printing threshold with this batch
+                        tick_end_time = time.time()
+                        fields = []
+                        fields += [f"samples {cur_nimg:<9.1f}"]
+                        fields += [f"training_loss {average_loss:<7.2f}"]
+                        fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
+                        fields += [f"learning_rate {current_lr:<7.8f}"]
+                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
+                        fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
                         fields += [
-                            f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
+                            f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.4f}"
                         ]
                         fields += [
-                            f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
+                            f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
                         ]
-                        torch.cuda.reset_peak_memory_stats()
-                    logger0.info(" ".join(fields))
+                        if torch.cuda.is_available():
+                            fields += [
+                                f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}"
+                            ]
+                            fields += [
+                                f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}"
+                            ]
+                            torch.cuda.reset_peak_memory_stats()
+                        logger0.info(" ".join(fields))
+
+                        if cfg.logging.method == "mlflow":
+                            mlflow.log_metric("training_loss", average_loss, cur_nimg)
+                            mlflow.log_metric(
+                                "training_loss_running_mean",
+                                average_loss_running_mean,
+                                cur_nimg,
+                            )
+                        # reset running mean of average loss
+                        average_loss_running_mean = 0
+                        n_average_loss_running_mean = 1
 
                 with nvtx.annotate("validation", color="red"):
                     # Validation
@@ -737,9 +736,9 @@ def main(cfg: DictConfig) -> None:
                                         valid_loss_sum, op=torch.distributed.ReduceOp.SUM
                                     )
                                 average_valid_loss = valid_loss_sum / dist.world_size
-                                if dist.rank == 0:
-                                    writer.add_scalar(
-                                        "validation_loss", average_valid_loss, cur_nimg
+                                if dist.rank == 0 and cfg.logging.method == "mlflow":
+                                    mlflow.log_metric(
+                                        "validation_loss", average_valid_loss, cur_nimg                                        
                                     )
 
 
@@ -766,21 +765,22 @@ def main(cfg: DictConfig) -> None:
                     torch.distributed.barrier()
                 if is_time_for_periodic_task(
                     cur_nimg,
-                    cfg.training.io.save_checkpoint_freq,
+                    cfg.training.io.visualization_freq,
                     done,
                     cfg.training.hp.total_batch_size,
                     dist.rank,
-                ):
-                    if visualize_checkpoints:
-                        with nvtx.annotate("validation", color="red"):                    
-                            if dist.rank == 0:
-                                writer_executor = ThreadPoolExecutor(
-                                    max_workers=cfg.generation.perf.num_writer_workers
-                                )
-                                writer_threads = []
+                ) and visualize_checkpoints:
+                    with nvtx.annotate("visualization", color="red"):                    
+                        if dist.rank == 0:
+                            writer_executor = ThreadPoolExecutor(
+                                max_workers=cfg.generation.perf.num_writer_workers
+                            )
+                            writer_threads = []
 
-                            times = visualization_dataset.time()
-                            time_index = -1
+                        times = visualization_dataset.time()
+                        time_index = -1
+                        output_paths_list = []
+                        with torch.no_grad():
                             for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
                                 iter(visualization_data_loader)
                             ):
@@ -822,6 +822,7 @@ def main(cfg: DictConfig) -> None:
                                 if dist.rank == 0:
                                     # write out data in a seperate thread so we don't hold up inferencing
                                     output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
+                                    output_paths_list.append(output_path)
                                     if dist.rank==0 and not os.path.exists(output_path):
                                         os.makedirs(output_path)
                                     writer_threads.append(
@@ -836,17 +837,24 @@ def main(cfg: DictConfig) -> None:
                                             image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
                                         )
                                     )
-                            # make sure all the workers are done writing
-                            if dist.rank == 0:
-                                for thread in list(writer_threads):
-                                    thread.result()
-                                    writer_threads.remove(thread)
-                                writer_executor.shutdown()
+                        # make sure all the workers are done writing
+                        if dist.rank == 0:
+                            for thread in list(writer_threads):
+                                thread.result()
+                                writer_threads.remove(thread)
+                            writer_executor.shutdown()
+                            if cfg.logging.method == "mlflow" and cfg.logging.log_images:
+                                for output_path in output_paths_list:
+                                    mlflow.log_artifacts(output_path,
+                                                          os.path.join(
+                                                              'visualization',
+                                                              os.path.split(output_path)[-1]))
 
 
+    if dist.world_size > 1:
+        torch.distributed.barrier()
     # Done.
     logger0.info("Training Completed.")
-
 
 if __name__ == "__main__":
     main()

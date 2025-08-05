@@ -3,7 +3,7 @@ hydra:
     chdir: true
     name: diffusion_era5_cosmo_test
   run:
-    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+    dir: ./outputs/training/${hydra:job.name}
 
 # Get defaults
 defaults:
@@ -22,6 +22,3 @@ defaults:
 
   # Inference visualization
   - generation/era_cosmo_training
-
-  # Logging
-  - logging/era_cosmo_diffusion
