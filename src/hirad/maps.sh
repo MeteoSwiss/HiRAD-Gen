@@ -3,12 +3,12 @@
 #SBATCH --job-name="plot"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:10:00
+#SBATCH --time=01:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
@@ -46,5 +46,6 @@ export OMP_NUM_THREADS=72
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/eval/snapshots.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/ap_99pctl.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/map_99pctl.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/map_mean.py --config-name=generate_era_cosmo.yaml
 "
