@@ -157,7 +157,7 @@ def main(cfg: DictConfig):
         temp_target_mean.hour,
         [temp_target_mean, temp_baseline_mean, temp_pred_mean],
         [None, None, temp_pred_std],
-        ['COSMO-2', 'ERA5', 'CorrDiff ± Std(Members)'],
+        ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)'],
         '2m Temperature [°C]',
         'Diurnal Cycle of 2m Temperature',
         out_root / 'diurnal_cycle_2t.png'
@@ -167,7 +167,7 @@ def main(cfg: DictConfig):
         wind_target_mean.hour,
         [wind_target_mean, wind_baseline_mean, wind_pred_mean],
         [None, None, wind_pred_std],
-        ['COSMO-2', 'ERA5', 'CorrDiff ± Std(Members)'],
+        ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)'],
         'Windspeed [m/s]',
         'Diurnal Cycle of Windspeed',
         out_root / 'diurnal_cycle_windspeed.png'

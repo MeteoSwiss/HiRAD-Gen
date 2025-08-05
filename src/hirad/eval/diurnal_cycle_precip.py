@@ -127,7 +127,7 @@ def main(cfg: DictConfig):
         amount_target_mean.hour,
         [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std],
-        ['COSMO-2','ERA5','CorrDiff ± Std(Members)'],
+        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
         'Precipitation (mm/day)',
         'Diurnal Cycle of Precip Amount',
         out_root / 'diurnal_cycle_precip_amount.png'
@@ -136,7 +136,7 @@ def main(cfg: DictConfig):
         wet_target_mean.hour,
         [wet_target_mean, wet_baseline_mean, wet_pred_mean],
         [None, None, wet_pred_std],
-        ['COSMO-2','ERA5','CorrDiff ± Std(Members)'],
+        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
         'Wet-Hour Fraction [%]',
         'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
         out_root / 'diurnal_cycle_precip_wethours.png'

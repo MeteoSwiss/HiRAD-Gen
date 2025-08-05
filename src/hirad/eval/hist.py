@@ -253,7 +253,7 @@ def main(cfg: DictConfig):
     
     
     # Create distribution plots
-    labels = ['COSMO-2', 'ERA5', 'CorrDiff Ensemble']
+    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff Ensemble']
     colors = ['blue', 'orange', 'green']
     
     fn = out_root / 'precipitation_distribution_over_land.png'

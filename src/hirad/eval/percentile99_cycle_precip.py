@@ -163,7 +163,7 @@ def main(cfg: DictConfig):
     save_plot(
         hrs_c,
         pct99_lines,
-        ['COSMO-2','ERA5','CorrDiff 99th Pct ± Std'],
+        ['COSMO-2  Analysis','ERA5','CorrDiff 99th Pct ± Std'],
         'Precipitation (mm/day)',
         'Diurnal Cycle of 99th-Percentile Precipitation',
         fn
