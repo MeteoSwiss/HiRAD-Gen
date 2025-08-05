@@ -1,19 +1,19 @@
 #!/bin/bash
 
-#SBATCH --job-name="plot_diurnal_cycle"
+#SBATCH --job-name="eval_precip"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-##SBATCH --time=00:10:00
+#SBATCH --time=05:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/plot_diurnal_cycle.log
+#SBATCH --output=./logs/plots_precipe.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
@@ -48,4 +48,10 @@ srun --environment=./ci/edf/modulus_env.toml bash -c "
     python src/hirad/eval/diurnal_cycle_precip.py --config-name=generate_era_cosmo.yaml
     python src/hirad/eval/percentile99_cycle_precip.py --config-name=generate_era_cosmo.yaml
     python src/hirad/eval/diurnal_cycle_temp_wind.py --config-name=generate_era_cosmo.yaml
+"
+
+srun --environment=./ci/edf/modulus_env.toml bash -c "
+    pip install -e . --no-dependencies
+    python src/hirad/eval/hist.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/probability_of_exceedance.py --config-name=generate_era_cosmo.yaml
 "
