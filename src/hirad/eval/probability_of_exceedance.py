@@ -115,11 +115,8 @@ def main(cfg: DictConfig):
     )
     logger.info("Dataset and sampler initialized")
 
-    # Output root and loader
+    # Output root
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    
-    def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR_HOURLY
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -133,9 +130,8 @@ def main(cfg: DictConfig):
     # Define thresholds for exceedance calculation
     thresholds = np.logspace(-2, 2, 200)  # From 0.01 to 100 mm/h
     
-    # Storage for exceedance data
+    # Storage for exceedance data and land values
     exceedance_data = {}
-    # Store all land values for percentile calculation
     all_land_values = {}
     
     # -- Process target and baseline --
@@ -148,13 +144,12 @@ def main(cfg: DictConfig):
             if i % LOG_INTERVAL == 0:
                 logger.info(f"Processing timestep {i+1}/{len(times)}")
             
-            data = load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in] * land_mask
+            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode == 'target' else tp_in] * CONV_FACTOR_HOURLY * land_mask
             
             # Apply scaling factor for baseline
             if mode == 'baseline':
                 data = data / 6.0
             
-            # Extract land values (remove NaN values)
             land_values = data.values[~np.isnan(data.values)]
             all_values.extend(land_values)
         
@@ -173,21 +168,20 @@ def main(cfg: DictConfig):
     logger.info("Processing predictions")
     
     n_members = None
-    all_member_values = []  # Store all values for each member
+    all_member_values = []
     
     for i, ts in enumerate(times):
         if i % LOG_INTERVAL == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
-        preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, lat, lon]
+        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False) * CONV_FACTOR_HOURLY  # [n_members, n_channels, lat, lon]
         
         if n_members is None:
             n_members = preds.shape[0]
-            all_member_values = [[] for _ in range(n_members)]  # Initialize value storage
+            all_member_values = [[] for _ in range(n_members)]
         
         for member_idx in range(n_members):
             data = preds[member_idx, tp_out] * land_mask
-            # Extract land values (remove NaN values)
             land_values = data.values[~np.isnan(data.values)]
             all_member_values[member_idx].extend(land_values)
     
@@ -207,30 +201,24 @@ def main(cfg: DictConfig):
     
     # Compute percentiles for all datasets
     percentiles_data = {}
+    percentiles = {99: 0.99, 99.9: 0.999, 99.99: 0.9999}
     
-    # Target percentiles
-    target_data_array = xr.DataArray(all_land_values['target'])
-    target_p99 = target_data_array.quantile(0.99).item()
-    target_p999 = target_data_array.quantile(0.999).item()
-    target_p9999 = target_data_array.quantile(0.9999).item()
-    percentiles_data['target'] = {99: target_p99, 99.9: target_p999, 99.99: target_p9999}
-    
-    # Baseline percentiles
-    baseline_data_array = xr.DataArray(all_land_values['baseline'])
-    baseline_p99 = baseline_data_array.quantile(0.99).item()
-    baseline_p999 = baseline_data_array.quantile(0.999).item()
-    baseline_p9999 = baseline_data_array.quantile(0.9999).item()
-    percentiles_data['baseline'] = {99: baseline_p99, 99.9: baseline_p999, 99.99: baseline_p9999}
+    # Target and baseline percentiles
+    for mode in ['target', 'baseline']:
+        data_array = xr.DataArray(all_land_values[mode])
+        percentiles_data[mode] = {
+            key: data_array.quantile(p).item() 
+            for key, p in percentiles.items()
+        }
     
     # Ensemble member percentiles
     percentiles_data['predictions'] = {}
     for member_idx in range(n_members):
         member_data_array = xr.DataArray(all_member_values[member_idx])
-        member_p99 = member_data_array.quantile(0.99).item()
-        member_p999 = member_data_array.quantile(0.999).item()
-        member_p9999 = member_data_array.quantile(0.9999).item()
-        percentiles_data['predictions'][f'member_{member_idx}'] = {99: member_p99, 99.9: member_p999, 99.99: member_p9999}
-    
+        percentiles_data['predictions'][f'member_{member_idx}'] = {
+            key: member_data_array.quantile(p).item()
+            for key, p in percentiles.items()
+        }
     
     # Create exceedance plots
     labels = ['COSMO-2 Analysis', 'ERA5', 'CorrDiff Ensemble']
