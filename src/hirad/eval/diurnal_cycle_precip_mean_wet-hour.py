@@ -14,6 +14,27 @@ from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR, WET_THRESHOLD, LOG_INTERVAL, concat_and_group_diurnal
 
+def save_plot(hour, means, stds, labels, ylabel, title, out_path):
+    hrs = np.concatenate([hour.values, [24]])
+    plt.figure(figsize=(8,4))
+    for mean, std, label in zip(means, stds, labels):
+        vals = np.append(mean.values, mean.values[0])
+        line, = plt.plot(hrs, vals, label=label)
+        if std is not None:
+            stdv = np.append(std.values, std.values[0])
+            plt.fill_between(hrs, np.maximum(vals - stdv, 0), vals + stdv, color=line.get_color(), alpha=0.3)
+    plt.xlabel('Hour (UTC)')
+    plt.xticks(range(0,25,3))
+    plt.xlim(0,24)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
+    plt.close()
+
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
     # Setup logging
@@ -31,9 +52,8 @@ def main(cfg: DictConfig):
         ds_cfg, times, cfg.generation.get('has_lead_time', False)
     )
 
+    # Location of the output from inference
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -42,9 +62,7 @@ def main(cfg: DictConfig):
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
-    land_mask_da = load_land_sea_mask()
-    land_mask = land_mask_da.values
-    coords = {"lat": np.arange(land_mask.shape[0]), "lon": np.arange(land_mask.shape[1])}
+    land_mask = load_land_sea_mask()
 
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip = [], [], []
@@ -53,14 +71,19 @@ def main(cfg: DictConfig):
     # Collect data
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
-        target = load(ts, f"{ts}-target")[tp_out] * land_mask
-        baseline = load(ts, f"{ts}-baseline")[tp_in] * land_mask / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
-        preds = load(ts, f"{ts}-predictions")[:, tp_out, :, :] * land_mask
+        target = torch.load(out_root/ts/f"{ts}-target", weights_only=False)[tp_out] * CONV_FACTOR
+        baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * CONV_FACTOR / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
+        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * CONV_FACTOR
 
         # DataArrays for spatial means at each timestep
-        da_target = xr.DataArray(target, dims=("lat","lon"), coords=coords)
-        da_baseline = xr.DataArray(baseline, dims=("lat","lon"), coords=coords)
-        da_preds = xr.DataArray(preds, dims=("member","lat","lon"), coords={"member": np.arange(preds.shape[0]), **coords})
+        da_target = xr.DataArray(target, dims=("lat","lon"), coords=land_mask.coords)
+        da_baseline = xr.DataArray(baseline, dims=("lat","lon"), coords=land_mask.coords)
+        da_preds = xr.DataArray(preds, dims=("member","lat","lon"), coords={"member": np.arange(preds.shape[0]), **land_mask.coords})
+
+        # Apply land mask after conversion to xarray
+        da_target = da_target * land_mask
+        da_baseline = da_baseline * land_mask
+        da_preds = da_preds * land_mask
 
         # Spatial mean
         target_precip.append(da_target.mean(dim=("lat","lon")).assign_coords(time=dt))
@@ -80,30 +103,9 @@ def main(cfg: DictConfig):
     amount_baseline_mean, _ = concat_and_group_diurnal(baseline_precip)
     amount_pred_mean, amount_pred_std = concat_and_group_diurnal(pred_precip, is_member=True)
 
-    wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to percentage
+    wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to obtain percentages
     wet_baseline_mean, _ = concat_and_group_diurnal(baseline_wet, scale=100.0)
     wet_pred_mean, wet_pred_std = concat_and_group_diurnal(pred_wet, is_member=True, scale=100.0)
-
-    def save_plot(hour, means, stds, labels, ylabel, title, out_path):
-        hrs = np.concatenate([hour.values, [24]])
-        plt.figure(figsize=(8,4))
-        for mean, std, label in zip(means, stds, labels):
-            vals = np.append(mean.values, mean.values[0])
-            line, = plt.plot(hrs, vals, label=label)
-            if std is not None:
-                stdv = np.append(std.values, std.values[0])
-                plt.fill_between(hrs, np.maximum(vals - stdv, 0), vals + stdv, color=line.get_color(), alpha=0.3)
-        plt.xlabel('Hour (UTC)')
-        plt.xticks(range(0,25,3))
-        plt.xlim(0,24)
-        plt.ylabel(ylabel)
-        plt.title(title)
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(out_path)
-        plt.close()
 
     # Generate plots
     save_plot(

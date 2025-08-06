@@ -54,63 +54,42 @@ def main(cfg: DictConfig):
         return torch.load(out_root/ts/fn, weights_only=False)
 
     # Land-sea mask
-    land_mask_da = load_land_sea_mask()
-    land_mask = land_mask_da.values
-    coords = {"lat": np.arange(land_mask.shape[0]), "lon": np.arange(land_mask.shape[1])}
+    land_mask = load_land_sea_mask()
 
     # Prepare lists to collect DataArrays
     target_temp, baseline_temp, pred_temp = [], [], []
     target_wind, baseline_wind, pred_wind = [], [], []
 
+    def mean_over_land(data, dims, coords, time_coord):
+        da = xr.DataArray(data, dims=dims, coords=coords) * land_mask
+        return da.mean(dim=("lat","lon")).assign_coords(time=time_coord)
+
     # Loop over timestamps
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
 
-        # Load and apply land mask
-        target = load(ts, f"{ts}-target") * land_mask
-        baseline = load(ts, f"{ts}-baseline") * land_mask
-        predictions = load(ts, f"{ts}-predictions") * land_mask
+        # Load data
+        target = load(ts, f"{ts}-target")
+        baseline = load(ts, f"{ts}-baseline")
+        predictions = load(ts, f"{ts}-predictions")
 
-        # Wrap into DataArrays (convert temperature to Celsius inline)
-        da_tgt_temp = xr.DataArray(
-            target[t2m_out] - 273.15, dims=("lat","lon"), coords=coords
-        )
-        da_bsl_temp = xr.DataArray(
-            baseline[t2m_in] - 273.15, dims=("lat","lon"), coords=coords
-        )
-        tgt_wind = np.hypot(target[u_out], target[v_out])
-        bsl_wind = np.hypot(baseline[u_in], baseline[v_in])
-        da_tgt_wind = xr.DataArray(tgt_wind, dims=("lat","lon"), coords=coords)
-        da_bsl_wind = xr.DataArray(bsl_wind, dims=("lat","lon"), coords=coords)
+        # Process temperature (convert to Celsius)
+        target_temp.append(mean_over_land(
+            target[t2m_out] - 273.15, ("lat","lon"), land_mask.coords, dt))
+        baseline_temp.append(mean_over_land(
+            baseline[t2m_in] - 273.15, ("lat","lon"), land_mask.coords, dt))
+        pred_temp.append(mean_over_land(
+            predictions[:, t2m_out, :, :] - 273.15, ("member","lat","lon"), 
+            {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
 
-        da_pred_members_temp = xr.DataArray(
-            predictions[:, t2m_out, :, :] - 273.15, dims=("member","lat","lon"),
-            coords={"member": np.arange(predictions.shape[0]), **coords}
-        )
-        da_pred_members_wind = xr.DataArray(
+        # Process wind speed
+        target_wind.append(mean_over_land(
+            np.hypot(target[u_out], target[v_out]), ("lat","lon"), land_mask.coords, dt))
+        baseline_wind.append(mean_over_land(
+            np.hypot(baseline[u_in], baseline[v_in]), ("lat","lon"), land_mask.coords, dt))
+        pred_wind.append(mean_over_land(
             np.hypot(predictions[:, u_out, :, :], predictions[:, v_out, :, :]),
-            dims=("member","lat","lon"), coords={"member": np.arange(predictions.shape[0]), **coords}
-        )
-
-        # Compute spatial mean and assign time coordinate
-        target_temp.append(
-            da_tgt_temp.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
-        baseline_temp.append(
-            da_bsl_temp.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
-        pred_temp.append(
-            da_pred_members_temp.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
-        target_wind.append(
-            da_tgt_wind.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
-        baseline_wind.append(
-            da_bsl_wind.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
-        pred_wind.append(
-            da_pred_members_wind.mean(dim=("lat","lon")).assign_coords(time=dt)
-        )
+            ("member","lat","lon"), {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
 
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")

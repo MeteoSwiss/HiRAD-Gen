@@ -22,10 +22,6 @@ from hirad.utils.function_utils import get_time_from_range
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR
 
 
-def hour_of(dt: str, fmt: str = "%Y%m%d-%H%M") -> int:
-    return datetime.strptime(dt, fmt).hour
-
-
 def save_plot(hours, lines, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     plt.figure(figsize=(8,4))
@@ -68,10 +64,8 @@ def main(cfg: DictConfig):
     )
     logger.info("Dataset and sampler initialized")
 
-    # Output root and loader
+    # Output root
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -92,7 +86,7 @@ def main(cfg: DictConfig):
         
         data_list = []
         for ts in times:
-            data = load(ts, f"{ts}-{mode}")[tp_out if mode == 'target' else tp_in] * land_mask
+            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode == 'target' else tp_in] * CONV_FACTOR * land_mask
             data_list.append(data)
         
         da = xr.DataArray(
@@ -116,7 +110,7 @@ def main(cfg: DictConfig):
     # Load all prediction data at once into xarray
     pred_data_list = []
     for ts in times:
-        preds = load(ts, f"{ts}-predictions")  # [n_members, n_channels, lat, lon]
+        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False) * CONV_FACTOR  # [n_members, n_channels, lat, lon]
         # Extract precipitation channel and convert to xarray for proper broadcasting
         tp_data = preds[:, tp_out]  # [n_members, lat, lon]
         tp_da = xr.DataArray(tp_data, dims=['member', 'lat', 'lon'])
