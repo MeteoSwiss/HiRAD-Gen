@@ -137,8 +137,8 @@ def main(cfg: DictConfig) -> None:
         # Only compile residual network
         # Overhead of compiling regression network outweights any benefits
         if net_res:
-            net_res = torch.compile(net_res, mode="reduce-overhead")
-    
+            net_res = torch.compile(net_res) #, mode="reduce-overhead")
+        # removed reduce-overhead because it was breaking cuda graph compilation
     generator = Generator(
         net_reg=net_reg,
         net_res=net_res,

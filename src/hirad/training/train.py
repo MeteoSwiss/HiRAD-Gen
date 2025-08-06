@@ -282,6 +282,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
+        if use_torch_compile:
+            model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
@@ -332,7 +334,8 @@ def main(cfg: DictConfig) -> None:
 
     # Compile the model and regression net if applicable
     if use_torch_compile:
-        model = torch.compile(model)
+        if dist.world_size==1:
+            model = torch.compile(model)
         if regression_net:
             regression_net = torch.compile(regression_net)
 
