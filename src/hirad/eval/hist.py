@@ -17,11 +17,7 @@ import xarray as xr
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices
-
-# Constants
-CONV_FACTOR = 100  # Convert meters to mm/h
-LOG_INTERVAL = 24    # Log progress every N timesteps
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR_HOURLY, LOG_INTERVAL
 
 
 def save_distribution_plot(hist_data_dict, bin_edges, labels, colors, title, ylabel, out_path, percentiles_data=None):
@@ -126,7 +122,7 @@ def main(cfg: DictConfig):
     out_root = Path(cfg.generation.io.output_path or './outputs')
     
     def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
+        return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR_HOURLY
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -135,11 +131,7 @@ def main(cfg: DictConfig):
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
-    lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
-    land_mask = xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
-        dims=['lat', 'lon']
-    )
+    land_mask = load_land_sea_mask()
 
     # Define histogram bins
     bins = np.logspace(-1, 1, 50)  # Log-spaced bins for precipitation

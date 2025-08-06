@@ -17,11 +17,7 @@ import xarray as xr
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import plot_map_precipitation, get_channel_indices
-
-# Constants
-CONV_FACTOR = 100 * 24   # Convert meters to mm/day
-LOG_INTERVAL = 24    # Log progress every N timesteps
+from hirad.eval.plotting import plot_map_precipitation, get_channel_indices, CONV_FACTOR, LOG_INTERVAL
 
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")

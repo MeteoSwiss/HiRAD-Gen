@@ -12,9 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices
-
-LOG_INTERVAL = 24
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, LOG_INTERVAL
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
@@ -56,8 +54,8 @@ def main(cfg: DictConfig):
         return torch.load(out_root/ts/fn, weights_only=False)
 
     # Land-sea mask
-    lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
-    land_mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
+    land_mask_da = load_land_sea_mask()
+    land_mask = land_mask_da.values
     coords = {"lat": np.arange(land_mask.shape[0]), "lon": np.arange(land_mask.shape[1])}
 
     # Prepare lists to collect DataArrays

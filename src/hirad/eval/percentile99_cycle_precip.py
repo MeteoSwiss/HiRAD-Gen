@@ -19,11 +19,7 @@ import xarray as xr
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices
-
-# Constants
-CONV_FACTOR = 100 * 24   # Convert meters to mm/day
-LOG_INTERVAL = 24    # Log progress every N timesteps
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR
 
 
 def hour_of(dt: str, fmt: str = "%Y%m%d-%H%M") -> int:
@@ -84,11 +80,7 @@ def main(cfg: DictConfig):
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
-    lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
-    land_mask = xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
-        dims=['lat', 'lon']
-    )
+    land_mask = load_land_sea_mask()
 
     # Storage for diurnal cycles
     pct99_mean = {}

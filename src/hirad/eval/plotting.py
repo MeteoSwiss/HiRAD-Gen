@@ -17,9 +17,10 @@ LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
 RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
 
 # Constants for data processing
-CONV_FACTOR_HOURLY = 100  # Convert precip meters to mm/h
-CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip from meters to mm/day
+CONV_FACTOR_HOURLY = 100  # Convert precip of ERA5 from meters to mm/h
+CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
+LOG_INTERVAL = 24    # Log progress every N timesteps
 
 def get_channel_indices(dataset, channels=None):
     """
