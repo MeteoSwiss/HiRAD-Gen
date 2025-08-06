@@ -1,10 +1,10 @@
 # Hyperparameters
 hp:
-    training_duration: 40000
+    training_duration: 10000
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size -- based 8 per GPU -- 2 nodes is 2x8x4 -- see sbatch vars for how many gpus. diffusion need to point to the rgression.
-    batch_size_per_gpu: 22
+    batch_size_per_gpu: 20
     # Batch size per GPU
     lr: 0.0002
     # Learning rate
@@ -26,16 +26,17 @@ perf:
     # DataLoader worker processes
     songunet_checkpoint_level: 0 # 0 means no checkpointing
     # Gradient checkpointing level, value is number of layers to checkpoint
-    # torch_compile: True
-    # use_apex_gn: True
+    use_apex_gn: True
+    torch_compile: True
+    profile_mode: False
 
 # I/O
 io:
     print_progress_freq: 500
     # How often to print progress
-    save_checkpoint_freq: 100000
+    save_checkpoint_freq: 10000
     # How often to save the checkpoints, measured in number of processed samples
-    visualization_freq: 200000
+    visualization_freq: 10000
     # how often to visualize network output
     validation_freq: 2000
     # how often to record the validation loss, measured in number of processed samples

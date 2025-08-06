@@ -551,6 +551,7 @@ class DistributedManager(object):
                 backend,
                 rank=manager.rank,
                 world_size=manager.world_size,
+                device_id=manager.device, 
             )
             #           rank=manager.rank,
             #           world_size=manager.world_size,

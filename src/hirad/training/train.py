@@ -82,7 +82,7 @@ def main(cfg: DictConfig) -> None:
     logger0 = RankZeroLoggingWrapper(logger, dist) # rank 0 logger
 
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
-    if hasattr(cfg.dataset, "validation_path"):
+    if hasattr(cfg.dataset, "validation_path") and cfg.dataset.validation_path is not None:
         train_test_split = True
     else:
         train_test_split = False
@@ -222,19 +222,12 @@ def main(cfg: DictConfig) -> None:
     if hasattr(cfg.model, "model_args"):  # override defaults from config file
         model_args.update(OmegaConf.to_container(cfg.model.model_args))
 
-    use_torch_compile = False
-    use_apex_gn = False
-    profile_mode = False
+    use_torch_compile = getattr(cfg.training.perf, "torch_compile", False)
+    use_apex_gn = getattr(cfg.training.perf, "use_apex_gn", False)
+    profile_mode = getattr(cfg.training.perf, "profile_mode", False)
 
-    if hasattr(cfg.training.perf, "torch_compile"):
-        use_torch_compile = cfg.training.perf.torch_compile
-    if hasattr(cfg.training.perf, "use_apex_gn"):
-        use_apex_gn = cfg.training.perf.use_apex_gn
-        model_args["use_apex_gn"] = use_apex_gn
-
-    if hasattr(cfg.training.perf, "profile_mode"):
-        profile_mode = cfg.training.perf.profile_mode
-        model_args["profile_mode"] = profile_mode
+    model_args["use_apex_gn"] = use_apex_gn
+    model_args["profile_mode"] = profile_mode
 
     if enable_amp:
         model_args["amp_mode"] = enable_amp
@@ -289,6 +282,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
+        if use_torch_compile:
+            model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
@@ -339,7 +334,8 @@ def main(cfg: DictConfig) -> None:
 
     # Compile the model and regression net if applicable
     if use_torch_compile:
-        model = torch.compile(model)
+        if dist.world_size==1:
+            model = torch.compile(model)
         if regression_net:
             regression_net = torch.compile(regression_net)
 
@@ -622,7 +618,7 @@ def main(cfg: DictConfig) -> None:
                         fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
                         fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
                         fields += [
-                            f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.2f}"
+                            f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.4f}"
                         ]
                         fields += [
                             f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
@@ -787,62 +783,63 @@ def main(cfg: DictConfig) -> None:
                         times = visualization_dataset.time()
                         time_index = -1
                         output_paths_list = []
-                        for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
-                            iter(visualization_data_loader)
-                        ):
-                            time_index += 1
-                            logger0.info(f"starting index: {time_index}")
+                        with torch.no_grad():
+                            for index, (img_clean_viz, img_lr_viz, *lead_time_label_viz) in enumerate(
+                                iter(visualization_data_loader)
+                            ):
+                                time_index += 1
+                                logger0.info(f"starting index: {time_index}")
 
-                            # continue
-                            if lead_time_label_viz:
-                                lead_time_label_viz = lead_time_label_viz[0].to(dist.device).contiguous()
-                            else:
-                                lead_time_label_viz = None
+                                # continue
+                                if lead_time_label_viz:
+                                    lead_time_label_viz = lead_time_label_viz[0].to(dist.device).contiguous()
+                                else:
+                                    lead_time_label_viz = None
 
-                            if use_apex_gn:
-                                img_clean_viz = img_clean_viz.to(
-                                    dist.device,
-                                    dtype=input_dtype,
-                                    non_blocking=True,
-                                ).to(memory_format=torch.channels_last)
-                                img_lr_viz = img_lr_viz.to(
-                                    dist.device,
-                                    dtype=input_dtype,
-                                    non_blocking=True,
-                                ).to(memory_format=torch.channels_last)
-                            else:
-                                img_clean_viz = (
-                                    img_clean_viz.to(dist.device)
-                                    .to(input_dtype)
-                                    .contiguous()
-                                )
-                                img_lr_viz = (
-                                    img_lr_viz.to(dist.device)
-                                    .to(input_dtype)
-                                    .contiguous()
-                                )
-                            with torch.autocast(
-                                    "cuda", dtype=amp_dtype, enabled=enable_amp
-                                ):
-                                image_pred_viz, image_reg_viz = generator.generate(img_lr_viz, lead_time_label_viz)
-                            if dist.rank == 0:
-                                # write out data in a seperate thread so we don't hold up inferencing
-                                output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
-                                output_paths_list.append(output_path)
-                                if dist.rank==0 and not os.path.exists(output_path):
-                                    os.makedirs(output_path)
-                                writer_threads.append(
-                                    writer_executor.submit(
-                                        save_images,
-                                        output_path,
-                                        times[visualization_sampler[time_index]],
-                                        visualization_dataset,
-                                        image_pred_viz.cpu().numpy(),
-                                        img_clean_viz.cpu().numpy(),
-                                        img_lr_viz.cpu().numpy(),
-                                        image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
+                                if use_apex_gn:
+                                    img_clean_viz = img_clean_viz.to(
+                                        dist.device,
+                                        dtype=input_dtype,
+                                        non_blocking=True,
+                                    ).to(memory_format=torch.channels_last)
+                                    img_lr_viz = img_lr_viz.to(
+                                        dist.device,
+                                        dtype=input_dtype,
+                                        non_blocking=True,
+                                    ).to(memory_format=torch.channels_last)
+                                else:
+                                    img_clean_viz = (
+                                        img_clean_viz.to(dist.device)
+                                        .to(input_dtype)
+                                        .contiguous()
                                     )
-                                )
+                                    img_lr_viz = (
+                                        img_lr_viz.to(dist.device)
+                                        .to(input_dtype)
+                                        .contiguous()
+                                    )
+                                with torch.autocast(
+                                        "cuda", dtype=amp_dtype, enabled=enable_amp
+                                    ):
+                                    image_pred_viz, image_reg_viz = generator.generate(img_lr_viz, lead_time_label_viz)
+                                if dist.rank == 0:
+                                    # write out data in a seperate thread so we don't hold up inferencing
+                                    output_path = os.path.join(visualization_dir, f"{cur_nimg}_{times[visualization_sampler[time_index]]}")
+                                    output_paths_list.append(output_path)
+                                    if dist.rank==0 and not os.path.exists(output_path):
+                                        os.makedirs(output_path)
+                                    writer_threads.append(
+                                        writer_executor.submit(
+                                            save_images,
+                                            output_path,
+                                            times[visualization_sampler[time_index]],
+                                            visualization_dataset,
+                                            image_pred_viz.cpu().numpy(),
+                                            img_clean_viz.cpu().numpy(),
+                                            img_lr_viz.cpu().numpy(),
+                                            image_reg_viz.cpu().numpy() if image_reg_viz is not None else None,
+                                        )
+                                    )
                         # make sure all the workers are done writing
                         if dist.rank == 0:
                             for thread in list(writer_threads):
