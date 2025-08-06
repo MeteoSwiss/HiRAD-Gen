@@ -1,10 +1,10 @@
 # Hyperparameters
 hp:
-    training_duration: 20000
+    training_duration: 10000
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size
-    batch_size_per_gpu: 22
+    batch_size_per_gpu: 20
     # Batch size per GPU
     lr: 0.0002
     # Learning rate
@@ -26,16 +26,19 @@ perf:
     # DataLoader worker processes
     songunet_checkpoint_level: 0 # 0 means no checkpointing
     # Gradient checkpointing level, value is number of layers to checkpoint
-
+    use_apex_gn: True
+    torch_compile: True
+    profile_mode: False
 # I/O
 io:
-    regression_checkpoint_path:  /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
+    # regression_checkpoint_path:  /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
+    regression_checkpoint_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo_perf_apex_gn/checkpoints_regression
     # Where to load the regression checkpoint
     print_progress_freq: 500
     # How often to print progress
     save_checkpoint_freq: 10000
     # How often to save the checkpoints, measured in number of processed samples
-    visualization_freq: 200000
+    visualization_freq: 10000
     # how often to visualize network outputs
     validation_freq: 2000
     # how often to record the validation loss, measured in number of processed samples
