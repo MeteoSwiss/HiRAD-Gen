@@ -59,13 +59,6 @@ def load_land_sea_mask(path='/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy'):
         coords={"lat": np.arange(352), "lon": np.arange(544)}
     )
 
-def load_prediction_data_torch(out_root, times, filename_pattern, conv_factor=CONV_FACTOR):
-    """Generic loader for prediction data with conversion factor."""
-    def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False) * conv_factor
-    
-    return lambda ts, fn: load(ts, filename_pattern.format(ts=ts, fn=fn))
-
 def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
     """Helper to concatenate DataArrays and compute diurnal statistics."""
     da = xr.concat(list_of_da, dim="time").groupby("time.hour")
