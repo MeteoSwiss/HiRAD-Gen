@@ -25,5 +25,5 @@ test_job:
   variables:
     SLURM_JOB_NUM_NODES: 2
     SLURM_NTASKS: 2
-    SLURM_ACCOUNT: a161
-    SBATCH_ACCOUNT: a161
+    #SLURM_ACCOUNT: a161
+    #SBATCH_ACCOUNT: a161
