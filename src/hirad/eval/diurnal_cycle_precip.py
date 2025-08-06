@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR, WET_THRESHOLD, LOG_INTERVAL
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR, WET_THRESHOLD, LOG_INTERVAL, concat_and_group_diurnal
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
@@ -75,26 +75,14 @@ def main(cfg: DictConfig):
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
-    # Helper to concat and compute diurnal stats
-    def concat_and_group(list_of_da, is_member=False, scale=1.0):
-        da = xr.concat(list_of_da, dim="time").groupby("time.hour")
-        if is_member:
-            timmean = da.mean(dim='time') * scale
-            mean = timmean.mean(dim='member')
-            std = timmean.std(dim='member')
-        else:
-            mean = da.mean(dim='time') * scale
-            std = None
-        return mean, std
-
     # Compute diurnal means and stds
-    amount_target_mean, _ = concat_and_group(target_precip)
-    amount_baseline_mean, _ = concat_and_group(baseline_precip)
-    amount_pred_mean, amount_pred_std = concat_and_group(pred_precip, is_member=True)
+    amount_target_mean, _ = concat_and_group_diurnal(target_precip)
+    amount_baseline_mean, _ = concat_and_group_diurnal(baseline_precip)
+    amount_pred_mean, amount_pred_std = concat_and_group_diurnal(pred_precip, is_member=True)
 
-    wet_target_mean, _ = concat_and_group(target_wet, scale=100.0) # scale to percentage
-    wet_baseline_mean, _ = concat_and_group(baseline_wet, scale=100.0)
-    wet_pred_mean, wet_pred_std = concat_and_group(pred_wet, is_member=True, scale=100.0)
+    wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to percentage
+    wet_baseline_mean, _ = concat_and_group_diurnal(baseline_wet, scale=100.0)
+    wet_pred_mean, wet_pred_std = concat_and_group_diurnal(pred_wet, is_member=True, scale=100.0)
 
     def save_plot(hour, means, stds, labels, ylabel, title, out_path):
         hrs = np.concatenate([hour.values, [24]])
