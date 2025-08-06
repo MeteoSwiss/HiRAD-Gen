@@ -17,7 +17,7 @@ import xarray as xr
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import plot_map_precipitation
+from hirad.eval.plotting import plot_map_precipitation, get_channel_indices
 
 # Constants
 CONV_FACTOR = 100 * 24   # Convert meters to mm/day
@@ -48,10 +48,9 @@ def main(cfg: DictConfig):
         return torch.load(out_root/ts/fn, weights_only=False) * CONV_FACTOR
 
     # Find channel indices
-    out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
-    in_ch  = {c.name: i for i, c in enumerate(dataset.input_channels())}
-    tp_out = out_ch['tp']
-    tp_in = in_ch.get('tp', tp_out)
+    indices = get_channel_indices(dataset)
+    tp_out = indices['output']['tp']
+    tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # -- Process target --

@@ -13,7 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/plots_precipe.log
+#SBATCH --output=./logs/plots_precip.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161

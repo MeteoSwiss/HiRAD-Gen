@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
 from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.plotting import get_channel_indices
 
 LOG_INTERVAL = 24
 
@@ -35,18 +36,24 @@ def main(cfg: DictConfig):
     )
 
     # Indices for channels
-    out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
-    in_ch  = {c.name: i for i, c in enumerate(dataset.input_channels())}
+    indices = get_channel_indices(dataset)
+    out_ch = indices['output']
+    in_ch = indices['input']
+    
+    # Temperature channel (try '2t' first, fallback to 't2m')
     t2m_out = out_ch.get('2t', out_ch.get('t2m'))
     t2m_in = in_ch.get('2t', in_ch.get('t2m', t2m_out))
-    u_out = out_ch.get('10u')
-    v_out = out_ch.get('10v')
+    
+    # Wind channels
+    u_out = out_ch['10u']
     u_in = in_ch.get('10u', u_out)
+    v_out = out_ch['10v']  
     v_in = in_ch.get('10v', v_out)
 
     # Output path
     out_root = Path(cfg.generation.io.output_path or './outputs')
-    load = lambda ts, fn: torch.load(out_root/ts/fn, weights_only=False)
+    def load(ts, fn):
+        return torch.load(out_root/ts/fn, weights_only=False)
 
     # Land-sea mask
     lsm_data = np.load('/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy').reshape(352,544)
