@@ -46,6 +46,6 @@ export OMP_NUM_THREADS=72
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/eval/snapshots.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/map_99pctl.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/map_mean.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/map_precip_99pctl.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/map_precip_mean.py --config-name=generate_era_cosmo.yaml
 "
