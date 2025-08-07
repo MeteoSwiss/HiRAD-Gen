@@ -120,6 +120,7 @@ def plot_map(values: np.array,
     )
     if ticks is not None:
         cbar.set_ticks(ticks)
+        cbar.set_ticklabels([f'{tick:g}' for tick in ticks])
 
     plt.tight_layout()
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
@@ -136,7 +137,7 @@ def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=100.0
               'forestgreen', 'limegreen', 'lawngreen',
               'yellow', 'gold', 'darkorange', 'red',
               'darkviolet', 'violet', 'thistle']
-    bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50, 70, 100, 150, 200]
+    bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
 
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(bounds, ncolors=len(colors), clip=False)
