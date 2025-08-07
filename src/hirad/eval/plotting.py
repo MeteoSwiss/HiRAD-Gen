@@ -22,6 +22,8 @@ CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meter
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
 LOG_INTERVAL = 24    # Log progress every N timesteps
 
+LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
+
 def get_channel_indices(dataset, channels=None):
     """
     Get channel indices for input and output channels from dataset.
@@ -50,7 +52,7 @@ def get_channel_indices(dataset, channels=None):
     
     return {'input': filtered_in, 'output': filtered_out}
 
-def load_land_sea_mask(path='/iopsstor/scratch/cscs/davidle/HiRAD-Gen/lsm.npy'):
+def load_land_sea_mask(path=LAND_SEA_MASK_PATH):
     """Load and retrun a land-sea mask as xarray DataArray."""
     lsm_data = np.load(path).reshape(352, 544)
     return xr.DataArray(
