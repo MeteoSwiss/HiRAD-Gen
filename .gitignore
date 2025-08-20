@@ -197,3 +197,7 @@ interpolate_basic.log
 interpolated.torch
 mlruns/
 .secrets.env
+out
+core
+*.png
+*.nc

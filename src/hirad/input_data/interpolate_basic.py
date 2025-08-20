@@ -47,6 +47,16 @@ def _read_input(era_config_file: str, cosmo_config_file: str, bound_to_cosmo_are
     
     return (era, cosmo)
 
+
+def regrid(era_for_time: np.ndarray, input_grid: np.ndarray, output_grid: np.ndarray):
+    # shape (channel, ensemble, grid)
+    interpolated_data = np.empty([era_for_time.shape[0], 1, output_grid.shape[0]])
+    for j in range(era_for_time.shape[0]):
+        values = np.array(era_for_time[j,0,:]) # get era grid values on the given date-time and channel
+        regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
+        interpolated_data[j,0,:] = regrid
+    return interpolated_data
+
 def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
     logging.info('interpolating time point ' + _format_date(cosmo.dates[i]))
     interpolated_data = np.empty([era.shape[1], 1, cosmo.shape[3]])
@@ -66,11 +76,11 @@ def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarr
         logging.info(f'plotting {datestr} to {outfile_plots_path}')
         for j,var in enumerate(era.variables):
         # plot era original
-            _plot_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
+            _plot_and_save_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
 
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
+            _plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
         for j,var in enumerate(cosmo.variables):
-            _plot_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
+            _plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
 
 
@@ -147,16 +157,23 @@ def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
     indices = np.where(box_lon*box_lat)
     return indices
 
-def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None):
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=False)
+    plt.colorbar(p, orientation="horizontal")
+
+def _plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
     """Plot observed or interpolated data in a scatter plot."""
     # TODO: Refactor this somehow, it's not really generalizing well across variables.
     fig = plt.figure()
     fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
     logging.info(f'plotting values to {filename}')
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label="K", orientation="horizontal")
+    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax)
+    #p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    #ax.coastlines()
+    #ax.gridlines(draw_labels=True)
+    #plt.colorbar(p, orientation="horizontal")
     plt.savefig(filename)
     plt.close('all')
 
@@ -179,18 +196,14 @@ def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: 
         A tuple of ERA and COSMO 2m temperature data, in anemoi Dataset format, restricted to COSMO's date ranges
         (optionally the COSMO area as well).
     """
-    if not os.path.isdir(outfile_data_path):
-        raise ValueError(f'Output path {outfile_data_path} does not exist.') 
+    os.makedirs(outfile_data_path, exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "info"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "era"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "cosmo"), exist_ok=True)
+    os.makedirs(os.path.join(outfile_data_path, "era-interpolated"), exist_ok=True)
 
-    # Check for existence of subdirectories. TODO: Create them if missing.
-    if not (os.path.isdir(os.path.join(outfile_data_path, "info")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "era")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "cosmo")) and 
-            os.path.isdir(os.path.join(outfile_data_path, "era-interpolated"))):
-        raise ValueError('Not all output subdirectories exist.') 
-    
-    if outfile_plots_path and not os.path.isdir(outfile_plots_path):
-        raise ValueError('plots directory does not exist.') 
+    if outfile_plots_path:  
+        os.makedirs(outfile_plots_path, exist_ok=True)
 
     logging.info(f'reading input according to configs {infile_era} and {infile_cosmo}')
     era, cosmo = _read_input(infile_era, infile_cosmo, bound_to_cosmo_area=True)
@@ -209,6 +222,17 @@ def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: 
     # generate interpolated data
     _interpolate_basic(era, cosmo, outfile_data_path, threaded=threaded, outfile_plots_path=outfile_plots_path, plot_indices=plot_indices)
 
+def plot_tp(path_6h: str, path_1h: str):
+    fig, axs = plt.subplots(2, 3, subplot_kw={"projection": ccrs.PlateCarree()})
+
+    
+    logging.info(f'plotting values to {filename}')
+    p = ax.scatter(x=longitudes, y=latitudes, c=values)
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    plt.colorbar(p, label="absolute error", orientation="horizontal")
+    plt.savefig(filename)
+    plt.close('all')
 
 def main():
     # TODO: Do better arg parsing so it's not as easy to reverse era and cosmo configs.
@@ -220,11 +244,11 @@ def main():
 
 
     logging.basicConfig(
-        #filename='interpolate_basic.log',
+        filename=os.path.join(output_directory, 'interpolate_basic.log'),
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
-    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=True, outfile_plots_path=os.path.join(output_directory, "plots/"))
+    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=os.path.join(output_directory, "plots/"))
 
 if __name__ == "__main__":
     main()
