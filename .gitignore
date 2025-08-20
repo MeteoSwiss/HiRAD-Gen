@@ -194,3 +194,7 @@ temp.zarr.sync*
 src/hirad/eval/__pycache__/*
 interpolate_basic.log
 interpolated.torch
+out
+core
+*.png
+*.nc
