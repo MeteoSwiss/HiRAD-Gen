@@ -2,6 +2,8 @@ import logging
 
 import numpy as np
 import torch
+import xskillscore
+import scoringrules as sr
 
 from scipy.signal import periodogram
 
@@ -55,3 +57,7 @@ def average_power_spectrum(data: np.ndarray, d=2.0):  # d=2km by default
         logging.info(f'power spectra shape={power_spectra.shape}')
 
     return freqs, power_spectra
+
+def crps():
+    # Time, variable, ensemble, x, y
+    xskillscore.crps_ensemble()
