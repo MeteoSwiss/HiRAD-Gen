@@ -1,4 +1,4 @@
-num_ensembles: 8
+num_ensembles: 16
   # Number of ensembles to generate per input
 seed_batch_size: 4
   # Size of the batched inference
@@ -37,9 +37,8 @@ perf:
 io:
   # res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/diffusion_full/checkpoints_diffusion
   res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era5_cosmo/checkpoints_diffusion
-  # res_ckpt_path: null
+  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era5_cosmo_cmp_fix_2/checkpoints_diffusion
     # Checkpoint filename for the diffusion model  
   reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
-  # reg_ckpt_path: /iopsstor/scratch/cscs/pstamenk/outputs/regression_test/checkpoints_regression
     # Checkpoint filename for the mean predictor model
-  output_path: ./outputs/evaluation
+  output_path: .

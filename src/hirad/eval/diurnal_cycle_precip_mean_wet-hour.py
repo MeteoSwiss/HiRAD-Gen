@@ -65,8 +65,8 @@ def main(cfg: DictConfig):
     land_mask = load_land_sea_mask()
 
     # Prepare lists to collect DataArrays
-    target_precip, baseline_precip, pred_precip = [], [], []
-    target_wet, baseline_wet, pred_wet = [], [], []
+    target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
+    target_wet, baseline_wet, pred_wet, mean_pred_wet = [], [], [], []
 
     # Collect data
     for idx, ts in enumerate(times, 1):
@@ -74,26 +74,38 @@ def main(cfg: DictConfig):
         target = torch.load(out_root/ts/f"{ts}-target", weights_only=False)[tp_out] * CONV_FACTOR
         baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * CONV_FACTOR / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
         preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * CONV_FACTOR
+        try:
+            mean_pred = torch.load(out_root/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * CONV_FACTOR
+        except:
+            mean_pred = None
 
         # DataArrays for spatial means at each timestep
         da_target = xr.DataArray(target, dims=("lat","lon"), coords=land_mask.coords)
         da_baseline = xr.DataArray(baseline, dims=("lat","lon"), coords=land_mask.coords)
         da_preds = xr.DataArray(preds, dims=("member","lat","lon"), coords={"member": np.arange(preds.shape[0]), **land_mask.coords})
+        if mean_pred is not None:
+            da_mean_pred = xr.DataArray(mean_pred, dims=("lat","lon"), coords=land_mask.coords)
 
         # Apply land mask after conversion to xarray
         da_target = da_target * land_mask
         da_baseline = da_baseline * land_mask
         da_preds = da_preds * land_mask
+        if mean_pred is not None:
+            da_mean_pred = da_mean_pred * land_mask
 
         # Spatial mean
         target_precip.append(da_target.mean(dim=("lat","lon")).assign_coords(time=dt))
         baseline_precip.append(da_baseline.mean(dim=("lat","lon")).assign_coords(time=dt))
         pred_precip.append(da_preds.mean(dim=("lat","lon")).assign_coords(time=dt))
+        if mean_pred is not None:
+            mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
         # Wet-hour fraction, i.e., freq(precip) > WET_THRESHOLD
         target_wet.append(((da_target / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
         baseline_wet.append(((da_baseline / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
         pred_wet.append(((da_preds / 24> WET_THRESHOLD).mean(dim=("lat","lon")).assign_coords(time=dt)))
+        if mean_pred is not None:
+            mean_pred_wet.append(((da_mean_pred / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
 
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -102,26 +114,30 @@ def main(cfg: DictConfig):
     amount_target_mean, _ = concat_and_group_diurnal(target_precip)
     amount_baseline_mean, _ = concat_and_group_diurnal(baseline_precip)
     amount_pred_mean, amount_pred_std = concat_and_group_diurnal(pred_precip, is_member=True)
+    if mean_pred_precip:
+        amount_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_precip)
 
     wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to obtain percentages
     wet_baseline_mean, _ = concat_and_group_diurnal(baseline_wet, scale=100.0)
     wet_pred_mean, wet_pred_std = concat_and_group_diurnal(pred_wet, is_member=True, scale=100.0)
+    if mean_pred_wet:
+        wet_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wet, scale=100.0)
 
     # Generate plots
     save_plot(
         amount_target_mean.hour,
-        [amount_target_mean, amount_baseline_mean, amount_pred_mean],
-        [None, None, amount_pred_std],
-        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
+        [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
+        [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
+        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
         'Precipitation (mm/day)',
         'Diurnal Cycle of Precip Amount',
         out_root / 'diurnal_cycle_precip_amount.png'
     )
     save_plot(
         wet_target_mean.hour,
-        [wet_target_mean, wet_baseline_mean, wet_pred_mean],
-        [None, None, wet_pred_std],
-        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
+        [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if mean_pred_wet else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
+        [None, None, wet_pred_std, None] if mean_pred_wet else [None, None, wet_pred_std],
+        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wet else ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
         'Wet-Hour Fraction [%]',
         'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
         out_root / 'diurnal_cycle_precip_wethours.png'

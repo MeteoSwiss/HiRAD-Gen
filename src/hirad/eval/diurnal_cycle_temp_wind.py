@@ -57,8 +57,8 @@ def main(cfg: DictConfig):
     land_mask = load_land_sea_mask()
 
     # Prepare lists to collect DataArrays
-    target_temp, baseline_temp, pred_temp = [], [], []
-    target_wind, baseline_wind, pred_wind = [], [], []
+    target_temp, baseline_temp, pred_temp, mean_pred_temp = [], [], [], []
+    target_wind, baseline_wind, pred_wind, mean_pred_wind = [], [], [], []
 
     def mean_over_land(data, dims, coords, time_coord):
         da = xr.DataArray(data, dims=dims, coords=coords) * land_mask
@@ -72,6 +72,10 @@ def main(cfg: DictConfig):
         target = load(ts, f"{ts}-target")
         baseline = load(ts, f"{ts}-baseline")
         predictions = load(ts, f"{ts}-predictions")
+        try:
+            regression_pred = load(ts, f"{ts}-regression-prediction")
+        except:
+            regression_pred = None
 
         # Process temperature (convert to Celsius)
         target_temp.append(mean_over_land(
@@ -81,6 +85,10 @@ def main(cfg: DictConfig):
         pred_temp.append(mean_over_land(
             predictions[:, t2m_out, :, :] - 273.15, ("member","lat","lon"), 
             {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
+        if regression_pred is not None:
+            mean_pred_temp.append(mean_over_land(
+                regression_pred[t2m_out] - 273.15, ("lat","lon"), land_mask.coords, dt))
+
 
         # Process wind speed
         target_wind.append(mean_over_land(
@@ -90,6 +98,9 @@ def main(cfg: DictConfig):
         pred_wind.append(mean_over_land(
             np.hypot(predictions[:, u_out, :, :], predictions[:, v_out, :, :]),
             ("member","lat","lon"), {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
+        if regression_pred is not None:
+            mean_pred_wind.append(mean_over_land(
+                np.hypot(regression_pred[u_out], regression_pred[v_out]), ("lat","lon"), land_mask.coords, dt))
 
         if idx % LOG_INTERVAL == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -98,10 +109,14 @@ def main(cfg: DictConfig):
     temp_target_mean, _ = concat_and_group_diurnal(target_temp)
     temp_baseline_mean, _ = concat_and_group_diurnal(baseline_temp)
     temp_pred_mean, temp_pred_std = concat_and_group_diurnal(pred_temp, is_member=True)
+    if mean_pred_temp:
+        temp_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_temp)
 
     wind_target_mean, _ = concat_and_group_diurnal(target_wind)
     wind_baseline_mean, _ = concat_and_group_diurnal(baseline_wind)
     wind_pred_mean, wind_pred_std = concat_and_group_diurnal(pred_wind, is_member=True)
+    if mean_pred_wind:
+        wind_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wind)
 
     def save_plot(hour, means, stds, labels, ylabel, title, out_path):
         hrs = np.concatenate([hour.values, [24]])
@@ -124,22 +139,30 @@ def main(cfg: DictConfig):
         plt.savefig(out_path)
         plt.close()
 
+    data = [temp_target_mean, temp_baseline_mean, temp_pred_mean, temp_mean_pred_mean] if mean_pred_temp else [temp_target_mean, temp_baseline_mean, temp_pred_mean]
+    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_temp else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)']
+    stds = [None, None, temp_pred_std, None] if mean_pred_temp else [None, None, temp_pred_std]
+
     # Generate plots
     save_plot(
         temp_target_mean.hour,
-        [temp_target_mean, temp_baseline_mean, temp_pred_mean],
-        [None, None, temp_pred_std],
-        ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)'],
+        data,
+        stds,
+        labels,
         '2m Temperature [°C]',
         'Diurnal Cycle of 2m Temperature',
         out_root / 'diurnal_cycle_2t.png'
     )
 
+    data = [wind_target_mean, wind_baseline_mean, wind_pred_mean, wind_mean_pred_mean] if mean_pred_wind else [wind_target_mean, wind_baseline_mean, wind_pred_mean]
+    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wind else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)']
+    stds = [None, None, wind_pred_std, None] if mean_pred_wind else [None, None, wind_pred_std]
+
     save_plot(
         wind_target_mean.hour,
-        [wind_target_mean, wind_baseline_mean, wind_pred_mean],
-        [None, None, wind_pred_std],
-        ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)'],
+        data,
+        stds,
+        labels,
         'Windspeed [m/s]',
         'Diurnal Cycle of Windspeed',
         out_root / 'diurnal_cycle_windspeed.png'

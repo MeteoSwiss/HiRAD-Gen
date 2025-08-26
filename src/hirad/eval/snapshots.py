@@ -139,6 +139,10 @@ def main(cfg: DictConfig) -> None:
         prediction = files.load(curr_time, f'{curr_time}-predictions')
         baseline = files.load(curr_time, f'{curr_time}-baseline')
         target = files.load(curr_time, f'{curr_time}-target')
+        try:
+            mean_pred = files.load(curr_time, f'{curr_time}-regression-prediction')
+        except:
+            mean_pred = None
         
         input_channels = dataset.input_channels()
         output_channels = dataset.output_channels()
@@ -150,7 +154,8 @@ def main(cfg: DictConfig) -> None:
             vmin, vmax = calculate_bounds(
                 target[idx,:,:],
                 prediction[:,idx,:,:],
-                baseline[input_channel_idx,:,:]
+                baseline[input_channel_idx,:,:],
+                mean_pred[idx,:,:] if mean_pred is not None else None
             )
             metadata = ChannelMeta.get(channel, vmin=vmin, vmax=vmax)
 
@@ -174,17 +179,31 @@ def main(cfg: DictConfig) -> None:
                         "prediction", prediction[0, idx, :, :], metadata, files, channel, curr_time,
                         plot_func=plot_map_precipitation, title=plot_title
                     )
+                if mean_pred is not None:
+                    save_field(
+                        "mean-prediction", mean_pred[idx, :, :], metadata, files, channel, curr_time,
+                        plot_func=plot_map_precipitation, title=plot_title
+                    )
                 continue
 
-            # Plot target and baseline
+            # Plot target and baseline and regression prediction if available
             save_field("target", target[idx, :, :], metadata, files, channel, curr_time, title=plot_title)
             save_field("baseline", baseline[input_channel_idx, :, :], metadata, files, channel, curr_time, title=plot_title)
+            if mean_pred is not None:
+                save_field("mean-prediction", mean_pred[idx, :, :], metadata, files, channel, curr_time, title=plot_title)
 
             # Baseline MAE and ME
             _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[idx, :, :])
             baseline_me = (baseline[input_channel_idx, :, :] - target[idx, :, :])
             save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title)
             save_field("baseline", baseline_me, metadata, files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title)
+
+            # Regression prediction MAE and ME
+            if mean_pred is not None:
+                _, mean_mae = compute_mae(mean_pred[idx, :, :], target[idx, :, :])
+                mean_me = (mean_pred[idx, :, :] - target[idx, :, :])
+                save_field("mean-prediction", mean_mae.reshape(mean_pred[idx, :, :].shape), metadata, files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title)
+                save_field("mean-prediction", mean_me, metadata, files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title)
 
             # Ensemble predictions
             for member_idx in range(prediction.shape[0]):
@@ -203,13 +222,16 @@ def main(cfg: DictConfig) -> None:
             input_idx_10u = output_to_input_channel_map[idx_10u]
             input_idx_10v = output_to_input_channel_map[idx_10v]
 
-            # Compute windspeed and direction for target, baseline, prediction
+            # Compute windspeed and direction for target, baseline, prediction and mean prediction
             target_wind_speed = np.hypot(target[idx_10u, :, :], target[idx_10v, :, :])
             target_wind_dir = wind_direction(target[idx_10u, :, :], target[idx_10v, :, :])
             baseline_wind_speed = np.hypot(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
             baseline_wind_dir = wind_direction(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
             prediction_wind_speed = np.hypot(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
             prediction_wind_dir = wind_direction(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
+            if mean_pred is not None:
+                mean_wind_speed = np.hypot(mean_pred[idx_10u, :, :], mean_pred[idx_10v, :, :])
+                mean_wind_dir = wind_direction(mean_pred[idx_10u, :, :], mean_pred[idx_10v, :, :])
 
             plot_title_speed = f"{format_time_str(curr_time)}: FF10m"
             plot_title_dir = f"{format_time_str(curr_time)}: DD10m"
@@ -237,6 +259,13 @@ def main(cfg: DictConfig) -> None:
                     custom_path=files.wind_file("FF10m", curr_time, "FF10m-prediction", member_idx),
                     plot_func=plot_map, title=plot_title_speed
                 )
+            if mean_pred is not None:
+                save_field(
+                    "FF10m-mean-prediction", mean_wind_speed, wind_meta, files, None, curr_time,
+                    cmap="viridis", vmin=0, vmax=10, extend='max',
+                    custom_path=files.wind_file("FF10m", curr_time, "FF10m-mean-prediction"),
+                    plot_func=plot_map, title=plot_title_speed
+                )
 
             # Save wind direction plots
             save_field(
@@ -256,6 +285,13 @@ def main(cfg: DictConfig) -> None:
                     "DD10m-prediction", prediction_wind_dir[member_idx], dir_meta, files, None, curr_time,
                     member=member_idx, cmap="twilight", vmin=0, vmax=360,
                     custom_path=files.wind_file("DD10m", curr_time, "DD10m-prediction", member_idx),
+                    plot_func=plot_map, title=plot_title_dir
+                )
+            if mean_pred is not None:
+                save_field(
+                    "DD10m-mean-prediction", mean_wind_dir, dir_meta, files, None, curr_time,
+                    cmap="twilight", vmin=0, vmax=360,
+                    custom_path=files.wind_file("DD10m", curr_time, "DD10m-mean-prediction"),
                     plot_func=plot_map, title=plot_title_dir
                 )
 
