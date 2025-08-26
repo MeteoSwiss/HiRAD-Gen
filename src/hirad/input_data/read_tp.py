@@ -29,14 +29,36 @@ ANEMOI_6H_FILENAME = "/scratch/mch/apennino/data/aifs-ea-an-oper-0001-mars-n320-
 COSMO_6H_FILENAME = "/scratch/mch/fzanetta/data/anemoi/datasets/mch-co2-an-archive-0p02-2015-2020-6h-v3-pl13.zarr"
 COSMO_1H_FILENAME = "/scratch/mch/fzanetta/data/anemoi/datasets/mch-co2-an-archive-0p02-2015-2020-1h-v3-pl13.zarr"
 COSMO_CONFIG_FILE="src/input_data/cosmo.yaml"
-#CDF_FILENAME = "/store_new/mch/msopr/hirad-gen/copernicus-datasets/tp-janfeb2020.nc"
-CDF_FILENAME = "/store_new/mch/msopr/hirad-gen/copernicus-datasets/surface-janfeb2020.zip"
+CDF_FILENAME = "/store_new/mch/msopr/hirad-gen/copernicus-datasets/tp-janfeb2020.nc"
 GRIB_FILENAME = "/store_new/mch/msopr/hirad-gen/copernicus-datasets/surface-janfeb2020.grib"
 
 
 LAT = np.arange(-4.42, 3.36 + 0.02, 0.02)
 LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
 RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
+
+def extract_grib_values(grib_data):
+    grib_lat = grib_data['latitude'][:]
+    grib_lon = grib_data['longitude'][:]
+    grib_t2m = grib_data['t2m'][:]
+
+def extract_lat_lon(data):
+    lat = data['latitude'][:]
+    lon = data['longitude'][:]
+    output_lat = np.zeros(len(lat)* len(lon))
+    output_lon = np.zeros(len(lat) * len(lon))
+    for i in range(len(lat)):
+        if i % 10 == 0:
+            print(i)
+        for j in range(len(lon)):
+           grid_index = i * len(lon) + j
+           output_lat[grid_index] = lat[i]
+           output_lon[grid_index] = lon[j]
+    return output_lat, output_lon
+
+def extract_values(data, variable):
+    values = data[variable][:]
+    return np.reshape(values, (values.shape[0], values.shape[1]*values.shape[2]))
 
 def extract_netcdf_values(netcdf_data):
     netcdf_lat = netcdf_data['latitude'][:]
@@ -77,10 +99,12 @@ logging.info('loading data complete')
 output_grid= np.column_stack((cosmo1.longitudes, cosmo1.latitudes))
 
 logging.info('processing netcdf data')
-netcdf_values, netcdf_latitudes, netcdf_longitudes = extract_netcdf_values(netcdf_data=netcdf_data)
+netcdf_latitudes, netcdf_longitudes = extract_lat_lon(netcdf_data)
+netcdf_values = extract_values(netcdf_data, 'tp')
+#netcdf_values, netcdf_latitudes, netcdf_longitudes = extract_netcdf_values(netcdf_data=netcdf_data)
 netcdf_grid=np.column_stack((netcdf_longitudes, netcdf_latitudes))
 
-make_plots = False
+make_plots = True
 
 prev_netcdf_regrid = []
 
@@ -89,7 +113,8 @@ era_norm_error = np.zeros(cosmo1.dates.shape)
 netcdf_early_error = np.zeros(cosmo1.dates.shape)
 netcdf_late_error = np.zeros(cosmo1.dates.shape)
 
-for t in range(len(cosmo1.dates)):
+for t in range(4):
+#for t in range(len(cosmo1.dates)):
     date = cosmo1.dates[t]
     era_date = era1.dates[t]
     if date != era_date:
@@ -110,7 +135,7 @@ for t in range(len(cosmo1.dates)):
     netcdf_vals = netcdf_values[t,:].reshape((1,1,netcdf_values.shape[1]))
     netcdf_regrid=interpolate_basic.regrid(netcdf_vals, netcdf_grid, output_grid)
     if make_plots:
-        plot_map_precipitation(reshape_to_cosmo(netcdf_regrid), f'plots/tp/{date}-netcdf')
+        plot_map_precipitation(reshape_to_cosmo(netcdf_regrid), f'plots/tp/{date}-netcdf-refactor')
 
     # plot era
     era_grid = np.column_stack((era1.longitudes, era1.latitudes))
