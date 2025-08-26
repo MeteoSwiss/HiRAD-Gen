@@ -17,7 +17,7 @@ LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
 RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
 
 # Constants for data processing
-CONV_FACTOR_HOURLY = 100  # Convert precip of ERA5 from meters to mm/h
+CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
 CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day
 WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
 LOG_INTERVAL = 24    # Log progress every N timesteps
@@ -126,7 +126,7 @@ def plot_map(values: np.array,
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=100.0):
+def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=1000.0):
     """Plot precipitation data with specific colormap and thresholds."""
     # Scale and mask values below threshold
     values = rfac * values # m/h --> mm/h
