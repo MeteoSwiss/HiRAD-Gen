@@ -4,13 +4,75 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from pathlib import Path
+from datetime import datetime
 
 
 # COSMO‑2 GRID: TODO: Add to dataset config
 LAT = np.arange(-4.42, 3.36 + 0.02, 0.02)
 LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
 RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
+
+# Constants for data processing
+CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
+CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day
+WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
+LOG_INTERVAL = 24    # Log progress every N timesteps
+
+LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
+
+def get_channel_indices(dataset, channels=None):
+    """
+    Get channel indices for input and output channels from dataset.
+    
+    Args:
+        dataset: Dataset object with input_channels() and output_channels() methods
+        channels: Optional list of channel names to look up. If None, returns all channel mappings.
+        
+    Returns:
+        dict: Dictionary with 'input' and 'output' keys, each containing channel name -> index mapping
+        
+    Example:
+        indices = get_channel_indices(dataset, ['tp', '2t', '10u', '10v'])
+        tp_out = indices['output']['tp']
+        tp_in = indices['input'].get('tp', tp_out)  # Fallback to output index if not in input
+    """
+    out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
+    in_ch = {c.name: i for i, c in enumerate(dataset.input_channels())}
+    
+    if channels is None:
+        return {'input': in_ch, 'output': out_ch}
+    
+    # Filter to requested channels only
+    filtered_out = {ch: out_ch[ch] for ch in channels if ch in out_ch}
+    filtered_in = {ch: in_ch[ch] for ch in channels if ch in in_ch}
+    
+    return {'input': filtered_in, 'output': filtered_out}
+
+def load_land_sea_mask(path=LAND_SEA_MASK_PATH):
+    """Load and retrun a land-sea mask as xarray DataArray."""
+    lsm_data = np.load(path).reshape(352, 544)
+    return xr.DataArray(
+        np.where(lsm_data >= 0.5, 1.0, np.nan),
+        dims=['lat', 'lon'],
+        coords={"lat": np.arange(352), "lon": np.arange(544)}
+    )
+
+def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
+    """Helper to concatenate DataArrays and compute diurnal statistics."""
+    da = xr.concat(list_of_da, dim="time").groupby("time.hour")
+    if is_member:
+        timmean = da.mean(dim='time') * scale
+        mean = timmean.mean(dim='member')
+        std = timmean.std(dim='member')
+    else:
+        mean = da.mean(dim='time') * scale
+        std = None
+    return mean, std
+
 
 def plot_map(values: np.array,
              filename: str,
@@ -58,12 +120,13 @@ def plot_map(values: np.array,
     )
     if ticks is not None:
         cbar.set_ticks(ticks)
+        cbar.set_ticklabels([f'{tick:g}' for tick in ticks])
 
     plt.tight_layout()
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=100.0):
+def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=1000.0):
     """Plot precipitation data with specific colormap and thresholds."""
     # Scale and mask values below threshold
     values = rfac * values # m/h --> mm/h
@@ -74,7 +137,7 @@ def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=100.0
               'forestgreen', 'limegreen', 'lawngreen',
               'yellow', 'gold', 'darkorange', 'red',
               'darkviolet', 'violet', 'thistle']
-    bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 50, 70, 100, 150, 200]
+    bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
 
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(bounds, ncolors=len(colors), clip=False)
@@ -108,7 +171,6 @@ def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.
 
 def plot_scores_vs_t(scores: dict[str,np.ndarray], times: np.array, filename: str, xlabel='', ylabel='', title=''):
     
-    fig = plt.figure()
     ax = plt.subplot()
     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w'] # TODO, add more
     i=0
@@ -131,7 +193,6 @@ def plot_scores_vs_t(scores: dict[str,np.ndarray], times: np.array, filename: st
     plt.close('all')
 
 def plot_power_spectra(freqs: dict, spec: dict, channel_name, filename):
-    fig = plt.figure()
     for k in freqs.keys():
         plt.loglog(freqs[k], spec[k], label=k)
     plt.title(channel_name)

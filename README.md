@@ -8,7 +8,7 @@ HiRAD-Gen is short for high-resolution atmospheric downscaling using generative 
 [Inference - clariden/santis](#running-inference-on-alps)  
 [Installation - uenv/venv - deprecated](#installation-alps-uenvvenv---deprecated)
 
-## Setup clariden/santis
+## Setup clariden/santis container environment
 Container environment setup needed to run training and inference experiments on clariden/santis is contained in this repository under `ci/edf/modulus_env.toml`. Image squash is on clariden/alps under `/capstor/scratch/cscs/pstamenk/hirad.sqsh`. All the jobs can be run using this environment without additional installations and setup.  
 
 ## Training
@@ -24,6 +24,12 @@ Inside this script set the following:
 ```
 ```bash
 #SBATCH -A your_compute_group
+```
+```bash
+srun bash -c "
+    . ./{your_env_name}/bin/activate
+    python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
+"
 ```
 
 2. Set up the following config files in `src/hirad/conf`:
@@ -87,6 +93,12 @@ Inside this script set the following:
 ```
 ```bash
 #SBATCH -A your_compute_group
+```
+```bash
+srun bash -c "
+    . ./{your_env_name}/bin/activate
+    python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
+"
 ```
 
 2. Set up the following config files in `src/hirad/conf`:

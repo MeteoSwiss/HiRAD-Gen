@@ -16,7 +16,7 @@
 #SBATCH --output=./logs/regression_full_run.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a122
+#SBATCH -A a161
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM

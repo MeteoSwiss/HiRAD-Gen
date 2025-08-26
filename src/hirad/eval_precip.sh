@@ -1,19 +1,19 @@
 #!/bin/bash
 
-#SBATCH --job-name="plot"
+#SBATCH --job-name="eval_precip"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:10:00
+#SBATCH --time=05:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/plot_maps.log
+#SBATCH --output=./logs/plots_precip.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
@@ -42,8 +42,20 @@ export OMP_NUM_THREADS=72
 # echo "Local processes: $LOCAL_PROCS"
 # echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
-# python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
+
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
-    python src/hirad/eval/plot_maps.py --config-name=generate_era_cosmo.yaml
+
+    # Diurnal cycle
+    python src/hirad/eval/diurnal_cycle_precip_mean_wet-hour.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/diurnal_cycle_precip_p99.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/diurnal_cycle_temp_wind.py --config-name=generate_era_cosmo.yaml # TODO: Transfer to relevant script.
+
+    # Histograms
+    python src/hirad/eval/hist.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/probability_of_exceedance.py --config-name=generate_era_cosmo.yaml
+
+    # Maps
+    python src/hirad/eval/map_precip_stats.py --config-name=generate_era_cosmo.yaml
+    # python src/hirad/eval/snapshots.py --config-name=generate_era_cosmo.yaml
 "
