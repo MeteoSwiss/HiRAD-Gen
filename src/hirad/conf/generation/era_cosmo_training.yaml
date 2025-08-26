@@ -11,8 +11,8 @@ num_ensembles: 16
   # artifact.
 times_range: null
 times:
-  - 20200926-1800
-  - 20200927-0000
+  - 20200721-1900
+  - 20200722-1900
 
 perf:
   num_writer_workers: 10

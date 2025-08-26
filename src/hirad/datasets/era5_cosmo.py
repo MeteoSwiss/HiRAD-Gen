@@ -7,7 +7,7 @@ import yaml
 import torch.nn.functional as F
 
 class ERA5_COSMO(DownscalingDataset):
-    def __init__(self, dataset_path: str):
+    def __init__(self, dataset_path: str, input_channel_names: List[str] = [], output_channel_names: List[str] = []):
         super().__init__()
 
         #TODO switch hanbdling paths to Path rather than pure strings
@@ -22,51 +22,61 @@ class ERA5_COSMO(DownscalingDataset):
         # Load cosmo info and channel names
         with open(os.path.join(self._info_path,'cosmo.yaml'), 'r') as file:
             self._cosmo_info = yaml.safe_load(file)
-            self._cosmo_channels = [ChannelMetadata(name) for name in self._cosmo_info['select']]
+            if output_channel_names:
+                self._cosmo_indeces = [self._cosmo_info['select'].index(name) for name in output_channel_names]
+            else:
+                self._cosmo_indeces = list(range(len(self._cosmo_info['select'])))
+                output_channel_names = self._cosmo_info['select']
+            self._cosmo_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
+                                        else ChannelMetadata(name.split('_')[0],name.split('_')[1])
+                                        for name in self._cosmo_info['select'] if name in output_channel_names]
 
         # Load era5 info and channel names
         with open(os.path.join(self._info_path,'era.yaml'), 'r') as file:
             self._era_info = yaml.safe_load(file)
+            if input_channel_names:
+                self._era_indeces = [self._era_info['select'].index(name) for name in input_channel_names]
+            else:
+                self._era_indeces = list(range(len(self._era_info['select'])))
+                input_channel_names = self._era_info['select']
             self._era_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
-                                 else ChannelMetadata(name.split('_')[0],name.split('_')[1])
-                                   for name in self._era_info['select']]
+                                    else ChannelMetadata(name.split('_')[0],name.split('_')[1])
+                                    for name in self._era_info['select'] if name in input_channel_names]
         
         # Load stats for normalizing channels of input and output
 
         cosmo_stats = torch.load(os.path.join(self._info_path,'cosmo-stats'), weights_only=False)
-        self.output_mean = cosmo_stats['mean']
-        self.output_std = cosmo_stats['stdev']
+        self.output_mean = cosmo_stats['mean'][self._cosmo_indeces]
+        self.output_std = cosmo_stats['stdev'][self._cosmo_indeces]
 
         era_stats = torch.load(os.path.join(self._info_path,'era-stats'), weights_only=False)
-        self.input_mean = era_stats['mean']
-        self.input_std = era_stats['stdev']
-
+        self.input_mean = era_stats['mean'][self._era_indeces]
+        self.input_std = era_stats['stdev'][self._era_indeces]
     
     def __getitem__(self, idx):
         """Get cosmo and era5 interpolated to cosmo grid"""
-        # get era5 data point
+        # get data point
         # squeeze the ensemble dimesnsion
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
         # orig_shape = [350,542] #TODO currently padding to be divisible by 16
         orig_shape = self.image_shape()
-        era5_data = np.flip(torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)\
+        era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)[self._era_indeces]
+        era5_data = np.flip(era5_data \
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
         era5_data = self.normalize_input(era5_data)
-        # get cosmo data point
-        cosmo_data = np.flip(torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)\
+
+        cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)[self._cosmo_indeces]
+        cosmo_data = np.flip(cosmo_data\
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
         cosmo_data = self.normalize_output(cosmo_data)
-        # return samples
+
         return torch.tensor(cosmo_data),\
                 torch.tensor(era5_data),
-        # return F.pad(torch.tensor(cosmo_data), pad=(1,1,1,1), mode='constant', value=0), \
-        #         F.pad(torch.tensor(era5_data), pad=(1,1,1,1), mode='constant', value=0), \
-        #         0
 
     def __len__(self):
         return len(self._file_list)

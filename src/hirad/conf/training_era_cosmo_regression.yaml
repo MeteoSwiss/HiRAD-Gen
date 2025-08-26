@@ -15,13 +15,13 @@ defaults:
   # Model
   - model/era_cosmo_regression
 
-  - model_size/mini
+  - model_size/normal
 
   # Training
   - training/era_cosmo_regression
 
   # Inference visualization
-  - generation/era_cosmo_training
+  # - generation/era_cosmo_training
 
   # Logging
   - logging/era_cosmo_regression

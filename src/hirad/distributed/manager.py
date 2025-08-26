@@ -529,7 +529,7 @@ class DistributedManager(object):
         DistributedManager._shared_state["_is_initialized"] = True
         manager = DistributedManager()
 
-        manager._distributed = torch.distributed.is_available()
+        manager._distributed = torch.distributed.is_available() and world_size > 1
         if manager._distributed:
             # Update rank and world_size if using distributed
             manager._rank = rank
@@ -546,23 +546,23 @@ class DistributedManager(object):
         #TODO device_id makes the init hang, couldn't figure out why
         if manager._distributed:
             # Setup distributed process group
-            # try:
-            dist.init_process_group(
-                backend,
-                rank=manager.rank,
-                world_size=manager.world_size,
-                device_id=manager.device, 
-            )
+            try:
+                dist.init_process_group(
+                    backend,
+                    rank=manager.rank,
+                    world_size=manager.world_size,
+                    device_id=manager.device, 
+                )
             #           rank=manager.rank,
             #           world_size=manager.world_size,
             #           device_id=manager.device,
-            # except TypeError:
-            #     # device_id only introduced in PyTorch 2.3
-            #     dist.init_process_group(
-            #         backend,
-            #         rank=manager.rank,
-            #         world_size=manager.world_size,
-            #     )
+            except TypeError:
+                # device_id only introduced in PyTorch 2.3
+                dist.init_process_group(
+                    backend,
+                    rank=manager.rank,
+                    world_size=manager.world_size,
+                )
 
         if torch.cuda.is_available():
             # Set device for this process and empty cache to optimize memory usage

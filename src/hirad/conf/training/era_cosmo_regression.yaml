@@ -1,6 +1,6 @@
 # Hyperparameters
 hp:
-    training_duration: 10000
+    training_duration: 1000000
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size -- based 8 per GPU -- 2 nodes is 2x8x4 -- see sbatch vars for how many gpus. diffusion need to point to the rgression.
@@ -34,12 +34,12 @@ perf:
 io:
     print_progress_freq: 500
     # How often to print progress
-    save_checkpoint_freq: 10000
+    save_checkpoint_freq: 100000
     # How often to save the checkpoints, measured in number of processed samples
-    visualization_freq: 10000
+    visualization_freq: 50000
     # how often to visualize network output
-    validation_freq: 2000
+    validation_freq: 20000
     # how often to record the validation loss, measured in number of processed samples
-    validation_steps: 2
+    validation_steps: 30
     # how many loss evaluations are used to compute the validation loss per checkpoint
     checkpoint_dir: .

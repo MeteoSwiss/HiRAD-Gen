@@ -90,7 +90,6 @@ def main(cfg: DictConfig) -> None:
             device=dist.device
         )
         
-        #TODO fix to use channels_last which is optimal for H100
         net_res = net_res.eval().to(device).to(memory_format=torch.channels_last)
         if cfg.generation.perf.force_fp16:
             net_res.use_fp16 = True
@@ -172,10 +171,6 @@ def main(cfg: DictConfig) -> None:
     logger0.info(f"Generating images, saving results to {output_path}...")
     batch_size = 1
     warmup_steps = min(len(times) - 1, 2)
-    # Generates model predictions from the input data using the specified
-    # `generate_fn`, and save the predictions to the provided NetCDF file. It iterates
-    # through the dataset using a data loader, computes predictions, and saves them along
-    # with associated metadata.
 
     torch_cuda_profiler = (
         torch.cuda.profiler.profile()
