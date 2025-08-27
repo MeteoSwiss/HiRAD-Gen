@@ -60,14 +60,14 @@ def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title
         # Define line styles for percentiles
         percentile_styles = {99: '--', 99.9: ':', 99.99: '-.'}
         percentile_labels = {99: '99th all-hour percentiles', 99.9: '99.9th all-hour percentiles', 99.99: '99.99th all-hour percentiles'}
-        colors_perc = {'target': 'blue', 'baseline': 'orange', 'predictions': 'green'}
+        colors_perc = {'target': 'blue', 'baseline': 'orange', 'predictions': 'green', 'regression-prediction': 'red'}
         legend_added = set()
         
         # Plot all percentile lines
         for dataset_name, data in percentiles_data.items():
             color = colors_perc[dataset_name]
             
-            if dataset_name in ['target', 'baseline']:
+            if dataset_name in ['target', 'baseline', 'regression-prediction']:
                 # Single dataset
                 for percentile, value in data.items():
                     linestyle = percentile_styles[percentile]
@@ -135,24 +135,28 @@ def main(cfg: DictConfig):
     all_land_values = {}
     
     # -- Process target and baseline --
-    for mode in ['target', 'baseline']:
+    for mode in ['target', 'baseline', 'regression-prediction']:
         logger.info(f"Processing mode: {mode}")
         
         all_values = []
         
-        for i, ts in enumerate(times):
-            if i % LOG_INTERVAL == 0:
-                logger.info(f"Processing timestep {i+1}/{len(times)}")
-            
-            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode == 'target' else tp_in] * CONV_FACTOR_HOURLY * land_mask
-            
-            # Apply scaling factor for baseline
-            if mode == 'baseline':
-                data = data / 6.0
-            
-            land_values = data.values[~np.isnan(data.values)]
-            all_values.extend(land_values)
-        
+        try:
+            for i, ts in enumerate(times):
+                if i % LOG_INTERVAL == 0:
+                    logger.info(f"Processing timestep {i+1}/{len(times)}")
+                
+                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * CONV_FACTOR_HOURLY * land_mask
+                
+                # Apply scaling factor for baseline
+                if mode == 'baseline':
+                    data = data / 6.0
+                
+                land_values = data.values[~np.isnan(data.values)]
+                all_values.extend(land_values)
+        except:
+            logger.warning(f"{mode} data not found, skipping")
+            continue
+
         # Compute exceedance probabilities
         all_values = np.array(all_values)
         exceedance_probs = []
@@ -204,12 +208,13 @@ def main(cfg: DictConfig):
     percentiles = {99: 0.99, 99.9: 0.999, 99.99: 0.9999}
     
     # Target and baseline percentiles
-    for mode in ['target', 'baseline']:
-        data_array = xr.DataArray(all_land_values[mode])
-        percentiles_data[mode] = {
-            key: data_array.quantile(p).item() 
-            for key, p in percentiles.items()
-        }
+    for mode in ['target', 'baseline', 'regression-prediction']:
+        if mode in all_land_values:
+            data_array = xr.DataArray(all_land_values[mode])
+            percentiles_data[mode] = {
+                key: data_array.quantile(p).item() 
+                for key, p in percentiles.items()
+            }
     
     # Ensemble member percentiles
     percentiles_data['predictions'] = {}
@@ -221,8 +226,8 @@ def main(cfg: DictConfig):
         }
     
     # Create exceedance plots
-    labels = ['COSMO-2 Analysis', 'ERA5', 'CorrDiff Ensemble']
-    colors = ['blue', 'orange', 'green']
+    labels = ['COSMO-2 Analysis', 'ERA5', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data else ['COSMO-2 Analysis', 'ERA5', 'CorrDiff Ensemble']
+    colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in exceedance_data else ['blue', 'orange', 'green']
     
     fn = out_root / 'precipitation_exceedance_over_land.png'
     save_exceedance_plot(

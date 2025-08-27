@@ -210,20 +210,17 @@ def diffusion_step(
 def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
     
     os.makedirs(output_path, exist_ok=True)
-    
-    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    # prediction.shape = (num_channels, X, Y)
-    # prediction = np.flip(dataset.denormalize_output(image_pred[-1,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    # prediction_ensemble.shape = (num_ensembles, num_channels, X, Y)
+    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1)
     prediction_ensemble = np.flip(dataset.denormalize_output(image_pred.squeeze()),-2)
-    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)
     if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1)
+        torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
 
-
+@DeprecationWarning
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
 
     os.makedirs(output_path, exist_ok=True)
@@ -250,11 +247,11 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
         input_channel_idx = input_channels.index(channel)
 
         if channel.name=="tp":
-            target[idx,::] = _prepare_precipitation(target[idx,:,:])
-            prediction[:,idx,::] = _prepare_precipitation(prediction[:,idx,:,:])
-            baseline[input_channel_idx,:,:] = _prepare_precipitation(baseline[input_channel_idx,::])
+            target[idx,::] = transform_channel(target[idx,:,:])
+            prediction[:,idx,::] = transform_channel(prediction[:,idx,:,:])
+            baseline[input_channel_idx,:,:] = transform_channel(baseline[input_channel_idx,::])
             if mean_pred is not None:
-                mean_pred[idx,::] = _prepare_precipitation(mean_pred[idx,::])
+                mean_pred[idx,::] = transform_channel(mean_pred[idx,::])
         
         if mean_pred is not None:
             vmin, vmax = calculate_bounds(target[idx,:,:],
@@ -314,17 +311,23 @@ def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr,
             power['mean_prediction'] = mp_power
         plot_power_spectra(freqs, power, channel.name, os.path.join(output_path_channel, f'{time_step}-{channel.name}-spectra.jpg'))
 
-def _prepare_precipitation(precip_array):
-    precip_array = np.clip(precip_array, 0, None)
-    precip_array = np.where(precip_array == 0, 1e-6, precip_array)
+def transform_channel(channel_array, channel_name="tp"):
+    # precip_array = np.clip(precip_array, 0, None)
+    # precip_array = np.where(precip_array == 0, 1e-6, precip_array)
     # epsilon = 1e-2
     # precip_array = precip_array + epsilon
-    precip_array = np.log10(precip_array)
+    # precip_array = np.log10(precip_array)
     # log_min, log_max = precip_array.min(), precip_array.max()
     # precip_array = (precip_array-log_min)/(log_max-log_min)
-    return precip_array
+    if channel_name == "tp":
+        channel_array = np.clip(channel_array, 0, None)
+        channel_array = (np.power(channel_array,0.25)-1)/0.25
+    elif channel_name == "2t":
+        channel_array = channel_array - 273.15
+    # precip_array = np.sqrt(precip_array)
+    return channel_array
 
-
+@DeprecationWarning
 def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
 
     """Plot observed or interpolated data in a scatter plot."""
@@ -339,6 +342,26 @@ def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array
     plt.close('all')
 
 def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
-    vmin = min(*[np.min(array).item() for array in arrays])
-    vmax = max(*[np.max(array).item() for array in arrays])
+    """Calculate consistent bounds across all arrays"""
+    valid_arrays = [arr for arr in arrays if arr is not None]
+    if not valid_arrays:
+        return 0, 1
+    
+    # hanndle if there are masked arrays with invalid values (e.g. NaNs)
+    all_values = []
+    for arr in valid_arrays:
+        if hasattr(arr, 'compressed'):  # Masked array
+            compressed = arr.compressed()
+            if len(compressed) > 0:
+                all_values.extend(compressed)
+        elif hasattr(arr, 'flatten'):  # Regular numpy array
+            all_values.extend(arr.flatten())
+        else:
+            all_values.append(arr)
+    
+    if not all_values:
+        return 0, 1
+    
+    vmin = min(all_values)
+    vmax = max(all_values)
     return vmin, vmax

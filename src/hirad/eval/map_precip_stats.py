@@ -129,7 +129,8 @@ def main(cfg: DictConfig):
     # Target and baseline modes
     basic_modes = {
         'target': (tp_out, 'COSMO-2 Analysis'),
-        'baseline': (tp_in, 'ERA5')
+        'baseline': (tp_in, 'ERA5'),
+        'regression-prediction': (tp_out, 'Regression Prediction') 
     }
     logger.info(f"Generating {len(stat_configs)} statistics for {len(basic_modes)} basic modes + predictions")
 
@@ -137,11 +138,15 @@ def main(cfg: DictConfig):
         logger.info(f"Processing mode: {mode}")
         # Load all timesteps for this mode
         data_list = []
-        for i, ts in enumerate(times):
-            if i % LOG_INTERVAL == 0:
-                logger.info(f"Loading {mode} timestep {i+1}/{len(times)}: {ts}")
-            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False) * CONV_FACTOR
-            data_list.append(data[tp_channel])
+        try:
+            for i, ts in enumerate(times):
+                if i % LOG_INTERVAL == 0:
+                    logger.info(f"Loading {mode} timestep {i+1}/{len(times)}: {ts}")
+                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False) * CONV_FACTOR
+                data_list.append(data[tp_channel])
+        except:
+            logger.warning(f"{mode} not available, skipping")
+            continue
         mode_data = xr.DataArray(
             np.stack(data_list, axis=0),
             dims=['time', 'lat', 'lon'],

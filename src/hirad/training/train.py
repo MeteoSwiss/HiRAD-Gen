@@ -25,7 +25,7 @@ from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_pr
 from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
 from hirad.utils.function_utils import get_time_from_range
-from hirad.utils.inference_utils import save_images
+from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.models import UNet, EDMPrecondSuperResolution
 from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
@@ -830,7 +830,7 @@ def main(cfg: DictConfig) -> None:
                                         os.makedirs(output_path)
                                     writer_threads.append(
                                         writer_executor.submit(
-                                            save_images,
+                                            save_results_as_torch,
                                             output_path,
                                             times[visualization_sampler[time_index]],
                                             visualization_dataset,

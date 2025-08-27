@@ -81,13 +81,17 @@ def main(cfg: DictConfig):
     pct99_std = {}
     
     # -- Process target and baseline --
-    for mode in ['target', 'baseline']:
+    for mode in ['target', 'baseline', 'regression-prediction']:
         logger.info(f"Processing mode: {mode}")
         
         data_list = []
-        for ts in times:
-            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode == 'target' else tp_in] * CONV_FACTOR * land_mask
-            data_list.append(data)
+        try:
+            for ts in times:
+                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * CONV_FACTOR * land_mask
+                data_list.append(data)
+        except:
+            logger.error(f"Error loading data for mode {mode}. Skipping.")
+            continue
         
         da = xr.DataArray(
             np.stack(data_list, axis=0),
@@ -123,6 +127,7 @@ def main(cfg: DictConfig):
     # Transpose to get the expected dimension order: [member, time, lat, lon]
     pred_da = pred_da.transpose('member', 'time', 'lat', 'lon')
     
+    logger.info('Calculating 99th percentile for predictions')
     # Group by hour, compute 99th percentile across time, then spatial mean
     hourly_p99_by_member = pred_da.groupby('time.hour').quantile(0.99, dim='time').mean(dim=['lat', 'lon'])
     
@@ -134,6 +139,7 @@ def main(cfg: DictConfig):
     def cycle_fn(x):
         return x.values.tolist() + [x.values.tolist()[0]]
     
+    logger.info("Preparing data for plotting")
     hrs_c = list(range(24)) + [0 + 24]
     pct99_lines = [
         cycle_fn(pct99_mean['target']),
@@ -143,13 +149,16 @@ def main(cfg: DictConfig):
             cycle_fn(pct99_std['prediction'])
         )
     ]
+    if 'regression-prediction' in pct99_mean:
+        pct99_lines.append(cycle_fn(pct99_mean['regression-prediction']))
 
     # Plot combined diurnal 99th-percentile cycle
+    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff 99th Pct ± Std', 'Regression Prediction'] if 'regression-prediction' in pct99_mean else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff 99th Pct ± Std']
     fn = out_root/'diurnal_cycle_precip_99th_percentile.png'
     save_plot(
         hrs_c,
         pct99_lines,
-        ['COSMO-2  Analysis','ERA5','CorrDiff 99th Pct ± Std'],
+        labels,
         'Precipitation (mm/day)',
         'Diurnal Cycle of 99th-Percentile Precipitation',
         fn
