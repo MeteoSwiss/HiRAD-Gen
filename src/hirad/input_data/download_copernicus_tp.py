@@ -34,7 +34,8 @@ request = {
         "21:00", "22:00", "23:00"
     ],
     "data_format": "netcdf",
-    "download_format": "unarchived"
+    "download_format": "unarchived",
+    "grid": "N320"
 }
 
 client = cdsapi.Client()
