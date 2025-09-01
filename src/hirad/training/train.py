@@ -91,6 +91,7 @@ def main(cfg: DictConfig) -> None:
     fp16 = fp_optimizations == "fp16"
     enable_amp = fp_optimizations.startswith("amp")
     amp_dtype = torch.float16 if (fp_optimizations == "amp-fp16") else torch.bfloat16
+    logger0.info(f"Config is: {cfg}")
     logger0.info(f"Saving the outputs in {os.getcwd()}")
     checkpoint_dir = os.path.join(
         cfg.training.io.get("checkpoint_dir", "."), f"checkpoints_{cfg.model.name}"
