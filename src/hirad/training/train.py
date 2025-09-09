@@ -117,8 +117,9 @@ def main(cfg: DictConfig) -> None:
             cfg.training.hp.batch_size_per_gpu * dist.world_size
         )
 
+    cur_nimg = load_checkpoint(path=checkpoint_dir)
 
-    set_seed(dist.rank)
+    set_seed(dist.rank + cur_nimg)
     configure_cuda_for_consistent_precision()
 
     # Instantiate the dataset
@@ -138,8 +139,10 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.training.hp.batch_size_per_gpu,
         seed=0,
         train_test_split=train_test_split,
+        sampler_start_idx=cur_nimg,
     )
     logger0.info(f"Training on dataset with size {len(dataset)}")
+    logger0.info(f"Validating on dataset with size {len(validation_dataset)}")
 
     # Parse image configuration & update model args
     dataset_channels = len(dataset.input_channels())
@@ -172,7 +175,6 @@ def main(cfg: DictConfig) -> None:
                                     )
 
     # Parse the patch shape
-    #TODO figure out patched diffusion and how to use it
     if (
         cfg.model.name == "patched_diffusion"
         or cfg.model.name == "lt_aware_patched_diffusion"
