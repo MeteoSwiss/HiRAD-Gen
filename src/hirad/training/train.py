@@ -284,8 +284,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
-        if use_torch_compile:
-            model = torch.compile(model)
+        # if use_torch_compile:
+        #     model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
@@ -333,13 +333,6 @@ def main(cfg: DictConfig) -> None:
         logger0.success("Loaded the pre-trained regression model")
     else:
         regression_net = None
-
-    # Compile the model and regression net if applicable
-    if use_torch_compile:
-        if dist.world_size==1:
-            model = torch.compile(model)
-        if regression_net:
-            regression_net = torch.compile(regression_net)
 
 
     # Compute the number of required gradient accumulation rounds
@@ -435,6 +428,13 @@ def main(cfg: DictConfig) -> None:
         )
     except:
         cur_nimg = 0
+
+    # Compile the model and regression net if applicable
+    if use_torch_compile:
+        if dist.world_size==1:
+            model = torch.compile(model)
+        if regression_net:
+            regression_net = torch.compile(regression_net)
 
     # init the generator for inference to visualize checkpoint results
     if visualize_checkpoints:

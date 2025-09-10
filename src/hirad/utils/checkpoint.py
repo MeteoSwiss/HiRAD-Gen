@@ -174,10 +174,15 @@ def save_checkpoint(
         Path(path).mkdir(parents=True, exist_ok=True)
 
     # == Saving model checkpoint ==
-    if model:
+    if model is not None:
         if hasattr(model, "module"):
             # Strip out DDP layer
             model = model.module
+
+        # Strip out optimization wrapper if exists
+        if isinstance(model, torch._dynamo.eval_frame.OptimizedModule):
+            model = model._orig_mod
+        
         # Base name of model is meta.name unless pytorch model
         name = model.__class__.__name__
         # Get full file path / name
@@ -223,7 +228,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str,
-    model: torch.nn.Module,
+    model: torch.nn.Module = None,
     optimizer: Union[optimizer, None] = None,
     scheduler: Union[scheduler, None] = None,
     scaler: Union[scaler, None] = None,
@@ -268,27 +273,33 @@ def load_checkpoint(
         )
         return 0
 
-    # == Loading model checkpoint ==
-    if hasattr(model, "module"):
-        # Strip out DDP layer
-        model = model.module
-    # Base name of model is meta.name unless pytorch model
-    name = model.__class__.__name__
-    # Get full file path / name
-    file_name = _get_checkpoint_filename(
-        path, name, index=epoch,
-    )
-    if not Path(file_name).exists():
-        checkpoint_logging.warning(
-            f"Could not find valid model file {file_name}, skipping load"
+    if model is not None:
+        # == Loading model checkpoint ==
+        if hasattr(model, "module"):
+            # Strip out DDP layer
+            model = model.module
+        # Strip out optimization wrapper if exists
+        if isinstance(model, torch._dynamo.eval_frame.OptimizedModule):
+            model = model._orig_mod
+            checkpoint_logging.warning(
+                f"Model {model.__class__.__name__} is already compiled, consider loading first and then compiling."
+            )
+        name = model.__class__.__name__
+        # Get full file path / name
+        file_name = _get_checkpoint_filename(
+            path, name, index=epoch,
         )
-    else:
-        # Load state dictionary
-        model.load_state_dict(torch.load(file_name, map_location=device))
+        if not Path(file_name).exists():
+            checkpoint_logging.warning(
+                f"Could not find valid model file {file_name}, skipping load"
+            )
+        else:
+            # Load state dictionary
+            model.load_state_dict(torch.load(file_name, map_location=device))
 
-        checkpoint_logging.success(
-            f"Loaded model state dictionary {file_name} to device {device}"
-        )
+            checkpoint_logging.success(
+                f"Loaded model state dictionary {file_name} to device {device}"
+            )
 
     # == Loading training checkpoint ==
     checkpoint_filename = _get_checkpoint_filename(path, index=epoch, model_type="pt")
