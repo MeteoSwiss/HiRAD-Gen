@@ -117,8 +117,9 @@ def main(cfg: DictConfig) -> None:
             cfg.training.hp.batch_size_per_gpu * dist.world_size
         )
 
+    cur_nimg = load_checkpoint(path=checkpoint_dir)
 
-    set_seed(dist.rank)
+    set_seed(dist.rank + cur_nimg)
     configure_cuda_for_consistent_precision()
 
     # Instantiate the dataset
@@ -138,8 +139,10 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.training.hp.batch_size_per_gpu,
         seed=0,
         train_test_split=train_test_split,
+        sampler_start_idx=cur_nimg,
     )
     logger0.info(f"Training on dataset with size {len(dataset)}")
+    logger0.info(f"Validating on dataset with size {len(validation_dataset)}")
 
     # Parse image configuration & update model args
     dataset_channels = len(dataset.input_channels())
@@ -172,7 +175,6 @@ def main(cfg: DictConfig) -> None:
                                     )
 
     # Parse the patch shape
-    #TODO figure out patched diffusion and how to use it
     if (
         cfg.model.name == "patched_diffusion"
         or cfg.model.name == "lt_aware_patched_diffusion"
@@ -282,8 +284,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
-        if use_torch_compile:
-            model = torch.compile(model)
+        # if use_torch_compile:
+        #     model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
@@ -332,13 +334,6 @@ def main(cfg: DictConfig) -> None:
     else:
         regression_net = None
 
-    # Compile the model and regression net if applicable
-    if use_torch_compile:
-        if dist.world_size==1:
-            model = torch.compile(model)
-        if regression_net:
-            regression_net = torch.compile(regression_net)
-
 
     # Compute the number of required gradient accumulation rounds
     # It is automatically used if batch_size_per_gpu * dist.world_size < total_batch_size
@@ -350,14 +345,17 @@ def main(cfg: DictConfig) -> None:
     batch_size_per_gpu = cfg.training.hp.batch_size_per_gpu
     logger0.info(f"Using {num_accumulation_rounds} gradient accumulation rounds")
 
-    patch_num = getattr(cfg.training.hp, "patch_num", 1)
-    max_patch_per_gpu = getattr(cfg.training.hp, "max_patch_per_gpu", 1)
-
     # calculate patch per iter
-    if hasattr(cfg.training.hp, "max_patch_per_gpu") and max_patch_per_gpu > 1:
+    patch_num = getattr(cfg.training.hp, "patch_num", 1)
+    if hasattr(cfg.training.hp, "max_patch_per_gpu"):
+        max_patch_per_gpu = cfg.training.hp.max_patch_per_gpu
+        if max_patch_per_gpu // batch_size_per_gpu < 1:
+            raise ValueError(
+                f"max_patch_per_gpu ({max_patch_per_gpu}) must be greater or equal to batch_size_per_gpu ({batch_size_per_gpu})."
+            )
         max_patch_num_per_iter = min(
             patch_num, (max_patch_per_gpu // batch_size_per_gpu)
-        )  # Ensure at least 1 patch per iter
+        )
         patch_iterations = (
             patch_num + max_patch_num_per_iter - 1
         ) // max_patch_num_per_iter
@@ -365,7 +363,7 @@ def main(cfg: DictConfig) -> None:
             min(max_patch_num_per_iter, patch_num - i * max_patch_num_per_iter)
             for i in range(patch_iterations)
         ]
-        print(
+        logger0.info(
             f"max_patch_num_per_iter is {max_patch_num_per_iter}, patch_iterations is {patch_iterations}, patch_nums_iter is {patch_nums_iter}"
         )
     else:
@@ -433,6 +431,13 @@ def main(cfg: DictConfig) -> None:
         )
     except:
         cur_nimg = 0
+
+    # Compile the model and regression net if applicable
+    if use_torch_compile:
+        if dist.world_size==1:
+            model = torch.compile(model)
+        if regression_net:
+            regression_net = torch.compile(regression_net)
 
     # init the generator for inference to visualize checkpoint results
     if visualize_checkpoints:

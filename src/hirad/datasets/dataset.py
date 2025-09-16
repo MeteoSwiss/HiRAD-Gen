@@ -37,6 +37,7 @@ def init_train_valid_datasets_from_config(
     batch_size: int = 1,
     seed: int = 0,
     train_test_split: bool = True,
+    sampler_start_idx: int = 0,
 ) -> Tuple[
     DownscalingDataset,
     Iterable,
@@ -52,6 +53,7 @@ def init_train_valid_datasets_from_config(
     - batch_size (int): The number of samples in each batch of data. Defaults to 1.
     - seed (int): The random seed for dataset shuffling. Defaults to 0.
     - train_test_split (bool): A flag to determine whether to create a validation dataset. Defaults to True.
+    - sampler_start_idx (int): The initial index of the sampler to use for resuming training. Defaults to 0.
 
     Returns:
     - Tuple[base.DownscalingDataset, Iterable, Optional[base.DownscalingDataset], Optional[Iterable]]: A tuple containing the training dataset and iterator, and optionally the validation dataset and iterator if train_test_split is True.
@@ -61,7 +63,7 @@ def init_train_valid_datasets_from_config(
     if 'validation_path' in config:
         del config['validation_path']
     (dataset, dataset_iter) = init_dataset_from_config(
-        config, dataloader_cfg, batch_size=batch_size, seed=seed
+        config, dataloader_cfg, batch_size=batch_size, seed=seed, sampler_start_idx=sampler_start_idx,
     )
     if train_test_split:
         valid_dataset_cfg = copy.deepcopy(dataset_cfg)
@@ -81,6 +83,7 @@ def init_dataset_from_config(
     dataloader_cfg: Union[dict, None] = None,
     batch_size: int = 1,
     seed: int = 0,
+    sampler_start_idx: int = 0,
 ) -> Tuple[DownscalingDataset, Iterable]:
     dataset_cfg = copy.deepcopy(dataset_cfg)
     dataset_type = dataset_cfg.pop("type", "era5_cosmo")
@@ -97,7 +100,7 @@ def init_dataset_from_config(
 
     dist = DistributedManager()
     dataset_sampler = InfiniteSampler(
-        dataset=dataset_obj, rank=dist.rank, num_replicas=dist.world_size, seed=seed
+        dataset=dataset_obj, rank=dist.rank, num_replicas=dist.world_size, seed=seed, start_idx=sampler_start_idx,
     )
 
     dataset_iterator = iter(
