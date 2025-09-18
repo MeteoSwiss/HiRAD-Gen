@@ -43,8 +43,8 @@ def extract_grib_values(grib_data):
 
 def extract_lat_lon_025(data):
     logging.info('extracting lat/lon')
-    lat = data['latitudes'][:]
-    lon = data['longitudes'][:]
+    lat = data['latitude'][:]
+    lon = data['longitude'][:]
     output_lat = np.zeros(len(lat)* len(lon))
     output_lon = np.zeros(len(lat) * len(lon))
     for i in range(len(lat)):
@@ -75,8 +75,7 @@ def extract_values(data, variable, area=None):
         lonui = np.argmin( np.abs(lon - area[3]))
         lat = data['latitude'][latli:latui]
         lon = data['longitude'][lonli:lonui]
-
-    values = data[variable][latli:latui,lonli:lonui]
+        values = data[variable][latli:latui,lonli:lonui]
     return np.reshape(values, (values.shape[0], values.shape[1]*values.shape[2]))
  
 def reshape_to_cosmo(vals):
@@ -142,22 +141,48 @@ def calc_errors(cosmo1, era1):
     maes['copernicus-late'] = netcdf_late_error
     plot_scores_vs_t(maes, times=cosmo1.dates, filename='plots/errors.png')
 
-def process_era_interpolated(netcdf_data, netcdf_tp_values):
-    #for t in range(10):
+def process_era_interpolated(netcdf_data, netcdf_tp_values, input_data_filepath, output_interpolated_filepath, netcdf_grid, cosmo_grid):
+    make_plots = False
+    #for t in range(100):
     for t in range(netcdf_tp_values.shape[0]):
         netcdf_date = netcdf_data['valid_time'][t]
         date_filename = datetime.datetime.fromtimestamp(netcdf_date, datetime.UTC).strftime('%Y%m%d-%H%M')
         t1 = datetime.datetime.now()
-        era_filename = os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, "era-interpolated", date_filename)
+        era_filename = os.path.join(input_data_filepath, "era-interpolated", date_filename)
+        output_filename = os.path.join(output_interpolated_filepath, date_filename)
         if os.path.exists(era_filename):
-            era_data = torch.load(era_filename, weights_only=False)
-            t2 = datetime.datetime.now()
-            logging.info(f'regridding {date_filename} (netcdf date: {netcdf_date})')
-            interpolated_tp = griddata(netcdf_grid, netcdf_tp_values[t,:], cosmo_grid, method='linear')
-            t3 = datetime.datetime.now()
-            era_data[TP_INDEX,0,:] = interpolated_tp
-            torch.save(era_data, os.path.join(OUTPUT_DATA_FILEPATH_ERA_INTERPOLATED, date_filename))
-            t4 = datetime.datetime.now()
+            requires_processing = False
+            if date_filename == '20200615-2100':
+                requires_processing = True
+            #if os.path.exists(output_filename):
+                # test the output to make sure it is not corrupted.
+                #requires_processing = False
+                #try:
+                #    torch.load(output_filename, weights_only=False)
+                #except:
+                #    requires_processing = True
+            if requires_processing:
+                era_data = torch.load(era_filename, weights_only=False)
+                t2 = datetime.datetime.now()
+                #if t % 100 == 0:
+                logging.info(f'regridding {date_filename} (netcdf date: {netcdf_date})')
+                interpolated_tp = griddata(netcdf_grid, netcdf_tp_values[t,:], cosmo_grid, method='linear')
+                t3 = datetime.datetime.now()
+                if make_plots and max > 0.0002:
+                    nans = np.count_nonzero(np.isnan(interpolated_tp))
+                    nonzeros = np.count_nonzero(interpolated_tp)
+                    max = np.max(interpolated_tp)            
+                    logging.info(f'nonzeros: {nonzeros} nans: {nans} max: {max}')
+                    if max > 0.0002:
+                        cosmo_filename = os.path.join(input_data_filepath, "cosmo", date_filename)
+                        cosmo_data = torch.load(cosmo_filename, weights_only=False)
+                        plot_map_precipitation(reshape_to_cosmo(interpolated_tp), f'plots/tp/{date_filename}-netcdf-regrid')
+                        # 3 is tp index in cosmo data
+                        plot_map_precipitation(reshape_to_cosmo(cosmo_data[3,:]), f'plots/tp/{date_filename}-cosmo')
+                        plot_map_precipitation(reshape_to_cosmo(era_data[TP_INDEX,0,:]/6), f'plots/tp/{date_filename}-era-norm')
+                era_data[TP_INDEX,0,:] = interpolated_tp
+                torch.save(era_data, output_filename)
+                t4 = datetime.datetime.now()
 
 def process_era(netcdf_data, netcdf_tp_values):
     for t in range(netcdf_tp_values.shape[0]):
@@ -174,42 +199,64 @@ def process_era(netcdf_data, netcdf_tp_values):
             torch.save(era_data, os.path.join(OUTPUT_DATA_FILEPATH_ERA, date_filename))
             t4 = datetime.datetime.now()
 
-root = logging.getLogger()
-root.setLevel(logging.INFO)
-
-logging.info('loading data')
-netcdf_data = netCDF4.Dataset(CDF_FILENAME_CLARIDEN_TP)
-
-#cosmo1 = open_dataset(COSMO_1H_FILENAME, trim_edge=19, select=['tp'],start='2016-01-01',end='2016-02-29')
-#cosmo6 = open_dataset(COSMO_6H_FILENAME, trim_edge=19, select=['tp'],start='2016-01-01',end='2016-02-29')
-#era1 = open_dataset(ANEMOI_1H_FILENAME, select=['tp'],start='2016-01-01',end='2016-02-29')
-#era6 = open_dataset(ANEMOI_6H_FILENAME, select=['tp'],start='2016-01-01',end='2016-02-29')
-logging.info('loading data complete')
-
-cosmo_grid = torch.load(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'info/cosmo-lat-lon'), weights_only=False)
-era_grid = torch.load(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'info/era-lat-lon'), weights_only=False)
-
-
-logging.info('processing netcdf data')
-
-netcdf_latitudes, netcdf_longitudes = extract_lat_lon_n320(netcdf_data)
-netcdf_tp_values = extract_values(netcdf_data, 'tp')
-
-#netcdf_latitudes, netcdf_longitudes = extract_lat_lon(netcdf_data, area=[60, 0, 40, 20])
-#netcdf_tp_values = extract_values(netcdf_data, 'tp', area=[60, 0, 40, 20])
-netcdf_grid=np.column_stack((netcdf_longitudes, netcdf_latitudes))
-logging.info(f'netcdf shape {netcdf_grid.shape}')
-logging.info(f'{netcdf_grid[1:10,:]}')
-logging.info(f'era shape {era_grid.shape}')
-logging.info(f'{era_grid[1:10,:]}')
-
-process_era_interpolated(netcdf_data, netcdf_tp_values)
-process_era(netcdf_data, netcdf_tp_values)
+def make_stats():
+    #cosmo_files = os.listdir(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'cosmo'))
+    #era_files = os.listdir(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'cosmo'))
+    
+    stats = torch.load(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'info', 'era-stats'), weights_only=False)
+    print(stats)
+    set1 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2015-2016.nc")
+    set2 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2017-2018.nc")
+    set3 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2019-2020.nc")
+    set1_tp = extract_values(set1, 'tp')
+    set2_tp = extract_values(set2, 'tp')
+    set3_tp = extract_values(set3, 'tp')
+    all_tp = np.row_stack((set1_tp, set2_tp, set3_tp))
+    print(all_tp.shape)
+    all_tp = all_tp.reshape(all_tp.shape[0] * all_tp.shape[1], 1)
+    mean = np.mean(all_tp)
+    max = np.max(all_tp)
+    min = np.min(all_tp)
+    stdev = np.std(all_tp)
+    stats['mean'][TP_INDEX] = mean
+    stats['maximum'][TP_INDEX] = max
+    stats['minimum'][TP_INDEX] = min
+    stats['stdev'][TP_INDEX] = stdev
+    print(stats)
+    torch.save(stats, os.path.join(OUTPUT_DATA_FILEPATH_ERA_INTERPOLATED, 'era-stats'))
 
 
+#process_era(netcdf_data, netcdf_tp_values)
 
 
+def main():
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
 
+    logging.info('loading data')
+    netcdf_file = sys.argv[1]
+    input_data_filepath = sys.argv[2]
+    output_interpolated_filepath = sys.argv[3]
 
+    netcdf_data = netCDF4.Dataset(netcdf_file)
+    logging.info(netcdf_data)
 
+    logging.info('processing netcdf data')
+    netcdf_latitudes, netcdf_longitudes = extract_lat_lon_025(netcdf_data)
+    netcdf_grid=np.column_stack((netcdf_longitudes, netcdf_latitudes))
+    cosmo_grid = torch.load(os.path.join(input_data_filepath, 'info/cosmo-lat-lon'), weights_only=False)
+    cosmo_grid = np.column_stack((cosmo_grid[:,1], cosmo_grid[:,0]))
+    logging.info(f'netcdf grid shape {netcdf_grid.shape}')
+    logging.info(f'{netcdf_grid[1:10,:]}')
+    logging.info(f'cosmo grid shape {cosmo_grid.shape}')
+    logging.info(f'{cosmo_grid[1:10,:]}')
+
+    netcdf_tp_values = extract_values(netcdf_data, 'tp')
+
+    
+    process_era_interpolated(netcdf_data, netcdf_tp_values, input_data_filepath, output_interpolated_filepath, netcdf_grid, cosmo_grid)
+    
+
+if __name__ == "__main__":
+    main()
 
