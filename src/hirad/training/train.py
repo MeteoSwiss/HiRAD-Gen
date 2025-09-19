@@ -151,7 +151,9 @@ def main(cfg: DictConfig) -> None:
     img_out_channels = len(dataset.output_channels())
     if cfg.model.hr_mean_conditioning:
         img_in_channels += img_out_channels
-
+    logger0.info(f"Training on dataset with grid size {img_shape[0]}x{img_shape[1]}, {img_in_channels} input channels and {img_out_channels} output channels.")
+    logger0.info(f"Input channels: {dataset.input_channels()}")
+    logger0.info(f"Output channels: {dataset.output_channels()}")
 
     if cfg.model.name == "lt_aware_ce_regression":
         prob_channels = dataset.get_prob_channel_index() #TODO figure out what prob_channel are and update dataloader
