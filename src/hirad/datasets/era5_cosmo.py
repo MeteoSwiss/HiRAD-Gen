@@ -7,7 +7,7 @@ import yaml
 import torch.nn.functional as F
 
 class ERA5_COSMO(DownscalingDataset):
-    def __init__(self, dataset_path: str, input_channel_names: List[str] = [], output_channel_names: List[str] = []):
+    def __init__(self, dataset_path: str, input_channel_names: List[str] = [], output_channel_names: List[str] = [], static_channel_names: List[str] = [], transform_channels: List[str] = []):
         super().__init__()
 
         #TODO switch hanbdling paths to Path rather than pure strings
