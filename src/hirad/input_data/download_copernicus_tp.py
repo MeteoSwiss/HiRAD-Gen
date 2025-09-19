@@ -5,10 +5,14 @@ request = {
     "product_type": ["reanalysis"],
     "variable": ["total_precipitation"],
     "year": [
-        "2016"
+        "2015", "2016", "2017",
+        "2018", "2019", "2020",
     ],
     "month": [
-        "01", "02"
+        "01", "02", "03",
+        "04", "05", "06",
+        "07", "08", "09",
+        "10", "11", "12",
     ],
     "day": [
         "01", "02", "03",
@@ -35,7 +39,8 @@ request = {
     ],
     "data_format": "netcdf",
     "download_format": "unarchived",
-    "grid": "N320"
+    "grid": "N320",
+    "area": [60, 0, 40, 20]
 }
 
 client = cdsapi.Client()

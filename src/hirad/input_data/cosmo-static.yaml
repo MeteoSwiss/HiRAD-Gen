@@ -1,0 +1,8 @@
+dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-co2-an-archive-0p02-2015-2020-1h-v3-pl13.zarr'
+select: ['hsurf', 'lsm',]
+# Static cosmo channels
+trim_edge: 19  # Removes boundary
+start: 2016-01-01
+# start: 2015-11-29
+end: 2016-01-01
+# end: 2020-12-31

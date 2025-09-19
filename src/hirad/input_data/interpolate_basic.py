@@ -14,6 +14,7 @@ from pandas import to_datetime
 from scipy.interpolate import griddata
 import torch
 import multiprocessing
+import xarray
 
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 ERA_MARGIN_DEGREES = 1.0
@@ -46,7 +47,6 @@ def _read_input(era_config_file: str, cosmo_config_file: str, bound_to_cosmo_are
         era = open_dataset(era, start=start_date, end=end_date) 
     
     return (era, cosmo)
-
 
 def regrid(era_for_time: np.ndarray, input_grid: np.ndarray, output_grid: np.ndarray):
     # shape (channel, ensemble, grid)
@@ -234,6 +234,12 @@ def plot_tp(path_6h: str, path_1h: str):
     plt.savefig(filename)
     plt.close('all')
 
+def load_static(infile_era: str, infile_cosmo: str, output_directory: str):
+    _, cosmo = _read_input(infile_era, infile_cosmo, bound_to_cosmo_area=True)
+    
+    torch.save(cosmo[0,:,:,:], os.path.join(output_directory, 'cosmo-static'))
+    shutil.copy(infile_cosmo, os.path.join(output_directory, "cosmo-static.yaml"))
+    
 def main():
     # TODO: Do better arg parsing so it's not as easy to reverse era and cosmo configs.
     if len(sys.argv) < 4:
@@ -242,13 +248,15 @@ def main():
     infile_cosmo = sys.argv[2]
     output_directory = sys.argv[3]
 
-
     logging.basicConfig(
         filename=os.path.join(output_directory, 'interpolate_basic.log'),
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
-    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=os.path.join(output_directory, "plots/"))
+    
+    #load_static(infile_era, infile_cosmo, output_directory)
+    #interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=os.path.join(output_directory, "plots/"))
+    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=None)
 
 if __name__ == "__main__":
     main()
