@@ -29,7 +29,7 @@ class ChannelMeta:
     vmin:       float      = None
     vmax:       float      = None
     extend:     str        = "both"
-    precip_kwargs: dict    = field(default_factory=lambda: {"threshold": 0.1, "rfac": 100.0})
+    precip_kwargs: dict    = field(default_factory=lambda: {"threshold": 0.1, "rfac": 1000.0})
 
     @classmethod
     def get(cls, ch_or_name: "ChannelMeta | str | None", *, vmin=None, vmax=None) -> "ChannelMeta":
@@ -40,7 +40,7 @@ class ChannelMeta:
         return base
 
 CHANNELS = {
-    "tp": ChannelMeta(name="tp", cmap=None, unit="mm/h", extend="max", precip_kwargs={"threshold": 0.1, "rfac": 100.0}),
+    "tp": ChannelMeta(name="tp", cmap=None, unit="mm/h", extend="max", precip_kwargs={"threshold": 0.1, "rfac": 1000.0}),
     "2t": ChannelMeta(name="2t", cmap="RdYlBu_r", me_cmap="RdBu", unit="K", err_vmin=-4.5, err_vmax=4.5),
     "10u": ChannelMeta(name="10u", cmap="BrBG", me_cmap="BrBG", unit="m/s", err_vmin=-10, err_vmax=10, vmin=-10, vmax=10),
     "10v": ChannelMeta(name="10v", cmap="BrBG", me_cmap="BrBG", unit="m/s", err_vmin=-10, err_vmax=10, vmin=-10, vmax=10),
@@ -124,7 +124,9 @@ def main(cfg: DictConfig) -> None:
     logger = logging.getLogger("plot_maps")
 
     if cfg.generation.times_range:
-        times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") 
+        times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M")
+    else:
+        times = cfg.generation.times
         
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
     has_lead_time = cfg.generation.get("has_lead_time", False)

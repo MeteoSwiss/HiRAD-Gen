@@ -15,9 +15,35 @@ class ERA5_COSMO(DownscalingDataset):
         self._era5_path = os.path.join(dataset_path, 'era-interpolated')
         self._cosmo_path = os.path.join(dataset_path, 'cosmo')
         self._info_path = os.path.join(dataset_path, 'info')
+        self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
+        self._zarr_path = os.path.join(dataset_path, 'dataset.zarr')
 
         # load file list (each file is one date-time state)
-        self._file_list = os.listdir(self._cosmo_path)
+        self._file_list = sorted(os.listdir(self._cosmo_path))
+
+        # open zarr store
+        # self._zarr_store = zarr.open(self._zarr_path, mode='r')
+        # self.era5 = self._zarr_store['era5']
+        # self.cosmo = self._zarr_store['cosmo']
+
+        # Load static info and channel names
+        if static_channel_names:
+            with open(os.path.join(self._static_path, 'cosmo-static.yaml'), 'r') as file:
+                self._static_info = yaml.safe_load(file)
+                self._static_indeces = [self._static_info['select'].index(name) for name in static_channel_names]
+                self._static_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
+                                        else ChannelMetadata(name.split('_')[0],name.split('_')[1])
+                                        for name in self._static_info['select'] if name in static_channel_names]
+            static_data = torch.load(os.path.join(self._static_path,'cosmo-static'), weights_only=False)[self._static_indeces]
+            orig_shape = self.image_shape()
+            self.static_data = np.flip(static_data \
+                                    .squeeze() \
+                                    .reshape(-1,*orig_shape),
+                                1)
+            self.static_mean = self.static_data.mean(axis=(1,2))
+            self.static_std = self.static_data.std(axis=(1,2))
+        else:
+            self.static_data = None
 
         # Load cosmo info and channel names
         with open(os.path.join(self._info_path,'cosmo.yaml'), 'r') as file:
@@ -52,7 +78,37 @@ class ERA5_COSMO(DownscalingDataset):
         era_stats = torch.load(os.path.join(self._info_path,'era-stats'), weights_only=False)
         self.input_mean = era_stats['mean'][self._era_indeces]
         self.input_std = era_stats['stdev'][self._era_indeces]
+        if self.static_data is not None:
+            self.input_mean = np.concatenate((self.input_mean, self.static_mean), axis=0)
+            self.input_std = np.concatenate((self.input_std, self.static_std), axis=0)
+
+        # FEATURE: load the mean and std values for transformed channels and update the normalization statistics
     
+        self.input_transforms = {}
+        self.input_inverse_transforms = {}
+        self.output_transforms = {}
+        self.output_inverse_transforms = {}
+        for transform_descriptor in transform_channels:
+            channel, transformation = transform_descriptor.split('-')
+            input_channel_idx = self._era_info['select'].index(channel) if channel in self._era_info['select'] else None
+            output_channel_idx = self._cosmo_info['select'].index(channel) if channel in self._cosmo_info['select'] else None
+            if transformation.startswith('box_cox'):
+                lmbda_str = transformation.split('_')[-1]
+                lmbda = float(transformation.split('_')[-1])/(10**(len(lmbda_str)-1))
+                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx}, output idx: {output_channel_idx})")
+                if input_channel_idx is not None:
+                    self.input_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
+                    self.input_inverse_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
+                    self.input_mean[input_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"era5-{transform_descriptor}-mean"), weights_only=False)
+                    self.input_std[input_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"era5-{transform_descriptor}-std"), weights_only=False)
+                if output_channel_idx is not None:
+                    self.output_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
+                    self.output_inverse_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
+                    self.output_mean[output_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"cosmo-{transform_descriptor}-mean"), weights_only=False)
+                    self.output_std[output_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"cosmo-{transform_descriptor}-std"), weights_only=False)
+            else:
+                raise ValueError(f"Transformation: {transformation} for channel {channel} not implemented.")
+
     def __getitem__(self, idx):
         """Get cosmo and era5 interpolated to cosmo grid"""
         # get data point
@@ -66,6 +122,7 @@ class ERA5_COSMO(DownscalingDataset):
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
+        era5_data = np.concatenate((era5_data, self.static_data), axis=0) if self.static_data is not None else era5_data
         era5_data = self.normalize_input(era5_data)
 
         cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)[self._cosmo_indeces]
@@ -96,7 +153,7 @@ class ERA5_COSMO(DownscalingDataset):
 
     def input_channels(self) -> List[ChannelMetadata]:
         """Metadata for the input channels. A list of ChannelMetadata, one for each channel"""
-        return self._era_channels
+        return self._era_channels + self._static_channels if self.static_data is not None else self._era_channels
 
 
     def output_channels(self) -> List[ChannelMetadata]:
@@ -118,23 +175,43 @@ class ERA5_COSMO(DownscalingDataset):
 
     def normalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from physical units to normalized data."""
+        for channel_idx, transform in self.input_transforms.items():
+            x[channel_idx,::] = transform(x[channel_idx,::])
         return (x - self.input_mean.reshape((self.input_mean.shape[0],1,1))) \
                 / self.input_std.reshape((self.input_std.shape[0],1,1))
 
 
     def denormalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from normalized data to physical units."""
-        return x * self.input_std.reshape((self.input_std.shape[0],1,1)) \
+        x = x * self.input_std.reshape((self.input_std.shape[0],1,1)) \
                 + self.input_mean.reshape((self.input_mean.shape[0],1,1))
+        for channel_idx, inverse_transform in self.input_inverse_transforms.items():
+            x[:,channel_idx,::] = inverse_transform(x[:,channel_idx,::])
+        return x
 
 
     def normalize_output(self, x: np.ndarray) -> np.ndarray:
         """Convert output from physical units to normalized data."""
+        for channel_idx, transform in self.output_transforms.items():
+            x[channel_idx,::] = transform(x[channel_idx,::])
         return (x - self.output_mean.reshape((self.output_mean.shape[0],1,1))) \
                 / self.output_std.reshape((self.output_std.shape[0],1,1))
 
 
     def denormalize_output(self, x: np.ndarray) -> np.ndarray:
         """Convert output from normalized data to physical units."""
-        return x * self.output_std.reshape((self.output_std.shape[0],1,1)) \
+        x = x * self.output_std.reshape((self.output_std.shape[0],1,1)) \
                 + self.output_mean.reshape((self.output_mean.shape[0],1,1))
+        for channel_idx, inverse_transform in self.output_inverse_transforms.items():
+            x[:,channel_idx,::] = inverse_transform(x[:,channel_idx,::])
+        return x
+
+    def box_cox_transform(self, channel_array: np.ndarray, lmbda: float) -> np.ndarray:
+        """Apply Box-Cox transformation to the data."""
+        channel_array = np.clip(channel_array, 0, None)
+        return (np.power(channel_array, lmbda) - 1) / lmbda
+
+    def box_cox_inverse_transform(self, channel_array: np.ndarray, lmbda: float) -> np.ndarray:
+        """Apply inverse Box-Cox transformation to the data."""
+        channel_array = np.clip(channel_array, -1/lmbda, None)
+        return np.power((lmbda * channel_array) + 1, 1 / lmbda)
