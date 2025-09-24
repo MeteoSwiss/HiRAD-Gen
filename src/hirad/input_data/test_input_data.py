@@ -45,13 +45,15 @@ def make_stats(filepath: str):
 def main():
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    logging.info('starting main')
     input_directory = sys.argv[1]
+    
+    logging.info(f'checking input directory {input_directory}')
 
     missing_data = []
     corrupt_data = []
     nan_data = []
     check_for_nans = False
+    check_for_corrupt = False
 
 
 
@@ -70,19 +72,21 @@ def main():
             while (expected_date < curr_date):
                 missing_data.append(datetime.datetime.strftime(expected_date, '%Y%m%d-%H%M'))
                 expected_date = expected_date + delta
-        try:
-            data = torch.load(os.path.join(input_directory, f), weights_only=False)
-        except:
-            logging.info(f'corrupt data: {curr_date}')
-            corrupt_data.append(curr_date)
-        if check_for_nans:
-            if count_nans(data):
-                logging.info(f'data nans: {curr_date}')
-                nan_data.append(curr_date)
+        if check_for_corrupt:
+            try:
+                data = torch.load(os.path.join(input_directory, f), weights_only=False)
+            except:
+                logging.info(f'corrupt data: {curr_date}')
+                corrupt_data.append(curr_date)
+            if check_for_nans or curr_date == start_date:
+                if count_nans(data):
+                    logging.info(f'data nans: {curr_date}')
+                    nan_data.append(curr_date)
         prev_date = curr_date
-    logging.info(f'missing data: {missing_data}')
-    logging.info(f'corrupt data: {corrupt_data}')
-    logging.info(f'nan data: {nan_data}')
+    logging.info(f'missing data size {len(missing_data)}: {missing_data}')
+    logging.info(f'corrupt data size {len(corrupt_data)}: {corrupt_data}')
+    if check_for_nans:
+        logging.info(f'nan data: {nan_data}')
 
 if __name__ == "__main__":
     main()
