@@ -152,8 +152,8 @@ def main(cfg: DictConfig):
             dims=['time', 'lat', 'lon'],
             coords={'time': [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]}
         )
-        if mode == 'baseline':
-            mode_data = mode_data / 6.0
+        # if mode == 'baseline':
+        #     mode_data = mode_data / 6.0
         # Compute and plot all statistics for this mode
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for {mode}...")

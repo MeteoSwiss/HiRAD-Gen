@@ -69,9 +69,9 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
     See Also
     --------
     For information on model types and their usage:
-    :class:`~physicsnemo.models.diffusion.SongUNet`: Basic U-Net for diffusion models
-    :class:`~physicsnemo.models.diffusion.SongUNetPosEmbd`: U-Net with positional embeddings
-    :class:`~physicsnemo.models.diffusion.SongUNetPosLtEmbd`: U-Net with positional and lead-time embeddings
+    :class:`~models.song_unet.SongUNet`: Basic U-Net for diffusion models
+    :class:`~models.song_unet.SongUNetPosEmbd`: U-Net with positional embeddings
+    :class:`~models.song_unet.SongUNetPosLtEmbd`: U-Net with positional and lead-time embeddings
 
     Please refer to the documentation of these classes for details on how to call
     and use these models directly.
@@ -151,6 +151,44 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
             out_channels=img_out_channels,
             **model_kwargs,
         )
+
+    @property
+    def use_fp16(self):
+        """
+        bool: Whether the model uses float16 precision.
+
+        Returns
+        -------
+        bool
+            True if the model is in float16 mode, False otherwise.
+        """
+        return self._use_fp16
+
+    @use_fp16.setter
+    def use_fp16(self, value: bool):
+        """
+        Set whether the model should use float16 precision.
+
+        Parameters
+        ----------
+        value : bool
+            If True, moves the model to torch.float16. If False, moves to torch.float32.
+
+        Raises
+        ------
+        ValueError
+            If `value` is not a boolean.
+        """
+        # NOTE: allow 0/1 values for older checkpoints
+        if not (isinstance(value, bool) or value in [0, 1]):
+            raise ValueError(
+                f"`use_fp16` must be a boolean, but got {type(value).__name__}."
+            )
+        self._use_fp16 = value
+        if value:
+            self.to(torch.float16)
+        else:
+            self.to(torch.float32)
 
     def forward(
         self,

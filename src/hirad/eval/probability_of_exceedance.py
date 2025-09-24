@@ -128,7 +128,7 @@ def main(cfg: DictConfig):
     land_mask = load_land_sea_mask()
 
     # Define thresholds for exceedance calculation
-    thresholds = np.logspace(-2, 2, 200)  # From 0.01 to 100 mm/h
+    thresholds = np.logspace(-2, 2.1, 200)  # From 0.01 to 100 mm/h
     
     # Storage for exceedance data and land values
     exceedance_data = {}
@@ -148,8 +148,8 @@ def main(cfg: DictConfig):
                 data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * CONV_FACTOR_HOURLY * land_mask
                 
                 # Apply scaling factor for baseline
-                if mode == 'baseline':
-                    data = data / 6.0
+                # if mode == 'baseline':
+                #     data = data / 6.0
                 
                 land_values = data.values[~np.isnan(data.values)]
                 all_values.extend(land_values)
