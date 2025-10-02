@@ -11,16 +11,16 @@ import numpy as np
 DATA_SOURCE_6H = "/capstor/scratch/cscs/mmcgloho/datasets/processed/era5-cosmo-1h-all-channels/era-interpolated"
 STATS_FILEPATH_6H = "/capstor/scratch/cscs/mmcgloho/datasets/processed/era5-cosmo-1h-all-channels/info"
 # 1h data is the updated
-DATA_SOURCE_1H = "/capstor/store/cscs/swissai/a161/era5-cosmo-1h-linear-interpolation/train/era-interpolated-with-copernicus-tp/"
-STATS_FILEPATH_1H = "/capstor/store/cscs/swissai/a161/era5-cosmo-1h-linear-interpolation/train/info"
-OUTPUT_DIR = "/iopsstor/scratch/cscs/mmcgloho/run-1_4/train/era-interpolated"
-OUTPUT_STATS_FILEPATH = "/iopsstor/scratch/cscs/mmcgloho/run-1_4/train/info/"
+DATA_SOURCE_1H = "/capstor/store/cscs/swissai/a161/era5-cosmo-1h-linear-interpolation/validation/era-interpolated-with-copernicus-tp/"
+STATS_FILEPATH_1H = "/capstor/store/cscs/swissai/a161/era5-cosmo-1h-linear-interpolation/validation/info"
+OUTPUT_DIR = "/iopsstor/scratch/cscs/mmcgloho/run-1_4/validation/era-interpolated"
+OUTPUT_STATS_FILEPATH = "/iopsstor/scratch/cscs/mmcgloho/run-1_4/validation/info/"
 TP_INDEX_6H = 34 # in era-all.yaml
 TP_INDEX_1H = 12 # in era.yaml
 
 def process(input_directory_6h: str, input_directory_1h: str, output_directory: str):
-    input_6h_filepath = os.path.join(input_directory_6h)
-    files = os.listdir(input_6h_filepath)
+    input_1h_filepath = os.path.join(input_directory_1h)
+    files = os.listdir(input_1h_filepath)
     files.sort()
     for f in range(len(files)):
         if f % 100 == 0:
