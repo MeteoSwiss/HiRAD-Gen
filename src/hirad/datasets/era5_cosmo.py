@@ -5,18 +5,35 @@ import torch
 from typing import List, Tuple
 import yaml
 import torch.nn.functional as F
+import time
+# import zarr
+
+from hirad.utils.console import PythonLogger
+
+logger = PythonLogger(__name__)
+
+DATASET_ORIG_PATH = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full'
 
 class ERA5_COSMO(DownscalingDataset):
-    def __init__(self, dataset_path: str, input_channel_names: List[str] = [], output_channel_names: List[str] = [], static_channel_names: List[str] = [], transform_channels: List[str] = []):
+    def __init__(self, 
+                dataset_path: str, 
+                input_channel_names: List[str] = [], 
+                output_channel_names: List[str] = [], 
+                static_channel_names: List[str] = [], 
+                transform_channels: List[str] = [],
+                n_month_hour_channels: int = None,
+                ):
         super().__init__()
 
         #TODO switch hanbdling paths to Path rather than pure strings
+        self._n_month_hour_channels = n_month_hour_channels
         self._dataset_path = dataset_path
         self._era5_path = os.path.join(dataset_path, 'era-interpolated')
         self._cosmo_path = os.path.join(dataset_path, 'cosmo')
-        self._info_path = os.path.join(dataset_path, 'info')
-        self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
-        self._zarr_path = os.path.join(dataset_path, 'dataset.zarr')
+        self._info_path = os.path.join(DATASET_ORIG_PATH, 'info')
+        # self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
+        self._static_path = os.path.join(DATASET_ORIG_PATH, 'static')# os.path.join(dataset_path, 'static')
+        # self._zarr_path = os.path.join(dataset_path, 'dataset.zarr')
 
         # load file list (each file is one date-time state)
         self._file_list = sorted(os.listdir(self._cosmo_path))
@@ -99,13 +116,13 @@ class ERA5_COSMO(DownscalingDataset):
                 if input_channel_idx is not None:
                     self.input_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.input_inverse_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
-                    self.input_mean[input_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"era5-{transform_descriptor}-mean"), weights_only=False)
-                    self.input_std[input_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"era5-{transform_descriptor}-std"), weights_only=False)
+                    self.input_mean[input_channel_idx] = torch.load(os.path.join(self._info_path,f"era5-{transform_descriptor}-mean"), weights_only=False)
+                    self.input_std[input_channel_idx] = torch.load(os.path.join(self._info_path,f"era5-{transform_descriptor}-std"), weights_only=False)
                 if output_channel_idx is not None:
                     self.output_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.output_inverse_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
-                    self.output_mean[output_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"cosmo-{transform_descriptor}-mean"), weights_only=False)
-                    self.output_std[output_channel_idx] = torch.load(os.path.join("/users/pstamenk/HiRAD-Gen",f"cosmo-{transform_descriptor}-std"), weights_only=False)
+                    self.output_mean[output_channel_idx] = torch.load(os.path.join(self._info_path,f"cosmo-{transform_descriptor}-mean"), weights_only=False)
+                    self.output_std[output_channel_idx] = torch.load(os.path.join(self._info_path,f"cosmo-{transform_descriptor}-std"), weights_only=False)
             else:
                 raise ValueError(f"Transformation: {transformation} for channel {channel} not implemented.")
 
@@ -117,7 +134,11 @@ class ERA5_COSMO(DownscalingDataset):
         # flip so that it starts in top-left corner (by default it is bottom left)
         # orig_shape = [350,542] #TODO currently padding to be divisible by 16
         orig_shape = self.image_shape()
-        era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)[self._era_indeces]
+        try:
+            era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx]), weights_only=False)[self._era_indeces]
+        except:
+            logger.error(f"Error loading file {os.path.join(self._era5_path,self._file_list[idx])}")
+            raise
         era5_data = np.flip(era5_data \
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
@@ -125,15 +146,29 @@ class ERA5_COSMO(DownscalingDataset):
         era5_data = np.concatenate((era5_data, self.static_data), axis=0) if self.static_data is not None else era5_data
         era5_data = self.normalize_input(era5_data)
 
-        cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)[self._cosmo_indeces]
+        try:
+            cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)[self._cosmo_indeces]
+        except:
+            logger.error(f"Error loading file {os.path.join(self._cosmo_path,self._file_list[idx])}")
+            raise
         cosmo_data = np.flip(cosmo_data\
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
         cosmo_data = self.normalize_output(cosmo_data)
 
+        if self._n_month_hour_channels is not None and self._n_month_hour_channels>0:
+            # extract month and hour from filename
+            filename = self._file_list[idx]
+            date_str, hour_str = filename.split('-')
+            month = int(date_str[4:6])
+            hour = int(hour_str[0:2])
+
+            time_grid = self.make_time_grids(hour, month)
+            era5_data = np.concatenate((era5_data, time_grid), axis=0)
+
         return torch.tensor(cosmo_data),\
-                torch.tensor(era5_data),
+                torch.tensor(era5_data)
 
     def __len__(self):
         return len(self._file_list)
@@ -153,8 +188,13 @@ class ERA5_COSMO(DownscalingDataset):
 
     def input_channels(self) -> List[ChannelMetadata]:
         """Metadata for the input channels. A list of ChannelMetadata, one for each channel"""
-        return self._era_channels + self._static_channels if self.static_data is not None else self._era_channels
-
+        channels = self._era_channels + self._static_channels if self.static_data is not None else self._era_channels
+        if self._n_month_hour_channels is not None and self._n_month_hour_channels>0:
+            for i in range(self._n_month_hour_channels):
+                channels.append(ChannelMetadata("hour-enc",f"{i}"))
+            for i in range(self._n_month_hour_channels):
+                channels.append(ChannelMetadata("month-enc",f"{i}"))
+        return channels
 
     def output_channels(self) -> List[ChannelMetadata]:
         """Metadata for the output channels. A list of ChannelMetadata, one for each channel"""
@@ -183,6 +223,8 @@ class ERA5_COSMO(DownscalingDataset):
 
     def denormalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from normalized data to physical units."""
+        if self._n_month_hour_channels is not None and self._n_month_hour_channels>0:
+            x = x[:,:-2*self._n_month_hour_channels,:,:]
         x = x * self.input_std.reshape((self.input_std.shape[0],1,1)) \
                 + self.input_mean.reshape((self.input_mean.shape[0],1,1))
         for channel_idx, inverse_transform in self.input_inverse_transforms.items():
@@ -215,3 +257,42 @@ class ERA5_COSMO(DownscalingDataset):
         """Apply inverse Box-Cox transformation to the data."""
         channel_array = np.clip(channel_array, -1/lmbda, None)
         return np.power((lmbda * channel_array) + 1, 1 / lmbda)
+
+    def make_time_grids(self, hour, month):
+        """
+        Create multi-frequency cyclic sin/cos feature grids for hour and month.
+
+        Parameters
+        ----------
+        hour : int
+            Hour of day, 0-23
+        month : int
+            Month of year, 1-12
+
+        Returns
+        -------
+        grid : np.ndarray, shape (C, H, W)
+            Channels = [sin(k*hour), cos(k*hour), sin(k*month), cos(k*month) for each k frequency]
+        """
+        H, W = self.image_shape()
+        hour_freqs = np.arange(1, self._n_month_hour_channels//2 + 1)
+        month_freqs = np.arange(1, self._n_month_hour_channels//2 + 1)
+
+        channels = []
+
+        # --- hour encodings ---
+        for k in hour_freqs:
+            angle = 2 * np.pi * k * (hour % 24) / 24.0
+            channels.append(np.sin(angle))
+            channels.append(np.cos(angle))
+
+        # --- month encodings ---
+        for k in month_freqs:
+            angle = 2 * np.pi * k * ((month - 1) % 12) / 12.0
+            channels.append(np.sin(angle))
+            channels.append(np.cos(angle))
+
+        channels = np.array(channels, dtype=np.float32)
+        grid = np.tile(channels[:, None, None], (1, H, W))  # (C, H, W)
+
+        return grid
