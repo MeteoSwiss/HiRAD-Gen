@@ -10,6 +10,6 @@ model_args:
   # Controls how positional information is encoded.
   N_grid_channels: 4
   # Number of channels for positional grid embeddings
-  embedding_type: "zero"
+  embedding_type: "positional"
   # Type of timestep embedding: 'positional' for DDPM++, 'fourier' for NCSN++,
   # 'zero' for none
