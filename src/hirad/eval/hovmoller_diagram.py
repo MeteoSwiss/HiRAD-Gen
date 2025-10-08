@@ -193,8 +193,8 @@ def main(cfg: DictConfig):
         },
         'diurnal': {
             'low_period': 24,    # hours
-            'high_period': 2,   # hours
-            'label': 'Diurnal (2-24h)'
+            'high_period': 3,   # hours
+            'label': 'Diurnal (3-24h)'
         },
         'synoptic': {
             'low_period': 120,   # 5 days
