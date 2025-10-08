@@ -46,15 +46,5 @@ export OMP_NUM_THREADS=72
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
 
-    # Diurnal cycle
-    python src/hirad/eval/diurnal_cycle_precip_mean_wet-hour.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/diurnal_cycle_precip_p99.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/diurnal_cycle_temp_wind.py --config-name=generate_era_cosmo.yaml # TODO: Transfer to relevant script.
-
-    # Histograms
-    python src/hirad/eval/hist.py --config-name=generate_era_cosmo.yaml
-    python src/hirad/eval/probability_of_exceedance.py --config-name=generate_era_cosmo.yaml
-
-    # Maps
-    python src/hirad/eval/map_precip_stats.py --config-name=generate_era_cosmo.yaml
+    python src/hirad/eval/snapshots.py --config-name=generate_era_cosmo.yaml
 "
