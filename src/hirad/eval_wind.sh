@@ -47,4 +47,7 @@ srun --environment=./ci/edf/modulus_env.toml bash -c "
 
     # Maps
     python src/hirad/eval/map_wind_stats.py --config-name=generate_era_cosmo.yaml
+
+    # Generate Hovmöller diagrams
+    python src/hirad/eval/hovmoller_diagram.py --config-name=generate_era_cosmo.yaml
 "
