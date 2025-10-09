@@ -3,12 +3,12 @@
 #SBATCH --job-name="eval_wind"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=6:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
@@ -47,7 +47,3 @@ srun --environment=./ci/edf/modulus_env.toml bash -c "
 
     # Maps
     python src/hirad/eval/map_wind_stats.py --config-name=generate_era_cosmo.yaml
-
-    # Generate Hovmöller diagrams
-    python src/hirad/eval/hovmoller_diagram.py --config-name=generate_era_cosmo.yaml
-"
