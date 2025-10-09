@@ -105,18 +105,28 @@ def apply_wind_statistic(u_data, v_data, stat_type, stat_param=None):
         return np.mean(speed**3, axis=0)
     
     if stat_type == 'calm_freq':
-        # Frequency of calm conditions (wind speed < 2 m/s)
+        # Frequency of calm conditions (< 2 m/s, Beaufort 0-1)
         calm_threshold = 2.0
         return np.mean(speed < calm_threshold, axis=0) * 100
     
-    if stat_type == 'storm_freq':
-        # Frequency of strong wind events (> threshold)
-        storm_threshold = 15.0  # m/s, approximately Beaufort 7 (near gale)
-        return np.mean(speed > storm_threshold, axis=0) * 100
+    if stat_type == 'light_breeze_freq':
+        # Frequency of light breeze (> 1.6 m/s, Beaufort 2+)
+        light_breeze_threshold = 1.6
+        return np.mean(speed > light_breeze_threshold, axis=0) * 100
+    
+    if stat_type == 'moderate_breeze_freq':
+        # Frequency of moderate breeze (> 5.5 m/s, Beaufort 4+)
+        moderate_breeze_threshold = 5.5
+        return np.mean(speed > moderate_breeze_threshold, axis=0) * 100
+    
+    if stat_type == 'strong_breeze_freq':
+        # Frequency of strong breeze (> 10.8 m/s, Beaufort 6+)
+        strong_breeze_threshold = 10.8
+        return np.mean(speed > strong_breeze_threshold, axis=0) * 100
     
     if stat_type == 'gale_freq':
-        # Frequency of gale force winds (> 20 m/s, Beaufort 8+)
-        gale_threshold = 20.0
+        # Frequency of fresh gale (> 17.2 m/s, Beaufort 8+)
+        gale_threshold = 17.2
         return np.mean(speed > gale_threshold, axis=0) * 100
     
     if stat_type == 'prevailing_direction':
@@ -146,13 +156,13 @@ def plot_wind_stat_map(data, filename, stat_config, label):
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Speed [m/s]', vmin=0, vmax=10, cmap='YlOrRd', extend='max'
+            label='Wind Speed [m/s]', vmin=0, vmax=10, cmap='inferno', extend='max'
         )
     elif stat_config['type'] in ['quantile_speed', 'max_speed']:
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Speed [m/s]', vmin=0, vmax=30, cmap='YlOrRd', extend='max'
+            label='Wind Speed [m/s]', vmin=0, vmax=30, cmap='inferno', extend='max'
         )
     elif stat_config['type'] == 'wind_power':
         plot_map(
@@ -160,11 +170,11 @@ def plot_wind_stat_map(data, filename, stat_config, label):
             title=f'{label}: {stat_config["title_stat"]}',
             label='Wind Power Density [m³/s³]', vmin=0, vmax=1000, cmap='plasma', extend='max'
         )
-    elif stat_config['type'] in ['calm_freq', 'storm_freq', 'gale_freq']:
+    elif stat_config['type'] in ['calm_freq', 'light_breeze_freq', 'moderate_breeze_freq', 'strong_breeze_freq', 'gale_freq']:
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Frequency [%]', vmin=0, vmax=20, cmap='Blues', extend='max'
+            label='Frequency [%]', vmin=0, vmax=80, cmap='GnBu', extend='max'
         )
     elif stat_config['type'] == 'prevailing_direction':
         plot_map(
@@ -176,7 +186,7 @@ def plot_wind_stat_map(data, filename, stat_config, label):
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Circular Std Dev [degrees]', vmin=0, vmax=80, cmap='viridis', extend='max'
+            label='Circular Std Dev [degrees]', vmin=20, vmax=140, cmap='viridis', extend='max'
         )
     elif stat_config['type'] in ['mean_u', 'mean_v']:
         plot_map(
@@ -238,15 +248,23 @@ def main(cfg: DictConfig):
         },
         'calm_freq': {
             'type': 'calm_freq',
-            'title': 'Calm Frequency (<2 m/s)'
+            'title': 'Calm Frequency (<2 m/s, Beaufort 0-1)'
         },
-        'storm_freq': {
-            'type': 'storm_freq',
-            'title': 'Strong Wind Frequency (>15 m/s)'
+        'light_breeze_freq': {
+            'type': 'light_breeze_freq',
+            'title': 'Light Breeze Frequency (>1.6 m/s, Beaufort 2+)'
+        },
+        'moderate_breeze_freq': {
+            'type': 'moderate_breeze_freq',
+            'title': 'Moderate Breeze Frequency (>5.5 m/s, Beaufort 4+)'
+        },
+        'strong_breeze_freq': {
+            'type': 'strong_breeze_freq',
+            'title': 'Strong Breeze Frequency (>10.8 m/s, Beaufort 6+)'
         },
         'gale_freq': {
             'type': 'gale_freq',
-            'title': 'Gale Frequency (>20 m/s)'
+            'title': 'Gale Frequency (>17.2 m/s, Beaufort 8+)'
         },
         'prevailing_dir': {
             'type': 'prevailing_direction',
