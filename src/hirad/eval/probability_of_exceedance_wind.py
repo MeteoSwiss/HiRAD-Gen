@@ -44,7 +44,7 @@ def compute_percentiles(values, percentile_dict, use_abs=False):
     return {key: data_array.quantile(p).item() for key, p in percentile_dict.items()}
 
 
-def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title, ylabel, out_path, percentiles_data=None, use_log_x=True):
+def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title, ylabel, out_path, percentiles_data=None):
     """Save probability of exceedance plot."""
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     
@@ -64,12 +64,8 @@ def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title
             plt.plot(thresholds, exceedance_data, alpha=0.7, color=color, 
                     label=label, linewidth=2)
     
-    if use_log_x:
-        plt.xscale('log')
-        plt.xlim(thresholds[1], thresholds[-1])
-    else:
-        plt.xlim(thresholds[0], thresholds[-1])
-    
+    plt.xscale('log')
+    plt.xlim(thresholds[1], thresholds[-1])
     plt.yscale('log')
     plt.xlabel(ylabel)
     plt.ylabel('Probability of Exceedance')
@@ -339,8 +335,7 @@ def main(cfg: DictConfig):
             title,
             ylabel,
             fn,
-            percentiles_data[var],
-            use_log_x=True
+            percentiles_data[var]
         )
         logger.info(f"{var.capitalize()} exceedance plot saved: {fn}")
 
