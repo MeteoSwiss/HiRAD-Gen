@@ -47,3 +47,7 @@ srun --environment=./ci/edf/modulus_env.toml bash -c "
 
     # Maps
     python src/hirad/eval/map_wind_stats.py --config-name=generate_era_cosmo.yaml
+
+    # Probability of exceedance
+    python src/hirad/eval/probability_of_exceedance_wind.py --config-name=generate_era_cosmo.yaml
+"
