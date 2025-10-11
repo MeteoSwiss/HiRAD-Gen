@@ -13,11 +13,12 @@ from hirad.eval.plotting import plot_map, get_channel_indices, LOG_INTERVAL
 
 
 def compute_wind_speed(u, v):
-    """Compute wind speed from U and V components."""
+    """Compute wind speed from U and V."""
     return np.hypot(u, v)
 
 
 def compute_wind_direction(u, v, calm_threshold=0.0):
+    """Compute wind direction in degrees from N."""
     dir_deg = (np.degrees(np.arctan2(-u, -v)) % 360)
     if calm_threshold > 0:
         speed = np.hypot(u, v)
@@ -25,90 +26,16 @@ def compute_wind_direction(u, v, calm_threshold=0.0):
     return dir_deg
 
 
-def circular_mean_direction(directions, weights=None):
-    """Calculate circular mean of wind directions in degrees.
-    
-    Args:
-        directions: Array of directions in degrees
-        weights: Optional weights (e.g., wind speeds)
-    """
-    # Convert to radians
-    rad = np.deg2rad(directions)
-    
-    # Calculate weighted mean of sin and cos components
-    if weights is not None:
-        sin_mean = np.average(np.sin(rad), weights=weights, axis=0)
-        cos_mean = np.average(np.cos(rad), weights=weights, axis=0)
-    else:
-        sin_mean = np.mean(np.sin(rad), axis=0)
-        cos_mean = np.mean(np.cos(rad), axis=0)
-    
-    # Calculate mean direction
-    mean_dir = np.arctan2(sin_mean, cos_mean)
-    mean_dir_deg = np.rad2deg(mean_dir)
-    mean_dir_deg = np.mod(mean_dir_deg, 360)
-    
-    return mean_dir_deg
-
-
-def circular_std(directions):
-    """Calculate circular standard deviation of wind directions in degrees.
-    
-    Returns values from 0 (perfect alignment) to ~81.03 degrees (uniform distribution)
-    """
-    rad = np.deg2rad(directions)
-    
-    # Calculate mean resultant length
-    sin_mean = np.mean(np.sin(rad), axis=0)
-    cos_mean = np.mean(np.cos(rad), axis=0)
-    R = np.hypot(sin_mean, cos_mean)
-    
-    # Circular standard deviation
-    # Handle R=0 case to avoid log(0)
-    R = np.clip(R, 1e-10, 1.0)
-    circ_std = np.rad2deg(np.sqrt(-2 * np.log(R)))
-    
-    return circ_std
-
-
 def apply_wind_statistic_streaming(times, out_root, mode, u_channel, v_channel, stat_type, stat_param=None):
-    """Apply a wind statistic by streaming through timesteps to minimize memory usage.
-    
-    Args:
-        times: List of timestep strings
-        out_root: Path to output directory
-        mode: Mode name (e.g., 'target', 'baseline', 'predictions')
-        u_channel: Index of U wind component
-        v_channel: Index of V wind component
-        stat_type: Type of statistic to compute
-        stat_param: Optional parameter for the statistic (e.g., quantile value)
-    
-    Returns:
-        Result as numpy array
-    """
-    # All statistics can now be computed incrementally
-    # Initialize accumulators
+    """Compute wind statistic by streaming through timesteps."""
     accumulator = None
     count = 0
-    
-    # Special accumulators for circular statistics
-    if stat_type == 'prevailing_direction':
-        sin_acc = None
-        cos_acc = None
-        speed_acc = None
-    elif stat_type == 'direction_variability':
-        sin_acc = None
-        cos_acc = None
+    sin_acc = cos_acc = speed_acc = None
     
     for ts in times:
-        if mode == 'predictions':
-            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
-            u = data[u_channel].cpu().numpy()
-            v = data[v_channel].cpu().numpy()
-        else:
-            data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
-            u = data[u_channel].cpu().numpy() if torch.is_tensor(data[u_channel]) else data[u_channel]
-            v = data[v_channel].cpu().numpy() if torch.is_tensor(data[v_channel]) else data[v_channel]
+        data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
+        u = data[u_channel].cpu().numpy() if torch.is_tensor(data[u_channel]) else data[u_channel]
+        v = data[v_channel].cpu().numpy() if torch.is_tensor(data[v_channel]) else data[v_channel]
         
         if stat_type == 'mean_speed':
             speed = compute_wind_speed(u, v)
@@ -179,19 +106,11 @@ def apply_wind_statistic_streaming(times, out_root, mode, u_channel, v_channel, 
         count += 1
         del data, u, v
     
-    # Finalize computation
     if stat_type == 'prevailing_direction':
-        mean_sin = sin_acc / (speed_acc + 1e-10)
-        mean_cos = cos_acc / (speed_acc + 1e-10)
-        mean_dir = np.arctan2(mean_sin, mean_cos)
+        mean_dir = np.arctan2(sin_acc / (speed_acc + 1e-10), cos_acc / (speed_acc + 1e-10))
         return np.mod(np.rad2deg(mean_dir), 360)
     elif stat_type == 'direction_variability':
-        # Calculate mean resultant length
-        sin_mean = sin_acc / count
-        cos_mean = cos_acc / count
-        R = np.hypot(sin_mean, cos_mean)
-        # Circular standard deviation
-        R = np.clip(R, 1e-10, 1.0)
+        R = np.clip(np.hypot(sin_acc / count, cos_acc / count), 1e-10, 1.0)
         return np.rad2deg(np.sqrt(-2 * np.log(R)))
     elif stat_type == 'max_speed':
         return accumulator
@@ -203,8 +122,7 @@ def apply_wind_statistic_streaming(times, out_root, mode, u_channel, v_channel, 
 
 
 def plot_wind_stat_map(data, filename, stat_config, label):
-    """Plot a single wind statistic map with appropriate styling."""
-    
+    """Plot wind statistic map."""
     if stat_config['type'] == 'mean_speed':
         plot_map(
             data, filename,
@@ -257,7 +175,6 @@ def plot_wind_stat_map(data, filename, stat_config, label):
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
 def main(cfg: DictConfig):
-    # Setup and config
     DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -273,14 +190,12 @@ def main(cfg: DictConfig):
     out_root = Path(cfg.generation.io.output_path or './outputs')
     indices = get_channel_indices(dataset)
     
-    # Get U and V wind component indices
     u10_out = indices['output'].get('10u')
     v10_out = indices['output'].get('10v')
     u10_in = indices['input'].get('10u', u10_out)
     v10_in = indices['input'].get('10v', v10_out)
-    
 
-    # Wind statistic configurations
+
     WIND_STATISTICS_CONFIG = {
         'mean_speed': {
             'type': 'mean_speed',
@@ -342,27 +257,24 @@ def main(cfg: DictConfig):
         for name, config in WIND_STATISTICS_CONFIG.items()
     ]
 
-    # Target and baseline modes
     basic_modes = {
         'target': ((u10_out, v10_out), 'COSMO-2 Analysis'),
         'baseline': ((u10_in, v10_in), 'ERA5'),
         'regression-prediction': ((u10_out, v10_out), 'Regression Prediction')
     }
-    logger.info(f"Generating {len(stat_configs)} wind statistics for {len(basic_modes)} basic modes + predictions")
+    logger.info(f"Generating {len(stat_configs)} statistics for {len(basic_modes)} modes + predictions")
 
     for mode, (wind_channels, label) in basic_modes.items():
         logger.info(f"Processing mode: {mode}")
         u_channel, v_channel = wind_channels
         
-        # Check if mode is available
         try:
             test_data = torch.load(out_root/times[0]/f"{times[0]}-{mode}", weights_only=False)
             del test_data
         except Exception as e:
-            logger.warning(f"{mode} not available, skipping: {e}")
+            logger.warning(f"{mode} not available: {e}")
             continue
         
-        # Compute and plot all statistics for this mode using streaming approach
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for {mode}...")
             try:
@@ -381,10 +293,9 @@ def main(cfg: DictConfig):
                 )
                 del result
             except Exception as e:
-                logger.error(f"Failed to compute {stat_config['title_stat']} for {mode}: {e}")
+                logger.error(f"Failed {stat_config['title_stat']} for {mode}: {e}")
                 continue
 
-    # Predictions mode: process each member and statistic separately to save memory
     logger.info("Processing predictions mode...")
     try:
         data = torch.load(out_root/times[0]/f"{times[0]}-predictions", weights_only=False)
@@ -393,32 +304,23 @@ def main(cfg: DictConfig):
         logger.info(f"Found {n_members} ensemble members")
         
         for member_idx in range(n_members):
-            logger.info(f"Processing prediction member {member_idx+1}/{n_members}")
+            logger.info(f"Processing member {member_idx+1}/{n_members}")
             
-            # Process each statistic for this member using streaming
             for stat_config in stat_configs:
                 logger.info(f"Computing {stat_config['title_stat']} for member {member_idx+1}...")
                 try:
-                    # Create a custom mode string for this member
                     def load_member_data(ts):
                         pred_data = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)
-                        u = pred_data[member_idx, u10_out].cpu().numpy()
-                        v = pred_data[member_idx, v10_out].cpu().numpy()
+                        u_data = pred_data[member_idx, u10_out]
+                        v_data = pred_data[member_idx, v10_out]
+                        u = u_data.cpu().numpy() if torch.is_tensor(u_data) else u_data
+                        v = v_data.cpu().numpy() if torch.is_tensor(v_data) else v_data
                         del pred_data
                         return u, v
                     
-                    # All statistics are now streaming
                     accumulator = None
                     count = 0
-                    
-                    # Special accumulators for circular statistics
-                    if stat_config['type'] == 'prevailing_direction':
-                        sin_acc = None
-                        cos_acc = None
-                        speed_acc = None
-                    elif stat_config['type'] == 'direction_variability':
-                        sin_acc = None
-                        cos_acc = None
+                    sin_acc = cos_acc = speed_acc = None
                     
                     for i, ts in enumerate(times):
                         if i % LOG_INTERVAL == 0:
@@ -496,19 +398,11 @@ def main(cfg: DictConfig):
                         count += 1
                         del u, v
                     
-                    # Finalize computation
                     if stat_config['type'] == 'prevailing_direction':
-                        mean_sin = sin_acc / (speed_acc + 1e-10)
-                        mean_cos = cos_acc / (speed_acc + 1e-10)
-                        mean_dir = np.arctan2(mean_sin, mean_cos)
+                        mean_dir = np.arctan2(sin_acc / (speed_acc + 1e-10), cos_acc / (speed_acc + 1e-10))
                         member_result = np.mod(np.rad2deg(mean_dir), 360)
                     elif stat_config['type'] == 'direction_variability':
-                        # Calculate mean resultant length
-                        sin_mean = sin_acc / count
-                        cos_mean = cos_acc / count
-                        R = np.hypot(sin_mean, cos_mean)
-                        # Circular standard deviation
-                        R = np.clip(R, 1e-10, 1.0)
+                        R = np.clip(np.hypot(sin_acc / count, cos_acc / count), 1e-10, 1.0)
                         member_result = np.rad2deg(np.sqrt(-2 * np.log(R)))
                     elif stat_config['type'] == 'max_speed':
                         member_result = accumulator
@@ -519,22 +413,20 @@ def main(cfg: DictConfig):
                     else:
                         member_result = accumulator / count
                     
-                    # Create map
                     map_output_dir = out_root / f"maps_wind_{stat_config['stat_name']}"
                     map_output_dir.mkdir(parents=True, exist_ok=True)
                     member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
-                    member_label = f'CorrDiff Member {member_idx+1}'
-                    plot_wind_stat_map(member_result, member_filename, stat_config, member_label)
+                    plot_wind_stat_map(member_result, member_filename, stat_config, f'CorrDiff Member {member_idx+1}')
                     del member_result
                 
                 except Exception as e:
-                    logger.error(f"Failed to compute {stat_config['title_stat']} for member {member_idx+1}: {e}")
+                    logger.error(f"Failed {stat_config['title_stat']} for member {member_idx+1}: {e}")
                     continue
     
     except Exception as e:
-        logger.warning(f"Predictions not available, skipping: {e}")
+        logger.warning(f"Predictions not available: {e}")
 
-    logger.info("All wind statistics maps generated successfully")
+    logger.info("Wind statistics generation complete")
 
 
 if __name__ == '__main__':
