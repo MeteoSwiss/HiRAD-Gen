@@ -1,25 +1,18 @@
 
 
-import datetime
 import logging
-import os
-import shutil
-import sys
-import yaml
-import array
 
 from anemoi.datasets import open_dataset
 from anemoi.datasets.data.dataset import Dataset
-import netCDF4
 import numpy as np
-from pandas import to_datetime
-from scipy.interpolate import griddata
-from meteodatalab import icon_grid
 from meteodatalab.operators import regrid
-import torch
-import multiprocessing
 import xarray as xr
 from meteodatalab import ogd_api
+from hirad.input_data.interpolate_basic import plot_projection
+
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+from earthkit.geo.rotate import unrotate
 
 def anemoi_to_xarray(anemoi_data: Dataset, variable):
     lon = anemoi_data.longitudes
@@ -65,6 +58,55 @@ def generate_times(anemoi_data: Dataset):
         curr_time = curr_time + anemoi_data.frequency
     return times
 
-realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr')
-myxarray = anemoi_to_xarray(realch1, "TOT_PREC")
-regrid.icon2rotlatlon(myxarray)
+def get_geo_coords(regridded_data: xr.Dataset):
+    xmin = regridded_data.metadata.get("longitudeOfFirstGridPointInDegrees")
+    xmax = regridded_data.metadata.get("longitudeOfLastGridPointInDegrees")
+    dx = regridded_data.metadata.get("iDirectionIncrementInDegrees")
+    ymin = regridded_data.metadata.get("latitudeOfFirstGridPointInDegrees")
+    ymax = regridded_data.metadata.get("latitudeOfLastGridPointInDegrees")
+    dy = regridded_data.metadata.get("jDirectionIncrementInDegrees")
+    y = np.arange(ymin,ymax+dy,dy)
+    x = np.arange(xmin,xmax+dx,dx)
+    sp_lat = regridded_data.metadata.get("latitudeOfSouthernPoleInDegrees")
+    sp_lon = regridded_data.metadata.get("longitudeOfSouthernPoleInDegrees")
+    xcoords = np.meshgrid(x,y)[0].flatten()
+    ycoords = np.meshgrid(x,y)[1].flatten()
+    geo_coords = unrotate(ycoords, xcoords, sp_lat, sp_lon)
+    return geo_coords
+
+def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None):
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.coastlines()
+    ax.gridlines(draw_labels=False)
+    plt.colorbar(p, orientation="horizontal")
+
+def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, projection=ccrs.PlateCarree(), cmap=None, vmin = None, vmax = None):
+    """Plot observed or interpolated data in a scatter plot."""
+    # TODO: Refactor this somehow, it's not really generalizing well across variables.
+    fig = plt.figure()
+    fig, ax = plt.subplots(subplot_kw={"projection": projection})
+    logging.info(f'plotting values to {filename}')
+    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax)
+    #p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+    #ax.coastlines()
+    #ax.gridlines(draw_labels=True)
+    #plt.colorbar(p, orientation="horizontal")
+    plt.savefig(filename)
+    plt.close('all')
+    
+
+realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr',
+                       )
+myxarray = anemoi_to_xarray(realch1, "TOT_PREC").to_dataarray()
+regridded=regrid.icon2rotlatlon(myxarray)
+plot_and_save_projection(realch1.longitudes, realch1.latitudes,
+                         realch1[0,56,0,:], "anemoi.png")
+plot_and_save_projection(myxarray.lon, myxarray.lat,
+                         myxarray[0,0,0,:], "xarray.png")
+# South pole rotation of lon=10, latitude=-43
+#rotated_crs = ccrs.RotatedPole(
+#    pole_longitude=190, pole_latitude=43
+#)
+geo_coords = get_geo_coords(regridded)
+plot_and_save_projection(geo_coords[1], geo_coords[0],
+                         regridded[0,0,0,:], "regridded.png")
