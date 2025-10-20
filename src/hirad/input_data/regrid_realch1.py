@@ -64,36 +64,6 @@ def generate_times(anemoi_data: Dataset):
         times.append(curr_time)
         curr_time = curr_time + anemoi_data.frequency
     return times
-        
-    
-
-def get_coeffs_path(model: str):
-    return coeffs_path
-    # TODO some value error check file avialable ofr sth.
-
-def remap():
-    # get UUID for 1-km native grid
-    #icon_grid_uuid = get_uuid('icon-ch1-eps')
-    
-    coeffs_path = f'/store_new/mch/msopr/icon_workflow_2/iconremap-weights/{model}-rotlatlon.nc'
-    coeffs = xr.open_dataset(coeffs_path)
-    
-    indices = coeffs["rbf_B_glbidx"].values
-    weights = coeffs["rbf_B_wgt"].values
-    geo = {
-        "gridType": "rotated_ll",
-        "longitudeOfSouthernPoleInDegrees": coeffs.north_pole_lon - 180,
-        "latitudeOfSouthernPoleInDegrees": -1 * coeffs.north_pole_lat,
-    }
-    dst = RegularGrid(
-        crs=_get_crs(geo),
-        nx=coeffs.nx,
-        ny=coeffs.ny,
-        xmin=coeffs.xmin,
-        ymin=coeffs.ymin,
-        xmax=coeffs.xmax,
-        ymax=coeffs.ymax,
-    )
 
 realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr')
 myxarray = anemoi_to_xarray(realch1, "TOT_PREC")
