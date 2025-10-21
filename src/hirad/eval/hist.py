@@ -131,7 +131,7 @@ def main(cfg: DictConfig):
     land_mask = load_land_sea_mask()
 
     # Define histogram bins
-    bins = np.logspace(-1, 1, 50)  # Log-spaced bins for precipitation
+    bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
     
     # Storage for histogram data and land values
     hist_data = {}
@@ -153,8 +153,8 @@ def main(cfg: DictConfig):
                 data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * CONV_FACTOR_HOURLY * land_mask
                 
                 # Apply scaling factor for baseline
-                if mode == 'baseline':
-                    data = data / 6.0
+                # if mode == 'baseline':
+                #     data = data / 6.0
                 
                 land_values = data.values[~np.isnan(data.values)]
                 all_values.extend(land_values)

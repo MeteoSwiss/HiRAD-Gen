@@ -103,8 +103,8 @@ def main(cfg: DictConfig):
         hourly_p99 = da.groupby('time.hour').quantile(0.99, dim='time')
         
         # Apply scaling factor for baseline
-        if mode == 'baseline':
-            hourly_p99 = hourly_p99 / 6.0
+        # if mode == 'baseline':
+        #     hourly_p99 = hourly_p99 / 6.0
         
         pct99_mean[mode] = hourly_p99.mean(dim=['lat', 'lon'])
             

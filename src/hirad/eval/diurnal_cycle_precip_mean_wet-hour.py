@@ -72,7 +72,7 @@ def main(cfg: DictConfig):
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
         target = torch.load(out_root/ts/f"{ts}-target", weights_only=False)[tp_out] * CONV_FACTOR
-        baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * CONV_FACTOR / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
+        baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * CONV_FACTOR # / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
         preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * CONV_FACTOR
         try:
             mean_pred = torch.load(out_root/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * CONV_FACTOR
