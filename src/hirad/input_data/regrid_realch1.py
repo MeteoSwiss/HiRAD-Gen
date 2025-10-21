@@ -8,7 +8,7 @@ import numpy as np
 from meteodatalab.operators import regrid
 import xarray as xr
 from meteodatalab import ogd_api
-from hirad.input_data.interpolate_basic import plot_projection
+from hirad.input_data.interpolate_basic import plot_and_save_projection
 
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -67,6 +67,7 @@ def get_geo_coords(regridded_data: xr.Dataset):
     dy = regridded_data.metadata.get("jDirectionIncrementInDegrees")
     y = np.arange(ymin,ymax+dy,dy)
     x = np.arange(xmin,xmax+dx,dx)
+	# TODO, this parameter is not producing what I want it to.
     sp_lat = regridded_data.metadata.get("latitudeOfSouthernPoleInDegrees")
     sp_lon = regridded_data.metadata.get("longitudeOfSouthernPoleInDegrees")
     xcoords = np.meshgrid(x,y)[0].flatten()
@@ -74,29 +75,7 @@ def get_geo_coords(regridded_data: xr.Dataset):
     geo_coords = unrotate(ycoords, xcoords, sp_lat, sp_lon)
     return geo_coords
 
-def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None):
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.coastlines()
-    ax.gridlines(draw_labels=False)
-    plt.colorbar(p, orientation="horizontal")
-
-def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, projection=ccrs.PlateCarree(), cmap=None, vmin = None, vmax = None):
-    """Plot observed or interpolated data in a scatter plot."""
-    # TODO: Refactor this somehow, it's not really generalizing well across variables.
-    fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": projection})
-    logging.info(f'plotting values to {filename}')
-    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax)
-    #p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    #ax.coastlines()
-    #ax.gridlines(draw_labels=True)
-    #plt.colorbar(p, orientation="horizontal")
-    plt.savefig(filename)
-    plt.close('all')
-    
-
-realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr',
-                       )
+realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr')
 myxarray = anemoi_to_xarray(realch1, "TOT_PREC").to_dataarray()
 regridded=regrid.icon2rotlatlon(myxarray)
 plot_and_save_projection(realch1.longitudes, realch1.latitudes,
