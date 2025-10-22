@@ -24,4 +24,4 @@ model_args:
   # Per-resolution multipliers for the number of channels.
   channel_mult: [1, 2, 2, 2, 2]
   # Resolutions at which self-attention layers are applied.
-  attn_resolutions: [28]
+  attn_resolutions: [22]

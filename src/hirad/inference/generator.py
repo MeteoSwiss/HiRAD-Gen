@@ -2,6 +2,7 @@ from typing import Callable
 from functools import partial
 import nvtx
 import numpy as np
+import random
 import torch
 from torch.distributed import gather
 from hirad.utils.inference_utils import regression_step, diffusion_step
@@ -32,8 +33,9 @@ class Generator():
         self.get_rank_batches()
         self.patching = None
 
-    def get_rank_batches(self):
-        seeds = list(np.arange(self.ensemble_size))
+    def get_rank_batches(self, seeds=None):
+        if seeds is None:
+            seeds = list(np.arange(self.ensemble_size))
         num_batches = (
             (len(seeds) - 1) // (self.batch_size * self.dist.world_size) + 1
         ) * self.dist.world_size
@@ -63,7 +65,7 @@ class Generator():
             overlap_pix=overlap_pix,
         )
 
-    def generate(self, image_lr, lead_time_label=None):
+    def generate(self, image_lr, lead_time_label=None, randomize=False, random_seed=None):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
@@ -86,6 +88,12 @@ class Generator():
                     mean_hr = image_reg[0:1]
                 else:
                     mean_hr = None
+                if randomize:
+                    # Set random seed for numpy
+                    if random_seed is not None:
+                        np.random.seed((random_seed) % (1 << 31))
+                    seeds = np.random.randint(0, 1<<31, size=self.ensemble_size)
+                    self.get_rank_batches(seeds=seeds)
                 with nvtx.annotate("diffusion model", color="purple"):
                     image_res = diffusion_step(
                         net=self.net_res,
