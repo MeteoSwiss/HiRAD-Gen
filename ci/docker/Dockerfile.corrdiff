@@ -10,4 +10,5 @@ RUN pip install \
     Cartopy==0.22.0 \
     xskillscore \
     scoringrules \
-    mlflow
+    mlflow \
+    meteodata-lab 

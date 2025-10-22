@@ -61,7 +61,7 @@ def plot_stat_map(data, filename, stat_config, label):
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]} (%)',
-            label='Wet-Hour Frequency [%]', vmin=0, vmax=10, cmap='PuBu', extend='max'
+            label='Wet-Hour Frequency [%]', vmin=0, vmax=30, cmap='PuBu', extend='max'
         )
     elif stat_config['type'] == 'cdd':
         plot_map(

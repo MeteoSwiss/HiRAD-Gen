@@ -15,6 +15,7 @@ from scipy.interpolate import griddata
 import torch
 import multiprocessing
 import xarray
+from earthkit.geo.rotate import unrotate
 
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 ERA_MARGIN_DEGREES = 1.0
@@ -76,11 +77,11 @@ def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarr
         logging.info(f'plotting {datestr} to {outfile_plots_path}')
         for j,var in enumerate(era.variables):
         # plot era original
-            _plot_and_save_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
+            plot_and_save_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
 
-            _plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
+            plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
         for j,var in enumerate(cosmo.variables):
-            _plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
+            plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
 
 
@@ -163,7 +164,7 @@ def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.ar
     ax.gridlines(draw_labels=False)
     plt.colorbar(p, orientation="horizontal")
 
-def _plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
     """Plot observed or interpolated data in a scatter plot."""
     # TODO: Refactor this somehow, it's not really generalizing well across variables.
     fig = plt.figure()
