@@ -239,7 +239,14 @@ def main(cfg: DictConfig) -> None:
                 )
                 image_tar = image_tar.to(device=device).to(torch.float32)
                 # image_out, image_reg = generate_fn(image_lr,lead_time_label)
-                image_out, image_reg = generator.generate(image_lr,lead_time_label)
+                random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
+                # print(f"On rank {dist.rank} using base random seed: {random_seed} for time index {time_index}")
+                image_out, image_reg = generator.generate(
+                                            image_lr,
+                                            lead_time_label,
+                                            randomize=cfg.generation.get("randomize", False),
+                                            random_seed=random_seed
+                                        )
 
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]

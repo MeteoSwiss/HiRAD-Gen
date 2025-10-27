@@ -6,7 +6,13 @@ inference_mode: all
   # Choose between "all" (regression + diffusion), "regression" or "diffusion"
   # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
   # img_shape_x and img_shape_y
-# overlap_pixels: 0
+randomize: True
+  # Whether to randomize the random seeds for each generation. If false, fixed seeds
+  # from 0 to num_ensembles-1 will be used for each time step in times/times_range.
+random_seed: 129 
+  # Base random seed. This is only used when randomize is True.
+  # random seed will be set for numpy random module to have reproducible randomized generative process.
+
   # Number of overlapping pixels between adjacent patches
 # boundary_pixels: 0
   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
