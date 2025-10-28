@@ -1,6 +1,7 @@
 
 
 import logging
+import os
 import sys
 
 from anemoi.datasets import open_dataset
@@ -17,22 +18,20 @@ import cartopy.crs as ccrs
 from earthkit.geo.rotate import unrotate
 
 # Take anemoi dataset and provide xarray dataarrays for a set of variables.
-# returns: list of xarray dataarrays, and list of variable indices (anemoi)
-def anemoi_to_xarray(anemoi_data: Dataset, variables):
+# returns: list of xarray dataarrays
+def anemoi_to_xarray(anemoi_data: Dataset):
 	lon = anemoi_data.longitudes
 	lat = anemoi_data.latitudes
 	eps = [0]  # deterministic
-	time = generate_times(anemoi_data)
+	time = generate_times(anemoi_data) # anemoi_data.dates?
 	metadata = getMetadataFromOGD()
 	dataarrays = []
-	var_indices = []
-	for variable in variables:
-		var_index = anemoi_data.variables.index(variable)
-		var_indices.append(var_index)
+	variables = anemoi_data.variables
+	for var_index in range(anemoi_data.shape[1]):
 
 		ds = xr.Dataset(
 			data_vars=dict(
-				variable=(["time", "eps", "cell"], np.array(anemoi_data.data[:,var_index,:,:])),
+				variable=(["time", "eps", "cell"], np.array(anemoi_data[:,var_index,:,:])),
 			),
 			coords=dict(
 				eps=eps,
@@ -40,18 +39,18 @@ def anemoi_to_xarray(anemoi_data: Dataset, variables):
 				lon=("cell", lon),
 				lat=("cell", lat),
 			),
-			attrs=dict(description=f'xarray from anemoi dataset for {variable}',
+			attrs=dict(description=f'xarray from anemoi dataset for {variables[var_index]}',
 				metadata=metadata),
 		)
 		dataarrays.append(ds.to_dataarray())
-	return dataarrays, var_indices
+	return dataarrays
 
 # Run a request to get the metadata, so that we can fake out an xarray.
 def getMetadataFromOGD():
     lead_times = ["P0DT0H"]
     req = ogd_api.Request(
 		collection="ogd-forecasting-icon-ch1",
-		variable="TOT_PREC",
+		variable="TOT_PREC", #assuming this won't cause problems; we're only using grid info
 		ref_time="latest",
 		perturbed=False,
 		lead_time=lead_times,
@@ -99,29 +98,47 @@ def main():
 	# yml format
 	realch1_config_file = sys.argv[1]
 	output_directory = sys.argv[2]
+	if not os.path.exists(output_directory):
+		os.mkdir(output_directory)
+	for subdir in ['info', 'plots', 'realch1']:
+		if not os.path.exists(os.path.join(output_directory, subdir)):
+			os.mkdir(os.path.join(output_directory, subdir))
 
 	with open(realch1_config_file) as realch1_file:
 		realch1_config = yaml.safe_load(realch1_file)
 	realch1 = open_dataset(realch1_config)
+	variables = realch1.variables
 
-logging.basicConfig(level=logging.INFO)
+	logging.basicConfig(level=logging.INFO)
 
-realch1 = open_dataset('/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr')
-variables = ['TD_2M', 'TOT_PREC']
-myxarrays, var_indices = anemoi_to_xarray(realch1, variables)
-
-for i in range(len(variables)):
-	myxarray = myxarrays[i]
-	regridded=regrid.icon2rotlatlon(myxarray)
-	plot_and_save_projection(realch1.longitudes, realch1.latitudes,
-							realch1[0,var_indices[i],0,:], f'{variables[i]}-icon.png', s=0.005)
-	plot_and_save_projection(myxarray.lon, myxarray.lat,
-							myxarray[0,0,0,:], f'{variables[i]}-xarray.png', s=0.005)
-
+	xarrays = anemoi_to_xarray(realch1)
+	
+	# Get the lat/lon info by regridding first variable
+	regridded=regrid.icon2rotlatlon(xarrays[0])
 	lats, lons = get_geo_coords(regridded)
+	logging.info(regridded)
+	logging.info(regridded.data)
+	logging.info(regridded.data.shape)
+	# TODO: Save lat/lon info 
+	
+	# regridded is in shape (eps, time, variable, x, y)
+	# want this in shape (time,channel,ensemble,grid)
+	torch_data = np.zeros([len(realch1.dates), len(realch1.variables), 1, len(lats)])
+	torch_data[:,0,:,:] = regridded.data.reshape(regridded.shape[1], regridded.shape[0], regridded.shape[3]*regridded.shape[4])
+	
+	for i in range(1, len(xarrays)):
+		xarray = xarrays[i]
+		regridded=regrid.icon2rotlatlon(xarray)
+		torch_data[:,i,:,:] = regridded.data.reshape(regridded.shape[1], regridded.shape[0], regridded.shape[3]*regridded.shape[4])
+	
+	# TODO: output each time point into torch file
 
-	plot_and_save_projection(lons, lats,
-							regridded[0,0,0,:], f'{variables[i]}-regridded.png', s=0.005)
+	# Output plots
+	for i in range(torch_data.shape[1]):
+		plot_and_save_projection(realch1.longitudes, realch1.latitudes,
+							realch1[0,i,0,:], f'{variables[i]}-icon.png', s=0.005)
+		plot_and_save_projection(lons, lats,
+								torch_data[0,i,0,:], f'{variables[i]}-regridded.png', s=0.005)
 
 
 if __name__ == "__main__":
