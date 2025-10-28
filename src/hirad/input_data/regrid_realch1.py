@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import sys
 
 from anemoi.datasets import open_dataset
@@ -12,6 +13,8 @@ import xarray as xr
 from meteodatalab import ogd_api
 from hirad.input_data.interpolate_basic import plot_and_save_projection
 import yaml
+import torch
+from pandas import to_datetime
 
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
@@ -104,6 +107,9 @@ def main():
 		if not os.path.exists(os.path.join(output_directory, subdir)):
 			os.mkdir(os.path.join(output_directory, subdir))
 
+	# Copy the realch1.yml file to the info directory
+	shutil.copy(realch1_config_file, os.path.join(output_directory, 'info'))
+
 	with open(realch1_config_file) as realch1_file:
 		realch1_config = yaml.safe_load(realch1_file)
 	realch1 = open_dataset(realch1_config)
@@ -116,13 +122,14 @@ def main():
 	# Get the lat/lon info by regridding first variable
 	regridded=regrid.icon2rotlatlon(xarrays[0])
 	lats, lons = get_geo_coords(regridded)
-	logging.info(regridded)
-	logging.info(regridded.data)
-	logging.info(regridded.data.shape)
-	# TODO: Save lat/lon info 
+	
+	# Save lat/lon info
+	grid = np.column_stack((lats, lons))
+	torch.save(grid, os.path.join(output_directory, 'info', 'realch1-lat-lon'))
 	
 	# regridded is in shape (eps, time, variable, x, y)
 	# want this in shape (time,channel,ensemble,grid)
+	# nervous about the reshaping screwing things up, but that's why we plot the interpolated data to visually check.
 	torch_data = np.zeros([len(realch1.dates), len(realch1.variables), 1, len(lats)])
 	torch_data[:,0,:,:] = regridded.data.reshape(regridded.shape[1], regridded.shape[0], regridded.shape[3]*regridded.shape[4])
 	
@@ -131,14 +138,22 @@ def main():
 		regridded=regrid.icon2rotlatlon(xarray)
 		torch_data[:,i,:,:] = regridded.data.reshape(regridded.shape[1], regridded.shape[0], regridded.shape[3]*regridded.shape[4])
 	
-	# TODO: output each time point into torch file
+	# Output each time point into torch file
+	for t in range(torch_data.shape[0]):	
+		fmtdate = to_datetime(realch1.dates[t]).strftime('%Y%m%d-%H%M')
+		torch.save(torch_data[t,:], os.path.join(output_directory, 'realch1', fmtdate))
 
-	# Output plots
+
+	# Output plots for each variable, for first time point
 	for i in range(torch_data.shape[1]):
 		plot_and_save_projection(realch1.longitudes, realch1.latitudes,
-							realch1[0,i,0,:], f'{variables[i]}-icon.png', s=0.005)
+					realch1[0,i,0,:],
+					os.path.join(output_directory, 'plots', f'{variables[i]}-iconnative.png'),
+					s=0.005)
 		plot_and_save_projection(lons, lats,
-								torch_data[0,i,0,:], f'{variables[i]}-regridded.png', s=0.005)
+					torch_data[0,i,0,:],
+					os.path.join(output_directory, 'plots', f'{variables[i]}-rotlatlon.png'),
+					s=0.005)
 
 
 if __name__ == "__main__":
