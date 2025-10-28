@@ -158,19 +158,19 @@ def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
     indices = np.where(box_lon*box_lat)
     return indices
 
-def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None):
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None, s = None):
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax, s=s)
     ax.coastlines()
-    ax.gridlines(draw_labels=False)
+    ax.gridlines(draw_labels=True)
     plt.colorbar(p, orientation="horizontal")
 
-def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, projection=ccrs.PlateCarree(), cmap=None, vmin = None, vmax = None, s = None):
     """Plot observed or interpolated data in a scatter plot."""
     # TODO: Refactor this somehow, it's not really generalizing well across variables.
     fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    fig, ax = plt.subplots(subplot_kw={"projection": projection})
     logging.info(f'plotting values to {filename}')
-    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax)
+    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax, s)
     #p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
     #ax.coastlines()
     #ax.gridlines(draw_labels=True)
