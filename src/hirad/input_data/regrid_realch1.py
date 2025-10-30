@@ -21,21 +21,28 @@ import cartopy.crs as ccrs
 from earthkit.geo.rotate import unrotate
 
 TRIM_EDGE = 41
+XARRAY_BATCH = 4
 
 # Take anemoi dataset and provide xarray dataarrays for a set of variables.
 # returns: list of xarray dataarrays
-def anemoi_to_xarray(anemoi_data: Dataset):
+def anemoi_to_xarray(anemoi_data: Dataset, start_date_index=-1, end_date_index=-1):
+	if start_date_index == -1:
+		start_date_index = 0
+	if end_date_index == -1:
+		end_date_index = len(anemoi_data.dates)
 	lon = anemoi_data.longitudes
 	lat = anemoi_data.latitudes
 	eps = [0]  # deterministic
-	time = anemoi_data.dates
+	time = anemoi_data.dates[start_date_index:end_date_index]
 	metadata = getMetadataFromOGD()
 	dataarrays = []
 	variables = anemoi_data.variables
 	for var_index in range(anemoi_data.shape[1]):
+		logging.info(f'building xarray for {variables[var_index]}')
 		ds = xr.Dataset(
 			data_vars=dict(
-				variable=(["time", "eps", "cell"], np.array(anemoi_data[:,var_index,:,:])),
+				variable=(["time", "eps", "cell"],
+			  np.array(anemoi_data[start_date_index:end_date_index,var_index,:,:])),
 			),
 			coords=dict(
 				eps=eps,
@@ -129,41 +136,36 @@ def main():
 	realch1 = open_dataset(realch1_config)
 	variables = realch1.variables
 
-	xarrays = anemoi_to_xarray(realch1)
-	
-	# Get the lat/lon info by regridding first variable
-	logging.info(f'regridding {variables[0]} for time {realch1.start_date} to {realch1.end_date}')
-	start = datetime.datetime.now()
+	# Get the lat/lon info by regridding one variable
+	xarrays = anemoi_to_xarray(realch1, 0, 1)
 	regridded=regrid.icon2rotlatlon(xarrays[0])
-	end = datetime.datetime.now()
-	logging.info(f'   regridding took {end-start} seconds')
 	logging.info('getting geo coords')
 	lats, lons = get_geo_coords(regridded, trim_edge=TRIM_EDGE)
 	
-	# Save lat/lon info
+	# Save grid to file
 	grid = np.column_stack((lats, lons))
 	torch.save(grid, os.path.join(output_directory, 'info', 'realch1-lat-lon'))
-	
-	# regridded is in shape (eps, time, variable, x, y)
-	# want this in shape (time,channel,ensemble,grid)
-	# nervous about the reshaping screwing things up, but that's why we plot the interpolated data to visually check.
-	torch_data = np.zeros([len(realch1.dates), len(realch1.variables), 1, len(lats)])
-	torch_data[:,0,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
-	
-	for i in range(1, len(xarrays)):
-		logging.info(f'regridding {variables[i]} for time {realch1.start_date} to {realch1.end_date}')
-		xarray = xarrays[i]
-		start = datetime.datetime.now()
-		regridded=regrid.icon2rotlatlon(xarray)
-		end = datetime.datetime.now()
-		logging.info(f'   regridding took {end-start} seconds')
-		torch_data[:,i,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
-	
-	# Output each time point into torch file
-	logging.info('saving torch data')
-	for t in range(torch_data.shape[0]):	
-		fmtdate = to_datetime(realch1.dates[t]).strftime('%Y%m%d-%H%M')
-		torch.save(torch_data[t,:], os.path.join(output_directory, 'realch1', fmtdate))
+
+	# Split regridding into batches; too many time points seems to not scale well.
+	for i in range(0, len(realch1.dates), XARRAY_BATCH):
+		start_index = i
+		end_index = min(i+XARRAY_BATCH, len(realch1.dates))
+		torch_data = np.zeros([end_index-start_index, len(realch1.variables), 1, len(lats)])
+		
+		xarrays = anemoi_to_xarray(realch1, start_index, end_index)
+		for j in range(len(xarrays)):
+			logging.info(f'regridding {variables[j]} for time {realch1.dates[start_index]} to {realch1.dates[end_index]}')
+			xarray = xarrays[j]
+			start = datetime.datetime.now()
+			regridded=regrid.icon2rotlatlon(xarray)
+			end = datetime.datetime.now()
+			logging.info(f'   regridding took {end-start} seconds')
+			torch_data[0:end_index-start_index,j,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
+		
+		logging.info('saving torch data')
+		for k in range(torch_data.shape[0]):
+			fmtdate = to_datetime(realch1.dates[start_index + k]).strftime('%Y%m%d-%H%M')
+			torch.save(torch_data[k,:], os.path.join(output_directory, 'realch1', fmtdate))
 
 	# Output plots for each variable, for first time point
 	for i in range(torch_data.shape[1]):
