@@ -62,20 +62,21 @@ def extract_lat_lon_n320(data):
     logging.info('extracting lat/lon')
     logging.info(f'lat lon shapes {lat.shape} {lon.shape}')
 
-def extract_values(data, variable, area=None):
+def extract_values(data: netCDF4.Dataset, variable, start_date=None, end_date=None, area=None):
     values = data[variable][:]
     print(values.shape)
-    if area:
-        lat = data['latitude'][:]
-        lon = data['longitude'][:]
+    #if area:
+        # Not sure this is working.
+    #    lat = data['latitude'][:]
+    #    lon = data['longitude'][:]
         # https://stackoverflow.com/questions/29135885/netcdf4-extract-for-subset-of-lat-lon
-        latli = np.argmin( np.abs(lat - area[2]))
-        latui = np.argmin( np.abs(lat - area[0]))
-        lonli = np.argmin( np.abs(lon - area[1]))
-        lonui = np.argmin( np.abs(lon - area[3]))
-        lat = data['latitude'][latli:latui]
-        lon = data['longitude'][lonli:lonui]
-        values = data[variable][latli:latui,lonli:lonui]
+    #    latli = np.argmin( np.abs(lat - area[2]))
+    #    latui = np.argmin( np.abs(lat - area[0]))
+    #    lonli = np.argmin( np.abs(lon - area[1]))
+    #    lonui = np.argmin( np.abs(lon - area[3]))
+    #    lat = data['latitude'][latli:latui]
+    #    lon = data['longitude'][lonli:lonui]
+    #    values = data[variable][latli:latui,lonli:lonui]
     return np.reshape(values, (values.shape[0], values.shape[1]*values.shape[2]))
  
 def reshape_to_cosmo(vals):
