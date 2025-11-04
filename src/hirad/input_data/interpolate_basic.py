@@ -136,11 +136,11 @@ def _save_datetime_file(values: np.ndarray[np.intp], variables: np.ndarray, date
     filename = filepath + _format_date(date)
     torch.save(values, filename)
 
-def _save_latlon_grid(dataset: Dataset, filename: str):
+def save_anemoi_latlon_grid(dataset: Dataset, filename: str):
     grid = np.column_stack((dataset.latitudes, dataset.longitudes))
     torch.save(grid, filename)
 
-def _save_stats(dataset: Dataset, filename: str):
+def save_anemoi_stats(dataset: Dataset, filename: str):
     torch.save(dataset.statistics, filename)
 
 def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None, s = None):
@@ -192,10 +192,10 @@ def interpolate_era5_cosmo_and_save(infile_era: str, infile_cosmo: str, outfile_
     logging.info('Successfully read input')
 
     # Output stats and grid
-    _save_stats(era, os.path.join(outfile_data_path, "info/era-stats"))
-    _save_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
-    _save_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
-    _save_latlon_grid(era, os.path.join(outfile_data_path, "info/era-lat-lon"))
+    save_anemoi_stats(era, os.path.join(outfile_data_path, "info/era-stats"))
+    save_anemoi_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
+    save_anemoi_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
+    save_anemoi_latlon_grid(era, os.path.join(outfile_data_path, "info/era-lat-lon"))
 
     # Copy the .yaml files over for recording purposes
     shutil.copy(infile_cosmo, os.path.join(outfile_data_path, "info/cosmo.yaml"))

@@ -51,28 +51,6 @@ def _read_input(era_config_file: str, realch1_latlon_file: str) -> tuple[Dataset
     return (era, copernicus_netcdf, realch1_latlon)
 
 
-def regrid_all(era: Dataset, realch1: Dataset, copernicus: array.array):
-    # iterate through the dates
-    realch1 = regrid_realch1
-    # convert to xarray.dataarray
-    regrid.icon2rotlatlon
-
-    pass
-
-def regrid_realch1():
-    # Use the meteodatalab functions to regrid the realch1 anemoi data (one time point)
-    # onto the rotated lat lon
-    # save the output as torch
-    # return the np array
-    pass
-
-def regrid_era():
-    # Take the output grid from realch1-regrid (rotated lat lon).
-    # regrid all variables *except* tp directly from era5 data
-    # regrid the pt variable from the netcdf data
-    # save the output as torch
-    pass
-
 def main():
     # read REA-L-CH1 latlon grid
     era_config_file = sys.argv[1]
@@ -80,39 +58,96 @@ def main():
     netcdf_file = sys.argv[3]
     output_directory = sys.argv[4]
 
-    realch1_grid = torch.load(realch1_latlon_file, weights_only=False)
+    logging.basicConfig(
+        filename=os.path.join(output_directory, 'interpolate_realch1.log'),
+        format='%(asctime)s %(levelname)-8s %(message)s',
+        level=logging.INFO,
+        datefmt='%Y-%m-%d %H:%M:%S') 
+    
+    # Copy ERA yml file
+    shutil.copy(era_config_file, os.path.join(output_directory, 'info'))
+
+    logging.info('reading realch1 lat/lon')
+    realch1_latlon = torch.load(realch1_latlon_file, weights_only=False)
+    realch1_lat = realch1_latlon[:,0]
+    realch1_lon = realch1_latlon[:,1]
     # read ERA input
-    min_lat = min(realch1_grid[:,0]) - interpolate_basic.ERA_MARGIN_DEGREES
-    max_lat = min(realch1_grid[:,0]) + interpolate_basic.ERA_MARGIN_DEGREES
-    min_lon = min(realch1_grid[:,1]) - interpolate_basic.ERA_MARGIN_DEGREES
-    max_lon = min(realch1_grid[:,1]) + interpolate_basic.ERA_MARGIN_DEGREES
+    min_lat = min(realch1_lat) - interpolate_basic.ERA_MARGIN_DEGREES
+    max_lat = max(realch1_lat) + interpolate_basic.ERA_MARGIN_DEGREES
+    min_lon = min(realch1_lon) - interpolate_basic.ERA_MARGIN_DEGREES
+    max_lon = max(realch1_lon) + interpolate_basic.ERA_MARGIN_DEGREES
+    logging.info('reading era')
+    
     era = interpolate_basic.read_era5_anemoi(era_config_file,
                                              area=(max_lat, min_lon, min_lat, max_lon))
     era_grid = np.column_stack((era.longitudes, era.latitudes))
+    realch1_grid = np.column_stack((realch1_lon, realch1_lat))
+    logging.info(f'lat lon area is {min_lat}-{max_lat} {min_lon}-{max_lon}')
+
+    # save era stats and lat lon
+    interpolate_basic.save_anemoi_latlon_grid(era, os.path.join(output_directory, 'info', 'era-lat-lon'))
+    interpolate_basic.save_anemoi_stats(era, os.path.join(output_directory, 'info', 'era-stats'))
     
     # read copernicus input for tp variable
+    logging.info('reading copernicus')
     netcdf_data = netCDF4.Dataset(netcdf_file)
     logging.info('processing netcdf data')
     netcdf_latitudes, netcdf_longitudes = regrid_copernicus_tp.extract_lat_lon_025(netcdf_data)
     netcdf_grid=np.column_stack((netcdf_longitudes, netcdf_latitudes))
+
     # TODO: start and end date functionality
     netcdf_tp_values = regrid_copernicus_tp.extract_values(netcdf_data, 'tp', start_date=era.start_date, end_date=era.end_date)
     assert(netcdf_tp_values.shape[0] == era.shape[0])
+    # todo: incorporate this somehow
+    netcdf_tp_values = netcdf_tp_values.reshape((netcdf_tp_values.shape[0], 1,1, netcdf_tp_values.shape[1]))
 
+    # save copernicus stats and lat lon
+    torch.save(np.column_stack((netcdf_grid[:,1], netcdf_grid[:,0])),
+               os.path.join(output_directory, 'info', 'copernicus-lat-lon'))
+    regrid_copernicus_tp.make_stats(os.path.join(output_directory, 'info'),
+                                    os.path.join(output_directory, 'info'),
+                                    netcdf_tp_values)
 
     # Iterate over ERA time range, which should be subsetted in configuration.
+    tp_index = era.variables.index('tp')
+    logging.info(f'tp index {tp_index}')
+
+    plot_indices = {12}
+
+    logging.info('interpolating')
+    #for i in plot_indices:
     for i in range(era.shape[0]):
+        # T
         t = era.dates[i]
         # Get everything but the tp variable
-        tp_index = era.variables.index('tp')
-        logging.info('tp index' + tp_index)
-        # shape time, channel, ensemble, grid
-        era_for_time = np.delete(era[i,:,:,:], tp_index, axis=0)
+        era_for_time = era[i,:,:,:]
         era_regridded = interpolate_basic.regrid(era_for_time, era_grid, realch1_grid)
-        copernicus_regridded = interpolate_basic.regrid(netcdf_data[0,:], netcdf_grid, realch1_grid)
-        output=np.stack((era_regridded, copernicus_regridded), axis=1)
+        # Regrid TP from copernicus
+        copernicus_regridded = interpolate_basic.regrid(netcdf_tp_values[i,:], netcdf_grid, realch1_grid)
+        # Concatenate and save
+        era_regridded[tp_index,:] = copernicus_regridded
+        #output=np.concatenate((era_regridded, copernicus_regridded), axis=0)
+        datefmt = interpolate_basic._format_date(t)
         filename = os.path.join(output_directory, 'era-copernicus-interpolated',
-                                interpolate_basic._format_date(t))
-        torch.save(output, filename)
+                                datefmt)
+        torch.save(era_regridded, filename)
 
+        if i in plot_indices:
+            realch1var = ['t2m', '10u', '10v', 'tp']
+            realch1_data = torch.load(os.path.join(output_directory, 'realch1', datefmt), weights_only=False)
+            for j in range(realch1_data.shape[0]):
+                interpolate_basic.plot_and_save_projection(realch1_lon, realch1_lat, realch1_data[j,:],
+                                                            os.path.join(output_directory, 'plots',
+                                                                        f'{datefmt}-{realch1var[j]}-realch1'))
+            for j in range(era_regridded.shape[0]):
+                interpolate_basic.plot_and_save_projection(era.longitudes, era.latitudes, era_for_time[j,:],
+                                                           os.path.join(output_directory, 'plots',
+                                                                        f'{datefmt}-{era.variables[j]}-era'))
+                interpolate_basic.plot_and_save_projection(realch1_lon, realch1_lat,
+                                                           era_regridded[j,0,:],
+                                                           os.path.join(output_directory, 'plots',
+                                                                        f'{datefmt}-{era.variables[j]}-interpolated'))
     return 0
+
+if __name__ == "__main__":
+    main()
