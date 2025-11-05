@@ -1,4 +1,4 @@
-dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr'
-select: ['TD_2M', 'U_10M', 'V_10M', 'TOT_PREC']
-start: 2020-01-01
-end: 2020-01-01
+dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.2.zarr'
+select: ['TD_2M', 'U_10M', 'V_10M', 'TOT_PREC_1H']  # TOT_PREC in v0.1
+#start: 2020-01-01
+#end: 2020-01-01
