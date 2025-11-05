@@ -62,9 +62,9 @@ def extract_lat_lon_n320(data):
     logging.info('extracting lat/lon')
     logging.info(f'lat lon shapes {lat.shape} {lon.shape}')
 
+# Get values for a given date range (inclusive)
 def extract_values(data: netCDF4.Dataset, variable, start_date=None, end_date=None, area=None):
     values = data[variable][:]
-    print(values.shape)
     #if area:
         # Not sure this is working.
     #    lat = data['latitude'][:]
@@ -77,6 +77,15 @@ def extract_values(data: netCDF4.Dataset, variable, start_date=None, end_date=No
     #    lat = data['latitude'][latli:latui]
     #    lon = data['longitude'][lonli:lonui]
     #    values = data[variable][latli:latui,lonli:lonui]
+    date_indices = range(values.shape[0])
+    if start_date and end_date:
+        date_indices = np.intersect1d(
+            np.where(data['valid_time'][:] >= start_date.astype(np.int64)),
+            np.where(data['valid_time'][:] <= end_date.astype(np.int64)))
+        values = values[date_indices,:]
+        if len(date_indices) == 0:
+            raise KeyError(f'{start_date} and {end_date} not valid range')
+
     return np.reshape(values, (values.shape[0], values.shape[1]*values.shape[2]))
  
 def reshape_to_cosmo(vals):
@@ -200,12 +209,7 @@ def process_era(netcdf_data, netcdf_tp_values):
             torch.save(era_data, os.path.join(OUTPUT_DATA_FILEPATH_ERA, date_filename))
             t4 = datetime.datetime.now()
 
-def make_stats():
-    #cosmo_files = os.listdir(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'cosmo'))
-    #era_files = os.listdir(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'cosmo'))
-    
-    stats = torch.load(os.path.join(BASE_FILEPATH, INPUT_DATA_FILEPATH, 'info', 'era-stats'), weights_only=False)
-    print(stats)
+def extract_all_values():
     set1 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2015-2016.nc")
     set2 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2017-2018.nc")
     set3 = netCDF4.Dataset("/capstor/store/cscs/swissai/a161/datasets/copernicus/tp-2019-2020.nc")
@@ -214,17 +218,24 @@ def make_stats():
     set3_tp = extract_values(set3, 'tp')
     all_tp = np.row_stack((set1_tp, set2_tp, set3_tp))
     print(all_tp.shape)
-    all_tp = all_tp.reshape(all_tp.shape[0] * all_tp.shape[1], 1)
-    mean = np.mean(all_tp)
-    max = np.max(all_tp)
-    min = np.min(all_tp)
-    stdev = np.std(all_tp)
+    return all_tp
+
+# Get stats from ERA and replace the TP variable with stats from Copernicus
+def make_stats(input_stats_directory: str, output_stats_directory: str, extracted_tp_values: np.ndarray):    
+    stats = torch.load(os.path.join(input_stats_directory, 'era-stats'), weights_only=False)
+    print(stats)
+    #extracted_tp_values = extracted_tp_values.reshape(extracted_tp_values.shape[0] * extracted_tp_values.shape[1], 1)
+    flat_values = extracted_tp_values.flatten()
+    mean = np.mean(flat_values)
+    max = np.max(flat_values)
+    min = np.min(flat_values)
+    stdev = np.std(flat_values)
     stats['mean'][TP_INDEX] = mean
     stats['maximum'][TP_INDEX] = max
     stats['minimum'][TP_INDEX] = min
     stats['stdev'][TP_INDEX] = stdev
     print(stats)
-    torch.save(stats, os.path.join(OUTPUT_DATA_FILEPATH_ERA_INTERPOLATED, 'era-stats'))
+    torch.save(stats, os.path.join(output_stats_directory, 'era-copernicus-stats'))
 
 
 #process_era(netcdf_data, netcdf_tp_values)
