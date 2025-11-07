@@ -47,9 +47,10 @@ def main(cfg: DictConfig) -> None:
     dataset, sampler = get_dataset_and_sampler_inference(
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
-    output_path = getattr(cfg.generation.io, "output_path", "./outputs")
+    pred_path = getattr(cfg.generation.io, "output_path", "./outputs")
+    output_path = './plots/analysis202511'
 
-    compute_crps_per_time(times, dataset, output_path)
+    compute_crps_per_time(times, dataset, pred_path, output_path)
     compute_crps_over_time_and_area(times, output_path)
     plot_crps_over_time_and_area(times, dataset, output_path)
 
@@ -66,14 +67,14 @@ def save_data(data, output_path, time=None, filename=None):
     path = _get_data_path(output_path, time, filename)
     torch.save(data, path)
     
-def compute_crps_per_time(times, dataset, output_path):  
+def compute_crps_per_time(times, dataset, pred_path, output_path):  
     logging.info('Computing CRPS for each time point')  
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
     start_time=times[0]
 
     # Load one prediction ensemble to get the shape
-    prediction_ensemble = torch.load(os.path.join(output_path, start_time, f'{start_time}-predictions'), weights_only=False)
+    prediction_ensemble = torch.load(os.path.join(pred_path, start_time, f'{start_time}-predictions'), weights_only=False)
     
     # Get a map of output to input channel, for building baseline errors
     output_to_input_channel_map = {}
@@ -89,9 +90,9 @@ def compute_crps_per_time(times, dataset, output_path):
         curr_time = times[i]
         if i % (24*5) == 0:
             logging.info(f'on time {curr_time}')
-        prediction_ensemble = load_data(output_path, time=curr_time, filename=f'{curr_time}-predictions')
-        baseline = load_data(output_path, time=curr_time, filename=f'{curr_time}-baseline')
-        target = load_data(output_path, time=curr_time, filename=f'{curr_time}-target')
+        prediction_ensemble = load_data(pred_path, time=curr_time, filename=f'{curr_time}-predictions')
+        baseline = load_data(pred_path, time=curr_time, filename=f'{curr_time}-baseline')
+        target = load_data(pred_path, time=curr_time, filename=f'{curr_time}-target')
 
         # Calculate ensemble mean error
         ensemble_mean = np.mean(prediction_ensemble, 0)
@@ -107,12 +108,12 @@ def compute_crps_per_time(times, dataset, output_path):
         # Calculate persistence error (baseline #2)
         persistence_error = np.zeros(target.shape)
         if i > 0:
-            prev = load_data(output_path, time=times[i-1], filename=f'{times[i-1]}-target')
+            prev = load_data(pred_path, time=times[i-1], filename=f'{times[i-1]}-target')
             persistence_error = absolute_error(prev, target)
         else:
             # for the first time point, persist the next-time-point target.
             # This is fiction but it keeps the plots from looking weird.
-            prev = load_data(output_path, time=times[i+1], filename=f'{times[i+1]}-target')
+            prev = load_data(pred_path, time=times[i+1], filename=f'{times[i+1]}-target')
             persistence_error = absolute_error(prev, target)
 
         
