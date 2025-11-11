@@ -18,7 +18,6 @@ from pandas import to_datetime
 
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
-from earthkit.geo.rotate import unrotate
 
 TRIM_EDGE = 41
 XARRAY_BATCH = 4
