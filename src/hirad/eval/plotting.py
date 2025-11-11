@@ -67,7 +67,7 @@ def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
     if is_member:
         timmean = da.mean(dim='time') * scale
         mean = timmean.mean(dim='member')
-        std = timmean.std(dim='member')
+        std = da.std(dim='member').mean(dim='time') * scale
     else:
         mean = da.mean(dim='time') * scale
         std = None
