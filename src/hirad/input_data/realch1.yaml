@@ -1,26 +1,4 @@
-dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.1.zarr'
-select: ['CLCH', 'CLCL', 'CLCM', 'CLCT',
-        'FI_100', 'FI_1000', 'FI_150', 'FI_200', 'FI_250', 'FI_300', 'FI_400',
-        'FI_50', 'FI_500', 'FI_600', 'FI_700', 'FI_850', 'FI_925',
-        'FR_LAND', 'HSURF',
-        'OMEGA_100', 'OMEGA_1000', 'OMEGA_150', 'OMEGA_200', 'OMEGA_250',
-        'OMEGA_300', 'OMEGA_400', 'OMEGA_50', 'OMEGA_500', 'OMEGA_600',
-        'OMEGA_700', 'OMEGA_850', 'OMEGA_925',
-        'PLCOV', 'PMSL', 'PS',
-        'QV_100', 'QV_1000', 'QV_150', 'QV_200', 'QV_250', 'QV_300', 'QV_400',
-        'QV_50', 'QV_500', 'QV_600', 'QV_700', 'QV_850', 'QV_925',
-        'SKC', 'SKT', 'SOILTYP', 'SSO_GAMMA', 'SSO_SIGMA', 'SSO_STDH',
-        'SSO_THETA', 'TD_2M', 'TOT_PREC', 'TOT_PREC_6H',
-        'T_100', 'T_1000', 'T_150', 'T_200', 'T_250', 'T_2M', 'T_300', 'T_400',
-        'T_50', 'T_500', 'T_600', 'T_700', 'T_850', 'T_925',
-        'U_100', 'U_1000', 'U_10M', 'U_150', 'U_200', 'U_250', 'U_300', 'U_400',
-        'U_50', 'U_500', 'U_600', 'U_700', 'U_850', 'U_925',
-        'V_100', 'V_1000', 'V_10M', 'V_150', 'V_200', 'V_250', 'V_300', 'V_400',
-        'V_50', 'V_500', 'V_600', 'V_700', 'V_850', 'V_925',
-        'cos_julian_day', 'cos_latitude', 'cos_local_time', 'cos_longitude',
-        'insolation', 'sin_julian_day', 'sin_latitude', 'sin_local_time', 'sin_longitude']
-# ALL REALCH1 CHANNELS.
-start: 2020-01-01
-# start: 2015-11-29
-end: 2020-01-01
-# end: 2020-12-31
+dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.2.zarr'
+select: ['TD_2M', 'U_10M', 'V_10M', 'TOT_PREC_1H']  # TOT_PREC in v0.1
+#start: 2020-01-01
+#end: 2020-01-01

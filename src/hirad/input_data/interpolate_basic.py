@@ -14,40 +14,43 @@ from pandas import to_datetime
 from scipy.interpolate import griddata
 import torch
 import multiprocessing
-import xarray
-from earthkit.geo.rotate import unrotate
 
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 ERA_MARGIN_DEGREES = 1.0
 
-def _read_input(era_config_file: str, cosmo_config_file: str, bound_to_cosmo_area=True) -> tuple[Dataset, Dataset]:
+def _read_era5_cosmo(era_config_file: str, cosmo_config_file: str) -> tuple[Dataset, Dataset]:
     """
     Read both ERA and COSMO data, optionally bounding to the COSMO data area, and return the 2m
     temperature values for the time range under COSMO.
     """
     # trim edge removes boundary
+    cosmo = read_cosmo_anemoi(cosmo_config_file)
+    # area = N, W, S, E
+    min_lat = min(cosmo.latitudes) - ERA_MARGIN_DEGREES
+    max_lat = max(cosmo.latitudes) + ERA_MARGIN_DEGREES
+    min_lon = min(cosmo.longitudes) - ERA_MARGIN_DEGREES
+    max_lon = max(cosmo.longitudes) + ERA_MARGIN_DEGREES
+    start_date = cosmo.metadata()['start_date']
+    end_date = cosmo.metadata()['end_date']
+    era = read_era5_anemoi(era_config_file,
+                           start_date = start_date, end_date = end_date,
+                           area=(max_lat, min_lon, min_lat, max_lon))    
+    return (era, cosmo)
+
+def read_cosmo_anemoi(cosmo_config_file: str):
     with open(cosmo_config_file) as cosmo_file:
         cosmo_config = yaml.safe_load(cosmo_file)
     cosmo = open_dataset(cosmo_config)
+    return cosmo
+
+def read_era5_anemoi(era_config_file: str, start_date = None,
+                    end_date = None, area=None):
     with open(era_config_file) as era_file:
         era_config = yaml.safe_load(era_file)
     era = open_dataset(era_config)
-    # Subset the ERA dataset to have COSMO area/dates.
-    start_date = cosmo.metadata()['start_date']
-    end_date = cosmo.metadata()['end_date']
-    # load era5 2m-temperature in the time-range of cosmo
-    # area = N, W, S, E
-    if bound_to_cosmo_area:
-        min_lat = min(cosmo.latitudes) - ERA_MARGIN_DEGREES
-        max_lat = max(cosmo.latitudes) + ERA_MARGIN_DEGREES
-        min_lon = min(cosmo.longitudes) - ERA_MARGIN_DEGREES
-        max_lon = max(cosmo.longitudes) + ERA_MARGIN_DEGREES
-        era = open_dataset(era, start=start_date, end=end_date,
-                        area=(max_lat, min_lon, min_lat, max_lon))
-    else:
-        era = open_dataset(era, start=start_date, end=end_date) 
-    
-    return (era, cosmo)
+    era = open_dataset(era, start=start_date, end=end_date,
+        area=area)
+    return era
 
 def regrid(era_for_time: np.ndarray, input_grid: np.ndarray, output_grid: np.ndarray):
     # shape (channel, ensemble, grid)
@@ -58,7 +61,7 @@ def regrid(era_for_time: np.ndarray, input_grid: np.ndarray, output_grid: np.nda
         interpolated_data[j,0,:] = regrid
     return interpolated_data
 
-def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
+def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
     logging.info('interpolating time point ' + _format_date(cosmo.dates[i]))
     interpolated_data = np.empty([era.shape[1], 1, cosmo.shape[3]])
     for j in range(era.shape[1]):
@@ -85,7 +88,7 @@ def _interpolate_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarr
 
 
 
-def _interpolate_basic(era: Dataset, cosmo: Dataset, intermediate_files_path: str, threaded = True, outfile_plots_path: str =None, plot_indices=[0]):
+def _interpolate_era5_cosmo_basic(era: Dataset, cosmo: Dataset, intermediate_files_path: str, threaded = True, outfile_plots_path: str =None, plot_indices=[0]):
     """Perform simple interpolation from ERA5 to COSMO grid for all data points in the COSMO date range.
 
     Parameters:
@@ -113,13 +116,13 @@ def _interpolate_basic(era: Dataset, cosmo: Dataset, intermediate_files_path: st
     if (threaded):
         pool = multiprocessing.Pool()
         for i in dates:
-            pool.apply_async(_interpolate_task, (i, era, cosmo, input_grid, output_grid, intermediate_files_path, outfile_plots_path, plot_indices))
+            pool.apply_async(_interpolate_era5_cosmo_task, (i, era, cosmo, input_grid, output_grid, intermediate_files_path, outfile_plots_path, plot_indices))
 
         pool.close()
         pool.join()
     else:
         for i in dates:
-            _interpolate_task(i, era, cosmo, input_grid, output_grid, intermediate_files_path, outfile_plots_path, plot_indices)
+            _interpolate_era5_cosmo_task(i, era, cosmo, input_grid, output_grid, intermediate_files_path, outfile_plots_path, plot_indices)
 
     return 
 
@@ -131,54 +134,30 @@ def _save_datetime_file(values: np.ndarray[np.intp], variables: np.ndarray, date
     filename = filepath + _format_date(date)
     torch.save(values, filename)
 
-def _save_latlon_grid(dataset: Dataset, filename: str):
+def save_anemoi_latlon_grid(dataset: Dataset, filename: str):
     grid = np.column_stack((dataset.latitudes, dataset.longitudes))
     torch.save(grid, filename)
 
-def _save_stats(dataset: Dataset, filename: str):
+def save_anemoi_stats(dataset: Dataset, filename: str):
     torch.save(dataset.statistics, filename)
 
-def _save_interpolation(values: np.ndarray[np.intp], filename: str):
-    """Output interpolated data to a given filename, in PyTorch tensor format."""
-    torch_data = torch.from_numpy(values)
-    torch.save(torch_data, filename)
-
-def _get_plot_indices(era: Dataset, cosmo: Dataset) -> np.ndarray[np.intp]:
-    """
-    Get indices of ERA5 data that is in the bounding rectangle of COSMO data.
-    This is useful for plotting in the case where read_input(..., bound_to_cosmo_area=False) was used.
-    In this case, one would then feed e.g. era.latitudes[indices] into _plot_projection.
-    """
-    min_lat_cosmo = min(cosmo.latitudes)
-    max_lat_cosmo = max(cosmo.latitudes)
-    min_lon_cosmo = min(cosmo.longitudes)
-    max_lon_cosmo = max(cosmo.longitudes)
-    box_lat = np.logical_and(era.latitudes>=min_lat_cosmo,era.latitudes<=max_lat_cosmo)
-    box_lon = np.logical_and(era.longitudes>=min_lon_cosmo,era.longitudes<=max_lon_cosmo)
-    indices = np.where(box_lon*box_lat)
-    return indices
-
-def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None):
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
+def plot_projection(ax, longitudes: np.array, latitudes: np.array, values: np.array, cmap=None, vmin = None, vmax = None, s = None):
+    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax, s=s)
     ax.coastlines()
-    ax.gridlines(draw_labels=False)
+    ax.gridlines(draw_labels=True)
     plt.colorbar(p, orientation="horizontal")
 
-def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
+def plot_and_save_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, projection=ccrs.PlateCarree(), cmap=None, vmin = None, vmax = None, s = None):
     """Plot observed or interpolated data in a scatter plot."""
     # TODO: Refactor this somehow, it's not really generalizing well across variables.
     fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
+    fig, ax = plt.subplots(subplot_kw={"projection": projection})
     logging.info(f'plotting values to {filename}')
-    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax)
-    #p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    #ax.coastlines()
-    #ax.gridlines(draw_labels=True)
-    #plt.colorbar(p, orientation="horizontal")
+    plot_projection(ax, longitudes, latitudes, values, cmap, vmin, vmax, s)
     plt.savefig(filename)
     plt.close('all')
 
-def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: str, threaded=True, outfile_plots_path: str = None, plot_indices=[0]):
+def interpolate_era5_cosmo_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: str, threaded=True, outfile_plots_path: str = None, plot_indices=[0]):
     """Read both ERA and COSMO data and perform basic interpolation. Save output into Pytorch format, and (optionally) plot
     ERA, COSMO, and interpolated data.
 
@@ -211,35 +190,18 @@ def interpolate_and_save(infile_era: str, infile_cosmo: str, outfile_data_path: 
     logging.info('Successfully read input')
 
     # Output stats and grid
-    _save_stats(era, os.path.join(outfile_data_path, "info/era-stats"))
-    _save_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
-    _save_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
-    _save_latlon_grid(era, os.path.join(outfile_data_path, "info/era-lat-lon"))
+    save_anemoi_stats(era, os.path.join(outfile_data_path, "info/era-stats"))
+    save_anemoi_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
+    save_anemoi_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
+    save_anemoi_latlon_grid(era, os.path.join(outfile_data_path, "info/era-lat-lon"))
 
     # Copy the .yaml files over for recording purposes
     shutil.copy(infile_cosmo, os.path.join(outfile_data_path, "info/cosmo.yaml"))
     shutil.copy(infile_era, os.path.join(outfile_data_path, "info/era.yaml"))
 
     # generate interpolated data
-    _interpolate_basic(era, cosmo, outfile_data_path, threaded=threaded, outfile_plots_path=outfile_plots_path, plot_indices=plot_indices)
+    _interpolate_era5_cosmo_basic(era, cosmo, outfile_data_path, threaded=threaded, outfile_plots_path=outfile_plots_path, plot_indices=plot_indices)
 
-def plot_tp(path_6h: str, path_1h: str):
-    fig, axs = plt.subplots(2, 3, subplot_kw={"projection": ccrs.PlateCarree()})
-
-    
-    logging.info(f'plotting values to {filename}')
-    p = ax.scatter(x=longitudes, y=latitudes, c=values)
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(p, label="absolute error", orientation="horizontal")
-    plt.savefig(filename)
-    plt.close('all')
-
-def load_static(infile_era: str, infile_cosmo: str, output_directory: str):
-    _, cosmo = _read_input(infile_era, infile_cosmo, bound_to_cosmo_area=True)
-    
-    torch.save(cosmo[0,:,:,:], os.path.join(output_directory, 'cosmo-static'))
-    shutil.copy(infile_cosmo, os.path.join(output_directory, "cosmo-static.yaml"))
     
 def main():
     # TODO: Do better arg parsing so it's not as easy to reverse era and cosmo configs.
@@ -255,9 +217,7 @@ def main():
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
     
-    #load_static(infile_era, infile_cosmo, output_directory)
-    #interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=os.path.join(output_directory, "plots/"))
-    interpolate_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=None)
+    interpolate_era5_cosmo_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=None)
 
 if __name__ == "__main__":
     main()
