@@ -14,8 +14,6 @@ from pandas import to_datetime
 from scipy.interpolate import griddata
 import torch
 import multiprocessing
-import xarray
-from earthkit.geo.rotate import unrotate
 
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 ERA_MARGIN_DEGREES = 1.0

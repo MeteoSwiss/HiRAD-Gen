@@ -15,7 +15,6 @@ import netCDF4
 import numpy as np
 from pandas import to_datetime
 from scipy.interpolate import griddata
-from meteodatalab.operators import regrid
 import torch
 import multiprocessing
 import xarray
@@ -65,7 +64,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S') 
     
     # Copy ERA yml file
-    shutil.copy(era_config_file, os.path.join(output_directory, 'info'))
+    shutil.copy(era_config_file, os.path.join(output_directory, 'info', 'era.yaml'))
 
     logging.info('reading realch1 lat/lon')
     realch1_latlon = torch.load(realch1_latlon_file, weights_only=False)
