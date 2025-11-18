@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 IN_DIR = '/store_new/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-all-channels/era-interpolated'
-DB_FILENAME='/store_new/mch/msopr/hirad-gen/all-channels-hdf5.db'
+DB_FILENAME='/store_new/mch/msopr/hirad-gen/input-data-hdf5.db'
 
 class HiradHdf5:
 	def __init__(self, in_dir: str, db_path: str, data_shape: tuple, to_write = False):
@@ -28,10 +28,10 @@ class HiradHdf5:
 		if not self.to_write:
 			raise PermissionError('database not opened with write')
 		logging.info('filling database')
-		#for i in range(len(self.files)):
-		for i in range(10):
+		for i in range(len(self.files)):
+		#for i in range(10):
 			f = self.files[i]
-			logging.info(f'reading {f}')
+			logging.info(f'saving {f}')
 			torchdata = torch.load(os.path.join(IN_DIR, f), weights_only=False)
 			self.dset[i,:] = torchdata
 
@@ -48,9 +48,7 @@ class HiradHdf5:
 			nparray = self.dset[i,:]
 			f = self.files[i]
 			torchdata = torch.load(os.path.join(IN_DIR, f), weights_only=False)
-			logging.info(nparray.shape)
-			logging.info(nparray.dtype)
-			logging.info(np.equal(torchdata, nparray))
+			logging.info(np.array_equal(torchdata, nparray))
 	
 def main():
 	logging.basicConfig(
@@ -59,7 +57,8 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S') 
 	# write DB
 	hdf5db = HiradHdf5(IN_DIR, DB_FILENAME, (101, 1, 191488), True)
-
+	hdf5db.fill_database()
+	# read DB
 	hdf5db = HiradHdf5(IN_DIR, DB_FILENAME, (101, 1, 191488), False)
 	hdf5db.read_database()
 	hdf5db.read_index(0)
