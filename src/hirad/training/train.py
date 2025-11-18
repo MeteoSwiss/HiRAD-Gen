@@ -596,9 +596,7 @@ def main(cfg: DictConfig) -> None:
                                 g["lr"] = cfg.training.hp.lr * min(cur_nimg / lr_rampup, 1)
                             if cur_nimg >= lr_rampup:
                                 g["lr"] *= cfg.training.hp.lr_decay ** ((cur_nimg - lr_rampup) // cfg.training.hp.lr_decay_rate)
-                            current_lr = g["lr"]
-                            if dist.rank == 0 and cfg.logging.method == "mlflow":
-                                mlflow.log_metric("learning_rate", current_lr, cur_nimg)
+                            current_lr = g["lr"] 
                         handle_and_clip_gradients(
                             model, grad_clip_threshold=cfg.training.hp.grad_clip_threshold
                         )
@@ -648,6 +646,7 @@ def main(cfg: DictConfig) -> None:
                                 average_loss_running_mean,
                                 cur_nimg,
                             )
+                            mlflow.log_metric("learning_rate", current_lr, cur_nimg)
                         # reset running mean of average loss
                         average_loss_running_mean = 0
                         n_average_loss_running_mean = 1
