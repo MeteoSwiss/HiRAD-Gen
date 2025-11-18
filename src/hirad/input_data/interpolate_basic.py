@@ -60,10 +60,11 @@ def regrid(era_for_time: np.ndarray, input_grid: np.ndarray, output_grid: np.nda
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
         interpolated_data[j,0,:] = regrid
     return interpolated_data
+    
 
-def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
-    logging.info('interpolating time point ' + _format_date(cosmo.dates[i]))
-    interpolated_data = np.empty([era.shape[1], 1, cosmo.shape[3]])
+def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset | None, input_grid: np.ndarray, output_grid: np.ndarray, intermediate_files_path: str, outfile_plots_path: str = None, plot_indices=[0]):
+    logging.info('interpolating time point ' + _format_date(era.dates[i]))
+    interpolated_data = np.empty([era.shape[1], 1, output_grid.shape[0]])
     for j in range(era.shape[1]):
         values = np.array(era[i,j,0,:]) # get era grid values on the given date-time and channel
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
@@ -72,23 +73,25 @@ def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset, input_gri
     if (intermediate_files_path):
         _save_datetime_file(interpolated_data, era.variables, era.dates[i], os.path.join(intermediate_files_path, "era-interpolated/"))
         _save_datetime_file(era[i,:,:,:], era.variables, era.dates[i], os.path.join(intermediate_files_path, "era/"))
-        _save_datetime_file(cosmo[i,:,:,:], cosmo.variables, cosmo.dates[i], os.path.join(intermediate_files_path, "cosmo/"))
-    logging.info(f'finished writing time point { _format_date(cosmo.dates[i])}')
+        if cosmo:
+            _save_datetime_file(cosmo[i,:,:,:], cosmo.variables, cosmo.dates[i], os.path.join(intermediate_files_path, "cosmo/"))
+    logging.info(f'finished writing time point { _format_date(era.dates[i])}')
 
     if outfile_plots_path and i in plot_indices:
         datestr = _format_date(era.dates[i])
         logging.info(f'plotting {datestr} to {outfile_plots_path}')
         for j,var in enumerate(era.variables):
         # plot era original
-            plot_and_save_projection(era.longitudes, era.latitudes, era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
+            plot_and_save_projection(input_grid[0,:], input_grid[1,:], era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
 
-            plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
-        for j,var in enumerate(cosmo.variables):
-            plot_and_save_projection(cosmo.longitudes, cosmo.latitudes, cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
+            plot_and_save_projection(output_grid[0,:], output_grid[1,:], interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
+        if cosmo:
+            for j,var in enumerate(cosmo.variables):
+                plot_and_save_projection(output_grid[0,:], output_grid[1,:], cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
 
 
-def _interpolate_era5_cosmo_basic(era: Dataset, cosmo: Dataset, intermediate_files_path: str, threaded = True, outfile_plots_path: str =None, plot_indices=[0]):
+def _interpolate_era5_cosmo_basic(era: Dataset, cosmo: Dataset | None, intermediate_files_path: str, threaded = True, outfile_plots_path: str =None, plot_indices=[0]):
     """Perform simple interpolation from ERA5 to COSMO grid for all data points in the COSMO date range.
 
     Parameters:
@@ -104,14 +107,20 @@ def _interpolate_era5_cosmo_basic(era: Dataset, cosmo: Dataset, intermediate_fil
         4-D array of interpolated values. (date, variable, ensemble, grid-point)
     """
     # Check that our date ranges do in fact line up.
-    assert (era.start_date == cosmo.start_date and 
-            era.end_date == cosmo.end_date and 
-            era.frequency == cosmo.frequency and
-            era.shape[0] == cosmo.shape[0]), "ERA and COSMO date ranges or frequencies do not align."
+    if cosmo:
+        assert (era.start_date == cosmo.start_date and 
+                era.end_date == cosmo.end_date and 
+                era.frequency == cosmo.frequency and
+                era.shape[0] == cosmo.shape[0]), "ERA and COSMO date ranges or frequencies do not align."
     input_grid = np.column_stack((era.longitudes, era.latitudes)) # stack lon-lat columns of era5 points
-    output_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes)) # stack lon-lat column of cosmo points
-    
-    dates = range(cosmo.shape[0])
+    output_grid = None
+    if cosmo:
+        output_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes)) # stack lon-lat column of cosmo points
+    else:
+        cosmo_latlon = torch.load(os.path.join(intermediate_files_path, 'info', 'cosmo-lat-lon'), weights_only=False)
+        output_grid = np.column_stack(cosmo_latlon[1,:], cosmo_latlon[0,:])
+
+    dates = range(era.shape[0])
     
     if (threaded):
         pool = multiprocessing.Pool()
@@ -186,7 +195,7 @@ def interpolate_era5_cosmo_and_save(infile_era: str, infile_cosmo: str, outfile_
         os.makedirs(outfile_plots_path, exist_ok=True)
 
     logging.info(f'reading input according to configs {infile_era} and {infile_cosmo}')
-    era, cosmo = _read_input(infile_era, infile_cosmo, bound_to_cosmo_area=True)
+    era, cosmo = _read_era5_cosmo(infile_era, infile_cosmo, bound_to_cosmo_area=True)
     logging.info('Successfully read input')
 
     # Output stats and grid
@@ -216,6 +225,8 @@ def main():
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
+
+    logging.info('running {sys.argv}')
     
     interpolate_era5_cosmo_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=None)
 
