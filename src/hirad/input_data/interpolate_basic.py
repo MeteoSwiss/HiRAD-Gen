@@ -69,7 +69,7 @@ def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset | None, in
         values = np.array(era[i,j,0,:]) # get era grid values on the given date-time and channel
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
         interpolated_data[j,0,:] = regrid
-    logging.info(f'writing time point { _format_date(cosmo.dates[i])} to files in path {intermediate_files_path}')
+    logging.info(f'writing time point { _format_date(era.dates[i])} to files in path {intermediate_files_path}')
     if (intermediate_files_path):
         _save_datetime_file(interpolated_data, era.variables, era.dates[i], os.path.join(intermediate_files_path, "era-interpolated/"))
         _save_datetime_file(era[i,:,:,:], era.variables, era.dates[i], os.path.join(intermediate_files_path, "era/"))
@@ -82,12 +82,12 @@ def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset | None, in
         logging.info(f'plotting {datestr} to {outfile_plots_path}')
         for j,var in enumerate(era.variables):
         # plot era original
-            plot_and_save_projection(input_grid[0,:], input_grid[1,:], era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
+            plot_and_save_projection(input_grid[:,0], input_grid[:,1], era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
 
-            plot_and_save_projection(output_grid[0,:], output_grid[1,:], interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
+            plot_and_save_projection(output_grid[:,0], output_grid[:,1], interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
         if cosmo:
             for j,var in enumerate(cosmo.variables):
-                plot_and_save_projection(output_grid[0,:], output_grid[1,:], cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
+                plot_and_save_projection(output_grid[:,0], output_grid[:,1], cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
 
 
@@ -118,7 +118,7 @@ def _interpolate_era5_cosmo_basic(era: Dataset, cosmo: Dataset | None, intermedi
         output_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes)) # stack lon-lat column of cosmo points
     else:
         cosmo_latlon = torch.load(os.path.join(intermediate_files_path, 'info', 'cosmo-lat-lon'), weights_only=False)
-        output_grid = np.column_stack(cosmo_latlon[1,:], cosmo_latlon[0,:])
+        output_grid = np.column_stack((cosmo_latlon[:,1], cosmo_latlon[:,0]))
 
     dates = range(era.shape[0])
     
@@ -195,17 +195,32 @@ def interpolate_era5_cosmo_and_save(infile_era: str, infile_cosmo: str, outfile_
         os.makedirs(outfile_plots_path, exist_ok=True)
 
     logging.info(f'reading input according to configs {infile_era} and {infile_cosmo}')
-    era, cosmo = _read_era5_cosmo(infile_era, infile_cosmo, bound_to_cosmo_area=True)
+    era = None
+    cosmo = None
+    if infile_cosmo.endswith('yaml'):
+        era, cosmo = _read_era5_cosmo(infile_era, infile_cosmo, bound_to_cosmo_area=True)
+        save_anemoi_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
+        save_anemoi_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
+        shutil.copy(infile_cosmo, os.path.join(outfile_data_path, "info/cosmo.yaml"))
+    else:
+        cosmo_latlon = torch.load(infile_cosmo, weights_only=False)
+        lats = cosmo_latlon[:,0]
+        lons = cosmo_latlon[:,1]
+        min_lat = min(lats) - ERA_MARGIN_DEGREES
+        max_lat = max(lats) + ERA_MARGIN_DEGREES
+        min_lon = min(lons) - ERA_MARGIN_DEGREES
+        max_lon = max(lons) + ERA_MARGIN_DEGREES
+        area=(max_lat, min_lon, min_lat, max_lon)
+        logging.info(f'projecting onto era area {area}')
+        era = read_era5_anemoi(infile_era, area = area)
+
     logging.info('Successfully read input')
 
     # Output stats and grid
     save_anemoi_stats(era, os.path.join(outfile_data_path, "info/era-stats"))
-    save_anemoi_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
-    save_anemoi_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
     save_anemoi_latlon_grid(era, os.path.join(outfile_data_path, "info/era-lat-lon"))
 
     # Copy the .yaml files over for recording purposes
-    shutil.copy(infile_cosmo, os.path.join(outfile_data_path, "info/cosmo.yaml"))
     shutil.copy(infile_era, os.path.join(outfile_data_path, "info/era.yaml"))
 
     # generate interpolated data
@@ -226,9 +241,11 @@ def main():
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
 
-    logging.info('running {sys.argv}')
+    logging.info(f'running {sys.argv}')
+    outfile_plots_path = None
+    #outfile_plots_path = os.path.join(output_directory, 'plots')
     
-    interpolate_era5_cosmo_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=None)
+    interpolate_era5_cosmo_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=outfile_plots_path)
 
 if __name__ == "__main__":
     main()
