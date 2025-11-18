@@ -43,7 +43,7 @@ class HiradHdf5:
 		i = self.files.index(datefmt)
 		return self.read_index(i)
 
-	def read_database(self):
+	def test_read_database(self):
 		for i in range(10):
 			nparray = self.dset[i,:]
 			f = self.files[i]
@@ -56,16 +56,15 @@ def main():
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
 	# write DB
-	hdf5db = HiradHdf5(IN_DIR, DB_FILENAME, (101, 1, 191488), True)
-	hdf5db.fill_database()
+	#hdf5db = HiradHdf5(IN_DIR, DB_FILENAME, (101, 1, 191488), True)
+	#hdf5db.fill_database()
 	# read DB
 	hdf5db = HiradHdf5(IN_DIR, DB_FILENAME, (101, 1, 191488), False)
-	hdf5db.read_database()
-	hdf5db.read_index(0)
-	hdf5db.read_datetime('20160101-0900')
-	#read_database()
-	#nparray = get_data_for_time('20160101-0900')
-	#print(nparray.dtype)
+	hdf5db.test_read_database()
+	jan10000 = hdf5db.read_index(0)
+	jan10900 = hdf5db.read_datetime('20160101-0900')
+	logging.info(jan10000.shape)
+	logging.info(jan10900.shape)
 
 
 if __name__ == "__main__":
