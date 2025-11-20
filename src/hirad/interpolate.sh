@@ -17,7 +17,6 @@ pip install anemoi.datasets
 #    /capstor/store/mch/msopr/hirad-gen/copernicus-datasets/tp-2023-2024.nc \
 #    /capstor/scratch/cscs/mmcgloho/basic-torch/era5-realch1/v1.0/
 python src/hirad/input_data/interpolate_basic.py \
-#    src/hirad/input_data/era-all.yaml \ 
     $1 \
     /capstor/scratch/cscs/mmcgloho/basic-torch/era5-cosmo-1h-all-channels/info/cosmo-lat-lon \
     /capstor/scratch/cscs/mmcgloho/basic-torch/era5-cosmo-1h-all-channels/
