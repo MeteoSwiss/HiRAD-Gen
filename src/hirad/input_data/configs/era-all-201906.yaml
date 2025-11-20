@@ -16,5 +16,5 @@ select: ['10u', '10v', '2d', '2t', 'cos_julian_day', 'cos_latitude', 'cos_local_
 # ALL ERA CHANNELS
 # Intersection between ERA and COSMO excludes cp, sdor, slor, tcw
 # Note: Bounding dates/area will be done in .py code.
-start: 2020-01-01
-end: 2020-01-31
+start: 2019-06-01
+end: 2019-06-30
