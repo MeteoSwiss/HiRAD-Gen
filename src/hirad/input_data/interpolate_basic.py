@@ -80,14 +80,16 @@ def _interpolate_era5_cosmo_task(i: int, era: Dataset, cosmo: Dataset | None, in
     if outfile_plots_path and i in plot_indices:
         datestr = _format_date(era.dates[i])
         logging.info(f'plotting {datestr} to {outfile_plots_path}')
-        for j,var in enumerate(era.variables):
+        #for j,var in enumerate(era.variables):
+        for j in [0]:
+            var = era.variables[j]
         # plot era original
-            plot_and_save_projection(input_grid[:,0], input_grid[:,1], era[i, j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era.jpg')
+            plot_and_save_projection(input_grid[:,0], input_grid[:,1], era[i, j, 0, :], f'{outfile_plots_path}/{era.variables[j]}-{datestr}-era.jpg')
 
-            plot_and_save_projection(output_grid[:,0], output_grid[:,1], interpolated_data[j, 0, :], f'{outfile_plots_path}{era.variables[j]}-{datestr}-era-interpolated.jpg')
+            plot_and_save_projection(output_grid[:,0], output_grid[:,1], interpolated_data[j, 0, :], f'{outfile_plots_path}/{era.variables[j]}-{datestr}-era-interpolated.jpg')
         if cosmo:
             for j,var in enumerate(cosmo.variables):
-                plot_and_save_projection(output_grid[:,0], output_grid[:,1], cosmo[i, j, 0, :], f'{outfile_plots_path}{cosmo.variables[j]}-{datestr}-cosmo.jpg')
+                plot_and_save_projection(output_grid[:,0], output_grid[:,1], cosmo[i, j, 0, :], f'{outfile_plots_path}/{cosmo.variables[j]}-{datestr}-cosmo.jpg')
 
 
 
@@ -198,7 +200,7 @@ def interpolate_era5_cosmo_and_save(infile_era: str, infile_cosmo: str, outfile_
     era = None
     cosmo = None
     if infile_cosmo.endswith('yaml'):
-        era, cosmo = _read_era5_cosmo(infile_era, infile_cosmo, bound_to_cosmo_area=True)
+        era, cosmo = _read_era5_cosmo(infile_era, infile_cosmo)
         save_anemoi_stats(cosmo, os.path.join(outfile_data_path, "info/cosmo-stats"))
         save_anemoi_latlon_grid(cosmo, os.path.join(outfile_data_path, "info/cosmo-lat-lon"))
         shutil.copy(infile_cosmo, os.path.join(outfile_data_path, "info/cosmo.yaml"))
@@ -235,15 +237,17 @@ def main():
     infile_cosmo = sys.argv[2]
     output_directory = sys.argv[3]
 
+    erashortname = infile_era.split('/')[-1].split('.')[0]
+
     logging.basicConfig(
-        filename=os.path.join(output_directory, 'interpolate_basic.log'),
+        filename=os.path.join(output_directory, f'interpolate_basic-{erashortname}.log'),
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
 
     logging.info(f'running {sys.argv}')
-    outfile_plots_path = None
-    #outfile_plots_path = os.path.join(output_directory, 'plots')
+    #outfile_plots_path = None
+    outfile_plots_path = os.path.join(output_directory, 'plots')
     
     interpolate_era5_cosmo_and_save(infile_era, infile_cosmo, output_directory, threaded=False, outfile_plots_path=outfile_plots_path)
 
