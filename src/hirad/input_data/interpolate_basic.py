@@ -75,16 +75,17 @@ def regrid(input_values_for_time: np.ndarray, input_grid: np.ndarray, output_gri
 
     Parameters:
     input_values_for_time: np.ndarray
-        An array of dimension (channels, ensemble, )
+        An array of dimension (channels, N) (where N = X x Y)
     filename: str
         Full file path to output to.
 
     Returns: None
     """
-    # shape (channel, ensemble, grid)
-    interpolated_data = np.empty([era_for_time.shape[0], 1, output_grid.shape[0]])
-    for j in range(era_for_time.shape[0]):
-        values = np.array(era_for_time[j,0,:]) # get era grid values on the given date-time and channel
+    # shape (channel, grid)
+    assert(len(input_values_for_time.shape) == 2)
+    interpolated_data = np.empty([input_values_for_time.shape[0], output_grid.shape[0]])
+    for j in range(input_values_for_time.shape[0]):
+        values = np.array(input_values_for_time[j,:]) # get era grid values on the given date-time and channel
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
         interpolated_data[j,0,:] = regrid
     return interpolated_data
@@ -94,7 +95,7 @@ def format_date(dt64: np.datetime64) -> str:
     return to_datetime(dt64).strftime('%Y%m%d-%H%M')
 
 def _save_datetime_file(values: np.ndarray[np.intp], date: np.datetime64, filepath: str, format='torch'):
-    """saves interpolated values into a torch file"""
+    """saves array of values for a given date into a torch file"""
     filename = os.path.join(filepath, format_date(date))
     if format == 'torch':
         torch.save(values, filename)
@@ -153,7 +154,8 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
         Indices of time points for which to plot data
     """
     logging.info('interpolating time point ' + format_date(ds.dates[i]))
-    interpolated_data = regrid(ds[i,:,:,:], input_grid=input_grid, output_grid=output_grid)
+    # remove ensemble (3rd) dimension
+    interpolated_data = regrid(ds[i,:,0,:], input_grid=input_grid, output_grid=output_grid)
     logging.info(f'writing time point { format_date(ds.dates[i])} to files in path {output_data_path}')
     _save_datetime_file(interpolated_data, ds.dates[i], os.path.join(output_data_path), format=format)
     if output_plots_path and i in plot_indices:
@@ -170,7 +172,7 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
 def save_anemoi_time_point(i: int, ds: Dataset, ds_name: str, data_output_path: str, plots_output_path: str = None, plot_indices=[0], format='torch'):
     """Save a time point of anemoi data (either input or target) directly into a given format.
     If the time point is in the """
-    _save_datetime_file(ds[i,:,:,:], ds.dates[i], data_output_path, format)
+    _save_datetime_file(ds[i,:,0,:], ds.dates[i], data_output_path, format)
     datestr = format_date(ds.dates[i])
     if plots_output_path and i in plot_indices:
         for j,var in enumerate(ds.variables):
