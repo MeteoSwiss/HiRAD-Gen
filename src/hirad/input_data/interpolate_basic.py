@@ -162,7 +162,7 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
         datestr = format_date(ds.dates[i])
         logging.info(f'plotting {datestr} to {output_plots_path}')
         #for j in range(10):
-        for j in range(min(10, len(ds.variables))):
+        for j in range(len(ds.variables)):
             var = ds.variables[j]
             # plot era original
             plot_and_save_projection(input_grid[:,0], input_grid[:,1], ds[i, j, 0, :], f'{output_plots_path}/{ds.variables[j]}-{datestr}-{ds_name}.jpg')
@@ -179,8 +179,7 @@ def save_anemoi_time_point(i: int, ds: Dataset, ds_name: str, data_output_path: 
             plot_and_save_projection(ds.longitudes, ds.latitudes, ds[i, j, 0, :], f'{plots_output_path}/{var}-{datestr}-{ds_name}.jpg')
 
 
-### Main method 1: Interpolate ERA grid
-def _interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
+def interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
     """Perform basic interpolation on an input dataset in anemoi format from 
     its native grid to a given output grid.
     Save output as intermediate datetime files in a given format (torch/numpy)
@@ -205,6 +204,7 @@ def _interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: n
     """
 
     os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
+    os.makedirs(os.path.join(output_path, 'plots'), exist_ok=True)
     os.makedirs(os.path.join(output_path, f'{ds_name}-interpolated'), exist_ok=True)
 
     # read data
@@ -237,58 +237,18 @@ def _interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: n
 
 
 ### Part 2: Save COSMO data
-def _save_anemoi_as_format(infile_anemoi: str, ds_name: str, outfile_data_path: str, outfile_plots_path: str = None, plot_indices=[0], format='torch'):
+def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, plot_indices=[0], format='torch'):    
+    os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
+    plots_path = os.path.join(output_path, 'plots')
+    os.makedirs(plots_path, exist_ok=True)
+    ds_output_path = os.path.join(output_path, ds_name)
+    os.makedirs(ds_output_path, exist_ok=True)
+
     ds = read_anemoi_ds(infile_anemoi)
     # Copy the .yaml files over for recording purposes
-    shutil.copy(infile_anemoi, os.path.join(outfile_data_path, f'info/{ds_name}.yaml'))
-    save_anemoi_stats(ds, os.path.join(outfile_data_path, f'info/{ds_name}-stats'))
-    save_anemoi_latlon_grid(ds, os.path.join(outfile_data_path, f'info/{ds_name}-lat-lon'))
-    ds_output_path = os.path.join(outfile_data_path, ds_name)
+    shutil.copy(infile_anemoi, os.path.join(output_path, f'info/{ds_name}.yaml'))
+    save_anemoi_stats(ds, os.path.join(output_path, f'info/{ds_name}-stats'))
+    save_anemoi_latlon_grid(ds, os.path.join(output_path, f'info/{ds_name}-lat-lon'))
     os.makedirs(ds_output_path, exist_ok=True)
     for i in range(len(ds.dates)):
-        save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, outfile_plots_path=outfile_plots_path, plot_incides=[0], format=format)
-
-    
-def main():
-    # TODO: Do better arg parsing so it's not as easy to reverse era and cosmo configs.
-    if len(sys.argv) < 4:
-        raise ValueError('Expected call interpolate_basic.py [era.yaml] [cosmo.yaml] [output directory]')
-    infile_era = sys.argv[1]
-    infile_cosmo = sys.argv[2]
-    output_path = sys.argv[3]
-
-    os.makedirs(output_path, exist_ok=True)
-    os.makedirs(os.path.join(output_path, "info"), exist_ok=True)
-    os.makedirs(os.path.join(output_path, "era"), exist_ok=True)
-    os.makedirs(os.path.join(output_path, "cosmo"), exist_ok=True)
-    os.makedirs(os.path.join(output_path, "era-interpolated"), exist_ok=True)
-    output_plots_path = os.path.join(output_path, "plots")
-    os.makedirs(output_plots_path, exist_ok=True)
-
-    erashortname = infile_era.split('/')[-1].split('.')[0]
-
-    logging.basicConfig(
-        filename=os.path.join(output_path, f'interpolate_basic-{erashortname}.log'),
-        format='%(asctime)s %(levelname)-8s %(message)s',
-        level=logging.INFO,
-        datefmt='%Y-%m-%d %H:%M:%S') 
-
-    logging.info(f'running {sys.argv}')
-    #output_plots_path = None
-
-    output_grid = None
-
-    if infile_cosmo.endswith('yaml'):
-        cosmo = read_anemoi_ds(infile_cosmo)
-        output_grid = np.column_stack((cosmo.longitudes, cosmo.latitudes))
-    else:
-        # This must be a lat-lon torch file.
-        cosmo_latlon = torch.load(infile_cosmo, weights_only=False)
-        lats = cosmo_latlon[:,0]
-        lons = cosmo_latlon[:,1]
-        output_grid = np.column_stack((lons, lats))
-
-    _interpolate_era5_to_grid(infile_era, output_grid, output_path, plot_indices=[0])
-
-if __name__ == "__main__":
-    main()
+        save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, outfile_plots_path=plots_path, plot_indices=[0], format=format)
