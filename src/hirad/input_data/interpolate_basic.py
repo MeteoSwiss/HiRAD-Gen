@@ -276,4 +276,4 @@ def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, pl
     save_anemoi_latlon_grid(ds, os.path.join(output_path, f'info/{ds_name}-lat-lon'))
     os.makedirs(ds_output_path, exist_ok=True)
     for i in range(len(ds.dates)):
-        save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, outfile_plots_path=plots_path, plot_indices=[0], format=format)
+        save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, plots_output_path=plots_path, plot_indices=[0], format=format)
