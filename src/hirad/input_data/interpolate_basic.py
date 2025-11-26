@@ -8,7 +8,8 @@ import yaml
 from anemoi.datasets import open_dataset
 from anemoi.datasets.data.dataset import Dataset
 import cartopy.crs as ccrs
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt 
+import netCDF4
 import numpy as np
 from pandas import to_datetime
 from scipy.interpolate import griddata
@@ -38,8 +39,9 @@ def read_anemoi_ds(config_file: str, start_date = None, end_date = None, area = 
     """
     with open(config_file) as cfg_file:
         config = yaml.safe_load(cfg_file)
-    ds = open_dataset(config, start=start_date, end=end_date, area=area)
-    return ds
+    if area:
+        return open_dataset(config, start=start_date, end=end_date, area=area)        
+    return open_dataset(config, start=start_date, end=end_date)
 
 def save_anemoi_latlon_grid(dataset: Dataset, filename: str):
     """Save lat/lon grid of an Anemoi dataset into a Torch file. (Note that
@@ -94,7 +96,7 @@ def format_date(dt64: np.datetime64) -> str:
     """Makes date string from date time point, for saving files."""
     return to_datetime(dt64).strftime('%Y%m%d-%H%M')
 
-def _save_datetime_file(values: np.ndarray[np.intp], date: np.datetime64, filepath: str, format='torch'):
+def save_datetime_file(values: np.ndarray[np.intp], date: np.datetime64, filepath: str, format='torch'):
     """saves array of values for a given date into a torch file"""
     filename = os.path.join(filepath, format_date(date))
     if format == 'torch':
@@ -157,7 +159,7 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
     # remove ensemble (3rd) dimension
     interpolated_data = regrid(ds[i,:,0,:], input_grid=input_grid, output_grid=output_grid)
     logging.info(f'writing time point { format_date(ds.dates[i])} to files in path {output_data_path}')
-    _save_datetime_file(interpolated_data, ds.dates[i], os.path.join(output_data_path), format=format)
+    save_datetime_file(interpolated_data, ds.dates[i], os.path.join(output_data_path), format=format)
     if output_plots_path and i in plot_indices:
         datestr = format_date(ds.dates[i])
         logging.info(f'plotting {datestr} to {output_plots_path}')
@@ -172,12 +174,35 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
 def save_anemoi_time_point(i: int, ds: Dataset, ds_name: str, data_output_path: str, plots_output_path: str = None, plot_indices=[0], format='torch'):
     """Save a time point of anemoi data (either input or target) directly into a given format.
     If the time point is in the """
-    _save_datetime_file(ds[i,:,0,:], ds.dates[i], data_output_path, format)
+    save_datetime_file(ds[i,:,0,:], ds.dates[i], data_output_path, format)
     datestr = format_date(ds.dates[i])
     if plots_output_path and i in plot_indices:
         for j,var in enumerate(ds.variables):
             plot_and_save_projection(ds.longitudes, ds.latitudes, ds[i, j, 0, :], f'{plots_output_path}/{var}-{datestr}-{ds_name}.jpg')
 
+def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
+    # Not yet implemented
+    return
+    # extract from yaml config
+    with open(infile_nc) as cfg_file:
+        config = yaml.safe_load(cfg_file)
+    config['path']
+
+    config['start']
+    config['end']
+    config['frequency']
+    dates = None # date sequence
+    
+    
+    
+    # expected format is variable-startyear-endyear.nc
+    # extract data
+    # startyear= 
+    # endyear = 
+    # variable = 
+    set1 = netCDF4.Dataset(infile_nc)
+    
+    
 
 def interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
     """Perform basic interpolation on an input dataset in anemoi format from 
