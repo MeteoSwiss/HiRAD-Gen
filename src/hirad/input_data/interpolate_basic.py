@@ -89,7 +89,7 @@ def regrid(input_values_for_time: np.ndarray, input_grid: np.ndarray, output_gri
     for j in range(input_values_for_time.shape[0]):
         values = np.array(input_values_for_time[j,:]) # get era grid values on the given date-time and channel
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
-        interpolated_data[j,0,:] = regrid
+        interpolated_data[j,:] = regrid
     return interpolated_data
 
 def format_date(dt64: np.datetime64) -> str:
@@ -169,7 +169,7 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
             # plot era original
             plot_and_save_projection(input_grid[:,0], input_grid[:,1], ds[i, j, 0, :], f'{output_plots_path}/{ds.variables[j]}-{datestr}-{ds_name}.jpg')
             # plot interpolated
-            plot_and_save_projection(output_grid[:,0], output_grid[:,1], interpolated_data[j, 0, :], f'{output_plots_path}/{ds.variables[j]}-{datestr}-{ds_name}-interpolated.jpg')
+            plot_and_save_projection(output_grid[:,0], output_grid[:,1], interpolated_data[j, :], f'{output_plots_path}/{ds.variables[j]}-{datestr}-{ds_name}-interpolated.jpg')
 
 def save_anemoi_time_point(i: int, ds: Dataset, ds_name: str, data_output_path: str, plots_output_path: str = None, plot_indices=[0], format='torch'):
     """Save a time point of anemoi data (either input or target) directly into a given format.
@@ -262,14 +262,15 @@ def interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: np
 
 
 ### Part 2: Save COSMO data
-def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, plot_indices=[0], format='torch'):    
+def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, plot_indices=[0], format='torch',
+                          start_date = None, end_date = None, area = None):    
     os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
     plots_path = os.path.join(output_path, 'plots')
     os.makedirs(plots_path, exist_ok=True)
     ds_output_path = os.path.join(output_path, ds_name)
     os.makedirs(ds_output_path, exist_ok=True)
 
-    ds = read_anemoi_ds(infile_anemoi)
+    ds = read_anemoi_ds(infile_anemoi, start_date=start_date, end_date=end_date, area=area)
     # Copy the .yaml files over for recording purposes
     shutil.copy(infile_anemoi, os.path.join(output_path, f'info/{ds_name}.yaml'))
     save_anemoi_stats(ds, os.path.join(output_path, f'info/{ds_name}-stats'))
