@@ -1,4 +1,3 @@
-import datetime
 import logging
 import os
 import re
@@ -257,7 +256,7 @@ def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, pl
     for i in range(len(ds.dates)):
         save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, plots_output_path=plots_path, plot_indices=[0], format=format)
 
-def load_netcdf_file(path: str, variable: str, index_date: datetime.datetime):
+def load_netcdf_file(path: str, variable: str, index_date: np.datetime64):
     """
     Get the corresponding netCDF file for a given variable, that includes
      a given date.
@@ -273,17 +272,17 @@ def load_netcdf_file(path: str, variable: str, index_date: datetime.datetime):
             f_var = matches[1]
             f_start_year = int(matches[2])
             f_end_year = int(matches[3])
-            if f_var == variable and index_date.year >= f_start_year and index_date.year <= f_end_year:
+            if f_var == variable and to_datetime(index_date).year >= f_start_year and to_datetime(index_date).year <= f_end_year:
                 ds = netCDF4.Dataset(os.path.join(path, filename))
                 # Raises ValueError if number of instances not exactly 1, which indicates 
                 # an implementation error somewhere.
-                index = np.where(ds['valid_time'][:] == np.int64(index_date.timestamp()))[0].item()
+                index = np.where(ds['valid_time'][:] == index_date.astype('datetime64[s]').astype('int'))[0].item()
                 netcdf_date = ds['valid_time'][index]
-                logging.info(f'index {index} has datetime {datetime.datetime.fromtimestamp(netcdf_date, datetime.UTC).strftime('%Y%m%d-%H%M')}')
+                logging.info(f'index {index} has datetime {format_date(np.datetime64(int(netcdf_date), 's'))}')
                 return ds, index
     raise FileNotFoundError(f'Could not find .nc file for variable {variable} and date {index_date} in {path}')
 
-def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: datetime.datetime, expected_frequency: datetime.timedelta,
+def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: np.datetime64, expected_frequency: np.timedelta64,
                               reference_nc_dataset=None):
     """
     Get the corresponding netCDF Datasets for a given list of variables, that includes
@@ -328,7 +327,7 @@ def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: date
         assert nc_date_index == indices[variables[v]], 'Variable datasets do not line up with same start date'
         
         # Check frequecy matches the config
-        nc_delta = datetime.datetime.fromtimestamp(more_times[1], datetime.UTC) - datetime.datetime.fromtimestamp(more_times[0], datetime.UTC)
+        nc_delta = np.datetime64(int(more_times[1]), 's') - np.datetime64(int(more_times[0]), 's')
         assert nc_delta == expected_frequency, 'Frequency of NetCDF dataset for variable {variables[v]} is not the same as requested frequency.'
         
         # Check the grid size and lat/lon is consistent
@@ -371,9 +370,9 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
     input_path = config['path'] # string
     variables = config['channels'] # array
 
-    start_date = datetime.datetime.combine(config['start'], datetime.time()) # datetime type
-    end_date = datetime.datetime.combine(config['end'], datetime.time()) # datetime type
-    frequency = datetime.timedelta(hours=int(config['frequency']))
+    start_date = np.datetime64(config['start']) # np.datetime64 type
+    end_date = np.datetime64(config['end']) # datetime type
+    frequency = np.timedelta64(int(config['frequency']), 'h')
 
     
     # Set up a dict that corresponds to [year][variable] with references to the
@@ -392,7 +391,7 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
     # Iterate through each date
     t = start_date
     t_i = 0
-    while t.date() <= end_date.date():
+    while to_datetime(t).date() <= to_datetime(end_date).date():
         logging.info(f'processing {t} nc date index {nc_date_index}')
         # Set up an array to hold input data
         input_values = np.ndarray((len(variables), grid_size[0]*grid_size[1]))
