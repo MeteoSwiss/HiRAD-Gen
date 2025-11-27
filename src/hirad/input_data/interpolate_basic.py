@@ -238,9 +238,11 @@ def interpolate_anemoi_to_grid(infile_anemoi: str, ds_name: str, output_grid: np
                                            plot_indices=plot_indices)
 
 
-### Part 2: Save COSMO data
 def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, plot_indices=[0], format='torch',
-                          start_date = None, end_date = None, area = None):    
+                          start_date = None, end_date = None, area = None):
+    """ Output anemoi data into the same file structure/format as the regridded data, e.g.
+    to use as target data.
+    No regridding is performed."""
     os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
     plots_path = os.path.join(output_path, 'plots')
     os.makedirs(plots_path, exist_ok=True)
@@ -309,7 +311,6 @@ def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: np.d
     # Check that all the NC datasets match up in terms of time and grid
     nc_times = curr_nc[variables[0]]['valid_time']
     nc_date_index = indices[variables[0]]
-    logging.info(type(curr_nc[variables[0]]))
     grid_size = curr_nc[variables[0]][variables[0]][:].shape[1:]
     nc_latitudes = curr_nc[variables[0]]['latitude'][:]
     nc_longitudes = curr_nc[variables[0]]['longitude'][:]
@@ -344,19 +345,36 @@ def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: np.d
     return curr_nc, nc_date_index
 
 def extract_netcdf_input_grid_025(nc: netCDF4.Dataset):
+    """
+    Gives reshaped lon-lat coordinates for NetCDF dataset.
+    For X x Y grid, shape will be (X*Y, 2)
+    Outputs in longitude as first column, latitude as second column,
+    for feeding into regridding.
+    """
     logging.info('extracting lat/lon')
-    lat = nc['latitude'][:]
     lon = nc['longitude'][:]
-    output_lat = np.zeros(len(lat)* len(lon))
+    lat = nc['latitude'][:]
     output_lon = np.zeros(len(lat) * len(lon))
+    output_lat = np.zeros(len(lat)* len(lon))
     for i in range(len(lat)):
         for j in range(len(lon)):
            grid_index = i * len(lon) + j
-           output_lat[grid_index] = lat[i]
            output_lon[grid_index] = lon[j]
+           output_lat[grid_index] = lat[i]
     return np.column_stack((output_lon, output_lat))
 
 def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
+    """ 
+    Corresponds to interpolate_anemoi_to_grid, for netCDF files.
+    More assumptions are made here about e.g. the filenames of the NetCDF files.
+
+    infile_nc: str: Filepath to a .yaml file with config info
+    ds_name: Dataset name (e.g. 'copernicus'), for output filenames
+    output_grid: np.ndarray of lon/lat coordinates to regrid to
+    output_path: parent directory for output. Subdirectories for data and plots will be created.
+    format: format to output data to ('torch' or 'numpy')
+    plot_indices: indices of time points to plot.
+    """
     # set up output dirs
     logging.info(f'setting up subdirs in {output_path}')
     os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
@@ -381,9 +399,10 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
     grid_size = curr_nc[variables[0]][variables[0]][:].shape[1:]
     input_grid = extract_netcdf_input_grid_025(curr_nc[variables[0]])
 
-    # Output stats and grid
-    # TODO
-    # TODO
+    # Output grid as torch file
+    torch.save(np.column_stack((input_grid[:,1], input_grid[:,0])), os.path.join(output_path, 'info', f'{ds_name}-lat-lon'))
+
+    # TODO consider outputting stats, but this would require additional calculations
     
     # Copy the .yaml file over for recording purposes
     shutil.copy(infile_nc, os.path.join(output_path, f'info/{ds_name}.yaml'))
@@ -399,8 +418,8 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
             logging.info(f'{t} not found in current files, loading new netcdf files')
             curr_nc, nc_date_index = load_netcdf_files_as_dict(input_path, variables, t, frequency,
                                                                reference_nc_dataset=curr_nc[variables[0]])
-        timestamp = curr_nc[variables[0]]['valid_time'][nc_date_index]
-        logging.info(f'time {t} has timestamp {timestamp}')
+        #timestamp = curr_nc[variables[0]]['valid_time'][nc_date_index]
+        #logging.info(f'time {t} has timestamp {timestamp}')
         for v in range(len(variables)):
             values = curr_nc[variables[v]][variables[v]][:][nc_date_index,:]
             input_values[v,:] = values.flatten()

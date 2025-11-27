@@ -10,7 +10,7 @@ import interpolate_basic
 def main():
     # TODO: Do better arg parsing so it's not as easy to reverse era and cosmo configs.
     if len(sys.argv) < 4:
-        raise ValueError('Expected call process_copenicus_cosmo.py [copernicus.yaml] [cosmo.yaml] [output directory]')
+        raise ValueError('Expected call process_copernicus_cosmo.py [copernicus.yaml] [cosmo.yaml] [output directory]')
     infile_copernicus = sys.argv[1]
     infile_cosmo = sys.argv[2]
     output_path = sys.argv[3]
@@ -39,8 +39,10 @@ def main():
 
     # interpolate copernicus
     format = 'numpy'
-    plot_indices=[0,24,25]
-    interpolate_basic.interpolate_netcdf_to_grid(infile_copernicus, 'copernicus', output_grid, output_path=output_path, format=format, plot_indices=plot_indices)
+    plot_indices=[0]
+    interpolate_basic.interpolate_netcdf_to_grid(infile_copernicus, 'copernicus',
+                                                 output_grid, output_path=output_path,
+                                                 format=format, plot_indices=plot_indices)
 
 
 if __name__ == "__main__":
