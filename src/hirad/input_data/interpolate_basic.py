@@ -100,6 +100,7 @@ def format_date(dt64: np.datetime64) -> str:
 def save_datetime_file(values: np.ndarray[np.intp], date: np.datetime64, filepath: str, format='torch'):
     """saves array of values for a given date into a torch file"""
     filename = os.path.join(filepath, format_date(date))
+    logging.info(f'writing data to {filename}')
     if format == 'torch':
         torch.save(values, filename)
     elif format == 'numpy':
@@ -256,7 +257,7 @@ def save_anemoi_as_format(infile_anemoi: str, ds_name: str, output_path: str, pl
     for i in range(len(ds.dates)):
         save_anemoi_time_point(i, ds, ds_name, data_output_path=ds_output_path, plots_output_path=plots_path, plot_indices=[0], format=format)
 
-def load_netcdf_file(path: str, variable: str, date: datetime.datetime):
+def load_netcdf_file(path: str, variable: str, index_date: datetime.datetime):
     """
     Get the corresponding netCDF file for a given variable, that includes
      a given date.
@@ -270,21 +271,25 @@ def load_netcdf_file(path: str, variable: str, date: datetime.datetime):
         matches = re.match(pattern, filename)
         if matches:
             f_var = matches[1]
-            f_start_year = matches[2]
-            f_end_year = matches[3]
-            if f_var == variable and date.year >= f_start_year and date.year <= f_end_year:
+            f_start_year = int(matches[2])
+            f_end_year = int(matches[3])
+            if f_var == variable and index_date.year >= f_start_year and index_date.year <= f_end_year:
                 ds = netCDF4.Dataset(os.path.join(path, filename))
                 # Raises ValueError if number of instances not exactly 1, which indicates 
                 # an implementation error somewhere.
-                index = np.where(ds['valid_time'][:] == np.int64(date.timestamp()))[0].item()
+                index = np.where(ds['valid_time'][:] == np.int64(index_date.timestamp()))[0].item()
+                netcdf_date = ds['valid_time'][index]
+                logging.info(f'index {index} has datetime {datetime.datetime.fromtimestamp(netcdf_date, datetime.UTC).strftime('%Y%m%d-%H%M')}')
                 return ds, index
-    raise FileNotFoundError(f'Could not find .nc file for variable {variable} and date {date} in {path}')
+    raise FileNotFoundError(f'Could not find .nc file for variable {variable} and date {index_date} in {path}')
 
-def load_netcdf_files_as_dict(path: str, variables: list, date: datetime.datetime, expected_frequency: datetime.timedelta):
+def load_netcdf_files_as_dict(input_path: str, variables: list, index_date: datetime.datetime, expected_frequency: datetime.timedelta,
+                              reference_nc_dataset=None):
     """
     Get the corresponding netCDF Datasets for a given list of variables, that includes
      a given date. Also checks to make sure each dataset lines up in terms of
-     dates and grids
+     dates and grids, with each other. Additionally, checks that grids match
+     up against another reference dataset.
 
     Returns: tuple of (dict[netCDF.Dataset], int) where 
     int is the index of where the date is within that dataset.
@@ -298,19 +303,25 @@ def load_netcdf_files_as_dict(path: str, variables: list, date: datetime.datetim
     curr_nc = {}
     indices = {}
     for var in variables:
-        ds, index = load_netcdf_file(input_path, var, start_date)
+        ds, index = load_netcdf_file(input_path, var, index_date)
         curr_nc[var] = ds
         indices[var] = index
 
     # Check that all the NC datasets match up in terms of time and grid
     nc_times = curr_nc[variables[0]]['valid_time']
     nc_date_index = indices[variables[0]]
-    grid_size = curr_nc[variables[0]][:].shape[1:]
+    logging.info(type(curr_nc[variables[0]]))
+    grid_size = curr_nc[variables[0]][variables[0]][:].shape[1:]
     nc_latitudes = curr_nc[variables[0]]['latitude'][:]
     nc_longitudes = curr_nc[variables[0]]['longitude'][:]
+    if reference_nc_dataset:
+        reference_latitudes = curr_nc[variables[0]]['latitude'][:]
+        reference_longitudes = curr_nc[variables[0]]['longitude'][:]
+        assert np.array_equal(reference_longitudes, nc_longitudes), 'New NC datasets longitudes do not match reference dataset'
+        assert np.array_equal(reference_latitudes, nc_latitudes), 'New NC datasets latitudes do not match reference dataset'
     for v in range(1, len(variables)):
         # Check the times line up
-        more_times = curr_nc[variables[v]]['valid_time']
+        more_times = curr_nc[variables[v]]['valid_time'][:]
         assert np.array_equal(nc_times, more_times), 'Times between variable datasets do not line up; this is not yet supported'
         assert len(more_times) == len(nc_times), 'Variable datasets appear to have different frequencies; this is not yet supported'
         # Just for ease of use, we won't allow different indices.
@@ -321,10 +332,14 @@ def load_netcdf_files_as_dict(path: str, variables: list, date: datetime.datetim
         assert nc_delta == expected_frequency, 'Frequency of NetCDF dataset for variable {variables[v]} is not the same as requested frequency.'
         
         # Check the grid size and lat/lon is consistent
-        curr_grid_size = curr_nc[variables[v]][:].shape[1:]
+        curr_grid_size = curr_nc[variables[v]][variables[v]][:].shape[1:]
         assert np.array_equal(grid_size, curr_grid_size), 'NC datasets appear to have different grid sizes'
-        lon = curr_nc[variables[v]]['latitude'][:]
-        lat = curr_nc[variables[v]]['longitude'][:]
+        lon = curr_nc[variables[v]]['longitude'][:]
+        lat = curr_nc[variables[v]]['latitude'][:]
+        logging.info(lon)
+        logging.info(lon.shape)
+        logging.info(nc_longitudes)
+        logging.info(nc_longitudes.shape)
         assert np.array_equal(lon, nc_longitudes), 'NC datasets appear to have different longitudes'
         assert np.array_equal(lat, nc_latitudes), 'NC datasets appear to have different longitudes'
     return curr_nc, nc_date_index
@@ -336,8 +351,6 @@ def extract_netcdf_input_grid_025(nc: netCDF4.Dataset):
     output_lat = np.zeros(len(lat)* len(lon))
     output_lon = np.zeros(len(lat) * len(lon))
     for i in range(len(lat)):
-        if i % 10 == 0:
-            print(i)
         for j in range(len(lon)):
            grid_index = i * len(lon) + j
            output_lat[grid_index] = lat[i]
@@ -346,6 +359,7 @@ def extract_netcdf_input_grid_025(nc: netCDF4.Dataset):
 
 def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
     # set up output dirs
+    logging.info(f'setting up subdirs in {output_path}')
     os.makedirs(os.path.join(output_path, 'info'), exist_ok=True)
     os.makedirs(os.path.join(output_path, 'plots'), exist_ok=True)
     os.makedirs(os.path.join(output_path, f'{ds_name}'), exist_ok=True)
@@ -355,39 +369,48 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
     with open(infile_nc) as cfg_file:
         config = yaml.safe_load(cfg_file)
     input_path = config['path'] # string
-    variables = config['variables'] # array
+    variables = config['channels'] # array
 
-    start_date = config['start'] # datetime type
-    end_date = config['end'] # datetime type
-    frequency = datetime.timedelta(hours=config['frequency'])
+    start_date = datetime.datetime.combine(config['start'], datetime.time()) # datetime type
+    end_date = datetime.datetime.combine(config['end'], datetime.time()) # datetime type
+    frequency = datetime.timedelta(hours=int(config['frequency']))
+
     
     # Set up a dict that corresponds to [year][variable] with references to the
     # corresponding NC dataset.
     curr_nc, nc_date_index = load_netcdf_files_as_dict(input_path, variables, start_date, frequency)
-    grid_size = curr_nc[variables[0]][:].shape[1:]
-    input_grid = extract_netcdf_input_grid_025(curr_nc[variables[extract_netcdf_input_grid_025]])
+    grid_size = curr_nc[variables[0]][variables[0]][:].shape[1:]
+    input_grid = extract_netcdf_input_grid_025(curr_nc[variables[0]])
 
-    # Set up the input grid for interpolation purposes
-
+    # Output stats and grid
+    # TODO
+    # TODO
+    
+    # Copy the .yaml file over for recording purposes
+    shutil.copy(infile_nc, os.path.join(output_path, f'info/{ds_name}.yaml'))
+    
     # Iterate through each date
     t = start_date
     t_i = 0
-    while datetime.date(t) <= end_date:
+    while t.date() <= end_date.date():
+        logging.info(f'processing {t} nc date index {nc_date_index}')
         # Set up an array to hold input data
         input_values = np.ndarray((len(variables), grid_size[0]*grid_size[1]))
-        if nc_date_index >= curr_nc[variables[0]][:].shape[0]:
-            curr_nc, nc_date_index = load_netcdf_files_as_dict(input_path, variables, t, frequency)
-            # check grid size before continuing
-            assert np.array_equal(grid_size, curr_nc[variables[0]][:].shape[1:]), 'Grid size of NC file for date {t} do not match up'
+        if nc_date_index >= curr_nc[variables[0]][variables[0]][:].shape[0]:
+            logging.info(f'{t} not found in current files, loading new netcdf files')
+            curr_nc, nc_date_index = load_netcdf_files_as_dict(input_path, variables, t, frequency,
+                                                               reference_nc_dataset=curr_nc[variables[0]])
+        timestamp = curr_nc[variables[0]]['valid_time'][nc_date_index]
+        logging.info(f'time {t} has timestamp {timestamp}')
         for v in range(len(variables)):
-            values = curr_nc[variables[v]][:][nc_date_index,:]
+            values = curr_nc[variables[v]][variables[v]][:][nc_date_index,:]
             input_values[v,:] = values.flatten()
         # Save the input data
-        save_datetime_file(input_values, t, os.path.join(input_path, ds_name), format=format)
+        save_datetime_file(input_values, t, os.path.join(output_path, ds_name), format=format)
 
         # Regrid
         interpolated_data = regrid(input_values, input_grid, output_grid)
-        save_datetime_file(interpolated_data, t, os.path.join(input_path, t, f'{ds_name}-interpolated'), format=format)
+        save_datetime_file(interpolated_data, t, os.path.join(output_path, f'{ds_name}-interpolated'), format=format)
         
         # Plot
         if t_i in plot_indices:
