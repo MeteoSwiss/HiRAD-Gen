@@ -3,12 +3,12 @@
 #SBATCH --job-name="corrdiff-first-stage"
 
 ### HARDWARE ###
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 

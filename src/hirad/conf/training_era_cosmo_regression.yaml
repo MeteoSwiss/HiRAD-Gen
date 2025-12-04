@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: regression_era5_cosmo_mlflow_test_x16
+    name: regression_era5_cosmo_all_channels
   run:
-    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+    dir: /capstor/scratch/cscs/mmcgloho/outputs/training/${hydra:job.name}
 
 # Get defaults
 defaults:
