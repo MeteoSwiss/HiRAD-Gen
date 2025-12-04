@@ -46,8 +46,8 @@ def main():
     interpolate_basic.interpolate_anemoi_to_grid(infile_era, 'era', output_grid, output_path=output_path, format=format, plot_indices=plot_indices)
     # save era and cosmo input/output data into same format
     # Save cosmo data
-    if infile_cosmo.endswith('yaml'):
-        interpolate_basic.save_anemoi_as_format(infile_cosmo, 'cosmo', output_path, plot_indices=plot_indices, format=format)
+    #if infile_cosmo.endswith('yaml'):
+    #    interpolate_basic.save_anemoi_as_format(infile_cosmo, 'cosmo', output_path, plot_indices=plot_indices, format=format)
 
     # Save ERA data (subsetted)
     lats = output_grid[:,1]
@@ -59,7 +59,9 @@ def main():
     area=(max_lat, min_lon, min_lat, max_lon)
     logging.info(f'projecting onto era area {area}')
     # skip plotting as we did it already in interpolation step
-    interpolate_basic.save_anemoi_as_format(infile_era, 'era', output_path, plot_indices=[], format=format, area=area)
+    #interpolate_basic.save_anemoi_as_format(infile_era, 'era', output_path, plot_indices=plot_indices, format=format, area=area,
+    #                                     start_date=cosmo.start_date, end_date=cosmo.end_date)
+    #interpolate_basic.save_anemoi_as_format(infile_cosmo, 'cosmo', output_path, plot_indices=plot_indices, format=format)
     
 
 if __name__ == "__main__":
