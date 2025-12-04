@@ -13,7 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_regression.log
+#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_regression_batch_8.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
@@ -40,7 +40,19 @@ export OMP_NUM_THREADS=1
 #     . ./train_env/bin/activate
 #     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
 # "
-srun --environment=./ci/edf/modulus_env.toml bash -c "
-    source /users/mmcgloho/hirad-gen/hiradenv/bin/activate
+srun --environment=./ci/edf/modulus_env.toml bash -c  "
+    source /users/mmcgloho/hirad-gen/hiradenv2/bin/activate
     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
 "
+
+#source /users/mmcgloho/hirad-gen/hiradenv/bin/activate
+#pip install -e . --no-dependencies
+#python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
+
+
+#srun -A a161 --environment=./ci/edf/modulus_env.toml bash -c  "
+#    source /users/mmcgloho/hirad-gen/hirad_env/bin/activate
+#    python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
+#"
+
+#source /users/mmcgloho/hirad-gen/hirad_env/bin/activate

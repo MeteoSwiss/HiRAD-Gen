@@ -1,7 +1,7 @@
 hydra:
   job:
     chdir: true
-    name: regression_era5_cosmo_all_channels
+    name: regression_era5_cosmo_all_channels_batch_8
   run:
     dir: /capstor/scratch/cscs/mmcgloho/outputs/training/${hydra:job.name}
 

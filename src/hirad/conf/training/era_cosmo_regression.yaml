@@ -4,7 +4,7 @@ hp:
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size -- based 8 per GPU -- 2 nodes is 2x8x4 -- see sbatch vars for how many gpus. diffusion need to point to the rgression.
-    batch_size_per_gpu: 6
+    batch_size_per_gpu: 8
     # Batch size per GPU
     lr: 0.0002
     # Learning rate

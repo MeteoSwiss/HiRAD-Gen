@@ -28,7 +28,7 @@ class ERA5_COSMO(DownscalingDataset):
         #TODO switch hanbdling paths to Path rather than pure strings
         self._n_month_hour_channels = n_month_hour_channels
         self._dataset_path = dataset_path
-        self._era5_path = os.path.join(dataset_path, 'era-interpolated')
+        self._era5_path = os.path.join(dataset_path, 'era-copernicus-interpolated')
         self._cosmo_path = os.path.join(dataset_path, 'cosmo')
         self._info_path = os.path.join(DATASET_ORIG_PATH, 'info')
         # self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
