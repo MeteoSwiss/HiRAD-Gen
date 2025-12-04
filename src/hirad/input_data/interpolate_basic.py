@@ -175,6 +175,7 @@ def interpolate_anemoi_time_point_to_grid(i: int, ds: Dataset, ds_name: str, inp
 def save_anemoi_time_point(i: int, ds: Dataset, ds_name: str, data_output_path: str, plots_output_path: str = None, plot_indices=[0], format='torch'):
     """Save a time point of anemoi data (either input or target) directly into a given format.
     If the time point is in the """
+    logging.info(f'saving {ds_name} {ds.dates[i]}')
     save_datetime_file(ds[i,:,0,:], ds.dates[i], data_output_path, format)
     datestr = format_date(ds.dates[i])
     if plots_output_path and i in plot_indices:
