@@ -8,12 +8,12 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
-#SBATCH --time=01:00:00
+#SBATCH --time=12:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/regression_full_run.log
+#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_regression.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
@@ -34,13 +34,13 @@ export MASTER_PORT=29500
 # # Compute cores per process
 # OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
 # export OMP_NUM_THREADS=$OMP_THREADS
-export OMP_NUM_THREADS=72
+export OMP_NUM_THREADS=1
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
 # srun bash -c "
 #     . ./train_env/bin/activate
 #     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
 # "
 srun --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e . --no-dependencies
+    source /users/mmcgloho/hirad-gen/hiradenv/bin/activate
     python src/hirad/training/train.py --config-name=training_era_cosmo_regression.yaml
 "

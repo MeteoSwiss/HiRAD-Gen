@@ -2,10 +2,11 @@ type: era5_cosmo
 dataset_path: /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/train/
 # dataset_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/era5-cosmo-1h-all-channels
 validation_path: /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/validation/
-input_channel_names: ['10u', '10v', '2d', '2t', 'cos_julian_day', 'cos_latitude', 'cos_local_time', 'cos_longitude', 'cp', 'insolation',
-  'lsm', 'msl',
+# Removed cp, cos_latitude, cos_longitude, sin_lat, sin_lon, sin/cos julian day and local time
+# removed insolation, hsurf, lsm, msl
+input_channel_names: ['10u', '10v', '2d', '2t', 
   'q_100', 'q_1000', 'q_150', 'q_200', 'q_250', 'q_300', 'q_400', 'q_50', 'q_500', 'q_600', 'q_700', 'q_850', 'q_925',
-  'sin_julian_day', 'sin_latitude', 'sin_local_time', 'sin_longitude', 'sdor', 'slor', 'skt', 'sp', 'tcw', 'tp', 
+  'sdor', 'slor', 'skt', 'sp', 'tcw', 'tp', 
   't_100', 't_1000', 't_150', 't_200', 't_250', 't_300', 't_400', 't_50', 't_500', 't_600', 't_700', 't_850', 't_925',
   'u_100', 'u_1000', 'u_150', 'u_200', 'u_250', 'u_300', 'u_400', 'u_50', 'u_500', 'u_600', 'u_700', 'u_850', 'u_925',
   'v_100', 'v_1000', 'v_150', 'v_200', 'v_250', 'v_300', 'v_400', 'v_50', 'v_500', 'v_600', 'v_700', 'v_850', 'v_925',
@@ -13,10 +14,9 @@ input_channel_names: ['10u', '10v', '2d', '2t', 'cos_julian_day', 'cos_latitude'
   'z',
   'z_100', 'z_1000', 'z_150', 'z_200', 'z_250', 'z_300', 'z_400', 'z_50', 'z_500', 'z_600', 'z_700', 'z_850', 'z_925',
 ]
-output_channel_names: ['10u', '10v', '2d', '2t', 'cos_julian_day', 'cos_latitude', 'cos_local_time', 'cos_longitude', 'hsurf', 'insolation',
-  'lsm', 'msl',
+output_channel_names: ['10u', '10v', '2d', '2t',
   'q_100', 'q_1000', 'q_150', 'q_200', 'q_250', 'q_300', 'q_400', 'q_50', 'q_500', 'q_600', 'q_700', 'q_850', 'q_925',
-  'sin_julian_day', 'sin_latitude', 'sin_local_time', 'sin_longitude', 'skt', 'sp', 'tcc', 'tp', 'tqv', 
+   'skt', 'sp', 'tcc', 'tp', 'tqv', 
   't_100', 't_1000', 't_150', 't_200', 't_250', 't_300', 't_400', 't_50', 't_500', 't_600', 't_700', 't_850', 't_925',
   'u_100', 'u_1000', 'u_150', 'u_200', 'u_250', 'u_300', 'u_400', 'u_50', 'u_500', 'u_600', 'u_700', 'u_850', 'u_925',
   'v_100', 'v_1000', 'v_150', 'v_200', 'v_250', 'v_300', 'v_400', 'v_50', 'v_500', 'v_600', 'v_700', 'v_850', 'v_925',

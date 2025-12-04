@@ -12,7 +12,7 @@ from hirad.utils.console import PythonLogger
 
 logger = PythonLogger(__name__)
 
-DATASET_ORIG_PATH = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-all-channels/'
+DATASET_ORIG_PATH = '/iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/train/'
 
 class ERA5_COSMO(DownscalingDataset):
     def __init__(self, 
@@ -135,7 +135,7 @@ class ERA5_COSMO(DownscalingDataset):
         # orig_shape = [350,542] #TODO currently padding to be divisible by 16
         orig_shape = self.image_shape()
         try:
-            era5_data = np.load(os.path.join(self._era5_path,self._file_list[idx]))[self._era_indeces]
+            era5_data = np.load(os.path.join(self._era5_path,self._file_list[idx]), mmap_mode='r')[self._era_indeces]
         except:
             logger.error(f"Error loading file {os.path.join(self._era5_path,self._file_list[idx])}")
             raise
@@ -147,7 +147,7 @@ class ERA5_COSMO(DownscalingDataset):
         era5_data = self.normalize_input(era5_data)
 
         try:
-            cosmo_data = np.load(os.path.join(self._cosmo_path,self._file_list[idx]))[self._cosmo_indeces]
+            cosmo_data = np.load(os.path.join(self._cosmo_path,self._file_list[idx]), mmap_mode='r')[self._cosmo_indeces]
         except:
             logger.error(f"Error loading file {os.path.join(self._cosmo_path,self._file_list[idx])}")
             raise
