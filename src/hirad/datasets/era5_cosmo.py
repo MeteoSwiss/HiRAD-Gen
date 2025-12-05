@@ -107,12 +107,12 @@ class ERA5_COSMO(DownscalingDataset):
         self.output_inverse_transforms = {}
         for transform_descriptor in transform_channels:
             channel, transformation = transform_descriptor.split('-')
-            input_channel_idx = self._era_info['select'].index(channel) if channel in self._era_info['select'] else None
-            output_channel_idx = self._cosmo_info['select'].index(channel) if channel in self._cosmo_info['select'] else None
+            input_channel_idx = input_channel_names.index(channel) if channel in input_channel_names else None
+            output_channel_idx = output_channel_names.index(channel) if channel in output_channel_names else None
             if transformation.startswith('box_cox'):
                 lmbda_str = transformation.split('_')[-1]
                 lmbda = float(transformation.split('_')[-1])/(10**(len(lmbda_str)-1))
-                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx}, output idx: {output_channel_idx})")
+                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx} ({input_channel_names[input_channel_idx]}), output idx: {output_channel_idx} ({output_channel_names[output_channel_idx]}))")
                 if input_channel_idx is not None:
                     self.input_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.input_inverse_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
