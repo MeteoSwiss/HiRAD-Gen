@@ -23,7 +23,13 @@ RUN pip install \
         numpy \
         pandas \
         scipy \
-        torch
+        torch 
+
+RUN pip install \
+        meteodata-lab
+
+RUN pip install \
+        rasterio 
 
 
 
