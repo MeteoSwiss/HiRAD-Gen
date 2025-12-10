@@ -13,8 +13,8 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_diffusion.log
-#SBATCH --error=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_diffusion.err
+#SBATCH --output=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_diffusion_continue1.log
+#SBATCH --error=/capstor/scratch/cscs/mmcgloho/logs/era5_cosmo_all_channels_diffusion_continue1.err
 
 ### ENVIRONMENT ####
 #SBATCH -A a161

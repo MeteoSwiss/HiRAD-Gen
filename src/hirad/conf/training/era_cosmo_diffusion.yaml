@@ -1,6 +1,6 @@
 # Hyperparameters
 hp:
-    training_duration: 3500000
+    training_duration: 10000000
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size
@@ -32,7 +32,7 @@ perf:
 # I/O
 io:
     # regression_checkpoint_path:  /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
-    regression_checkpoint_path: /capstor/scratch/cscs/pstamenk/outputs/training/era_cosmo_all_channels_regression/checkpoints_regression
+    regression_checkpoint_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_all_channels
     # Where to load the regression checkpoint
     print_progress_freq: 1000
     # How often to print progress
