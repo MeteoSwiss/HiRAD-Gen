@@ -116,7 +116,7 @@ def interpolate_anemoi_range_to_rotlatlon(i_start: int, i_end: int, ds: Dataset,
 		
 	xarrays = anemoi_to_xarray(ds, i_start, i_end)
 	for j in range(len(xarrays)):
-		logging.info(f'regridding {ds.variables[j]} for time {ds.dates[i_start]} to {ds.dates[i_end]}')
+		logging.info(f'regridding {ds.variables[j]} for time {ds.dates[i_start]} to {ds.dates[i_end-1]}')
 		xarray = xarrays[j]
 		start = datetime.datetime.now()
 		regridded=regrid.icon2rotlatlon(xarray)
@@ -124,19 +124,21 @@ def interpolate_anemoi_range_to_rotlatlon(i_start: int, i_end: int, ds: Dataset,
 		logging.info(f'   regridding took {end-start} seconds')
 		torch_data[0:i_end-i_start,j,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
 		
-		logging.info('saving torch data')
-		for k in range(torch_data.shape[0]):
-			interpolate_basic.save_datetime_file(torch_data[k,:], ds.dates[i_start + k], output_data_path, format=format)
-			if (i_start + k) in plot_indices:
-				for v in range(torch_data.shape[1]):
-					interpolate_basic.plot_and_save_projection(input_grid[:,0], input_grid[:,1],
-								ds[i_start+k,v,0,:],
-								os.path.join(output_plots_path, f'{ds.variables[v]}-iconnative.png'),
-								s=0.005)
-					interpolate_basic.plot_and_save_projection(output_grid[:,0], output_grid[:,1],
-								torch_data[k,v,0,:],
-								os.path.join(output_plots_path, f'{ds.variables[v]}-rotlatlon.png'),
-								s=0.005)
+	logging.info('saving torch data')
+	for k in range(torch_data.shape[0]):
+		interpolate_basic.save_datetime_file(torch_data[k,:], ds.dates[i_start + k], output_data_path, format=format)
+		if (i_start + k) in plot_indices:
+			logging.info(f'plotting {i_start+k}')
+			datestr = interpolate_basic.format_date(ds.dates[i_start+k])
+			for v in range(torch_data.shape[1]):
+				interpolate_basic.plot_and_save_projection(input_grid[:,0], input_grid[:,1],
+							ds[i_start+k,v,0,:],
+							os.path.join(output_plots_path, f'{datestr}-{ds.variables[v]}-iconnative.png'),
+							s=0.005)
+				interpolate_basic.plot_and_save_projection(output_grid[:,0], output_grid[:,1],
+							torch_data[k,v,0,:],
+							os.path.join(output_plots_path, f'{datestr}-{ds.variables[v]}-rotlatlon.png'),
+							s=0.005)
 
 def interpolate_anemoi_to_rotlatlon(infile_anemoi: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
 	
@@ -147,23 +149,29 @@ def interpolate_anemoi_to_rotlatlon(infile_anemoi: str, ds_name: str, output_gri
 		realch1_config = yaml.safe_load(realch1_file)
 	realch1 = open_dataset(realch1_config)
 	variables = realch1.variables
+	input_grid = np.column_stack((realch1.longitudes, realch1.latitudes))
 
 	# Get the lat/lon info by regridding one variable
 	xarrays = anemoi_to_xarray(realch1, 0, 1)
 	regridded=regrid.icon2rotlatlon(xarrays[0])
 	logging.info('getting geo coords')
 	lats, lons = get_geo_coords(regridded, trim_edge=TRIM_EDGE)
+	output_grid=np.column_stack((lons, lats))
 	
 	# Save grid to file
 	grid = np.column_stack((lats, lons))
 	torch.save(grid, os.path.join(output_path, 'info', 'realch1-lat-lon'))
 
+	output_data_path = os.path.join(output_path, ds_name)
+	output_plots_path = os.path.join(output_path, 'plots')
+
 	# Split regridding into batches; too many time points seems to not scale well.
 	for i in range(0, len(realch1.dates), XARRAY_BATCH):
 		start_index = i
 		end_index = min(i+XARRAY_BATCH, len(realch1.dates))
+		logging.info(f'start={start_index} end={end_index}')
 		interpolate_anemoi_range_to_rotlatlon(start_index, end_index, realch1, ds_name,
-										None, None, output_path, format, None, plot_indices)
+										input_grid, output_grid, output_data_path, format, output_plots_path, plot_indices)
 		
 
 def main():

@@ -2,14 +2,16 @@
 
 #SBATCH --time=12:00:00
 
+source /users/mmcgloho/interpolate-env-ssp/bin/activate
+python src/hirad/input_data/regrid_realch1.py src/hirad/input_data/configs/realch1-2005-2009.yaml /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset/
 
 #srun -A a161 -t 12:00:00 --environment=modulus_env bash -c "
 #    pip install -e . --no-dependencies
 #    pip install anemoi.datasets
 #    python src/hirad/input_data/interpolate_basic.py src/hirad/input_data/era-all.yaml src/hirad/input_data/cosmo-all.yaml /capstor/scratch/cscs/mmcgloho/datasets/processed/era5-cosmo-1h-all-channels/
 #" 
-pip install -e . --no-dependencies
-pip install anemoi.datasets
+#pip install -e . --no-dependencies
+#pip install anemoi.datasets
 #pip install meteodata-lab
 #python src/hirad/input_data/interpolate_realch1.py \
 #    src/hirad/input_data/era.yaml \
