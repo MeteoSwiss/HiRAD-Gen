@@ -3,7 +3,8 @@
 #SBATCH --time=12:00:00
 
 source /users/mmcgloho/interpolate-env-ssp/bin/activate
-python src/hirad/input_data/regrid_realch1.py src/hirad/input_data/configs/realch1-2005-2009.yaml /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset/
+python src/hirad/input_data/regrid_realch1.py src/hirad/input_data/configs/realch1-2021-2024.yaml /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset/
+
 
 #srun -A a161 -t 12:00:00 --environment=modulus_env bash -c "
 #    pip install -e . --no-dependencies
