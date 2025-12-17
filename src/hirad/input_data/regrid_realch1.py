@@ -162,6 +162,9 @@ def interpolate_anemoi_to_rotlatlon(infile_anemoi: str, ds_name: str, output_gri
 	grid = np.column_stack((lats, lons))
 	torch.save(grid, os.path.join(output_path, 'info', 'realch1-lat-lon'))
 
+	# Save stats
+	interpolate_basic.save_anemoi_stats(realch1, os.path.join(output_path, f'info/{ds_name}-stats'))
+
 	output_data_path = os.path.join(output_path, ds_name)
 	output_plots_path = os.path.join(output_path, 'plots')
 
