@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from hirad.datasets import get_dataset_and_sampler_inference
+from hirad.datasets import get_dataset_and_sampler_inference, get_channels_from_strings
 from hirad.distributed import DistributedManager
 from hirad.eval import compute_mae, plot_map
 from hirad.eval.plotting import plot_map_precipitation, wind_direction
@@ -129,14 +129,18 @@ def main(cfg: DictConfig) -> None:
         times = cfg.generation.times
         
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
-    plot_channels = cfg.dataset.get("plot_channels", None)
-    if plot_channels is not None:
-        del dataset_cfg["plot_channels"]
-        plot_channels = [ChannelMetadata(name) if len(name.split('_'))==1 else ChannelMetadata(name.split('_')[0],name.split('_')[1]) for name in plot_channels]
+
     has_lead_time = cfg.generation.get("has_lead_time", False)
     dataset, sampler = get_dataset_and_sampler_inference(
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
+
+    plot_channels = cfg.get("plot_channels", None)
+    if plot_channels is not None:
+        plot_channels = get_channels_from_strings(plot_channels)
+    else:
+        plot_channels = dataset.output_channels()
+
     input_channels = dataset.input_channels()
     output_channels = dataset.output_channels()
     
