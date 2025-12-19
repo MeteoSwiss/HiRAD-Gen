@@ -12,19 +12,25 @@ from hirad.utils.console import PythonLogger
 
 logger = PythonLogger(__name__)
 
-# DATASET_ORIG_PATH = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full'
-DATASET_ORIG_PATH = "/iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/train/"
+DATASET_ORIG_PATH = '/iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset'
 
-class ERA5_COSMO(DownscalingDataset):
+ERA5_TO_REAL_CHANNEL_MAP = {
+    '2t': 'TD_2M',
+    '10u': 'U_10M',
+    '10v': 'V_10M',
+    'tp': 'TOT_PREC_1H'
+}
+
+class ERA5_REAL(DownscalingDataset):
     def __init__(self, 
                 dataset_path: str, 
                 input_channel_names: List[str] = [], 
                 output_channel_names: List[str] = [], 
                 static_channel_names: List[str] = [], 
                 transform_channels: List[str] = [],
-                n_month_hour_channels: int = None,
-                input_dir_name: str = 'era-interpolated',
-                output_dir_name: str = 'cosmo',
+                n_month_hour_channels: int = 0,
+                input_dir_name: str = 'era-copernicus-interpolated',
+                output_dir_name: str = 'realch1',
                 ):
         super().__init__()
 
@@ -32,29 +38,29 @@ class ERA5_COSMO(DownscalingDataset):
         self._n_month_hour_channels = n_month_hour_channels
         self._dataset_path = dataset_path
         self._era5_path = os.path.join(dataset_path, input_dir_name)
-        self._cosmo_path = os.path.join(dataset_path, output_dir_name)
+        self._real_path = os.path.join(dataset_path, output_dir_name)
         self._info_path = os.path.join(DATASET_ORIG_PATH, 'info')
-        # self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
+        # self._static_path = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-real-1h-linear-interpolation-full/static'# os.path.join(dataset_path, 'static')
         self._static_path = os.path.join(DATASET_ORIG_PATH, 'static')# os.path.join(dataset_path, 'static')
         # self._zarr_path = os.path.join(dataset_path, 'dataset.zarr')
 
         # load file list (each file is one date-time state)
-        self._file_list = sorted(os.listdir(self._cosmo_path))
+        self._file_list = sorted(os.listdir(self._real_path))
 
         # open zarr store
         # self._zarr_store = zarr.open(self._zarr_path, mode='r')
         # self.era5 = self._zarr_store['era5']
-        # self.cosmo = self._zarr_store['cosmo']
+        # self.real = self._zarr_store['real']
 
         # Load static info and channel names
         if static_channel_names:
-            with open(os.path.join(self._static_path, 'cosmo-static.yaml'), 'r') as file:
+            with open(os.path.join(self._static_path, output_dir_name+'-static.yaml'), 'r') as file:
                 self._static_info = yaml.safe_load(file)
                 self._static_indeces = [self._static_info['select'].index(name) for name in static_channel_names]
                 self._static_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
                                         else ChannelMetadata(name.split('_')[0],name.split('_')[1])
                                         for name in self._static_info['select'] if name in static_channel_names]
-            static_data = torch.load(os.path.join(self._static_path,'cosmo-static'), weights_only=False)[self._static_indeces]
+            static_data = np.load(os.path.join(self._static_path, output_dir_name+'-static.npy'))[self._static_indeces]
             orig_shape = self.image_shape()
             self.static_data = np.flip(static_data \
                                     .squeeze() \
@@ -65,17 +71,17 @@ class ERA5_COSMO(DownscalingDataset):
         else:
             self.static_data = None
 
-        # Load cosmo info and channel names
-        with open(os.path.join(self._info_path,'cosmo.yaml'), 'r') as file:
-            self._cosmo_info = yaml.safe_load(file)
+        # Load real info and channel names
+        with open(os.path.join(self._info_path, output_dir_name+'.yaml'), 'r') as file:
+            self._real_info = yaml.safe_load(file)
             if output_channel_names:
-                self._cosmo_indeces = [self._cosmo_info['select'].index(name) for name in output_channel_names]
+                self._real_indeces = [self._real_info['select'].index(name) for name in output_channel_names]
             else:
-                self._cosmo_indeces = list(range(len(self._cosmo_info['select'])))
-                output_channel_names = self._cosmo_info['select']
-            self._cosmo_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
+                self._real_indeces = list(range(len(self._real_info['select'])))
+                output_channel_names = self._real_info['select']
+            self._real_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
                                         else ChannelMetadata(name.split('_')[0],name.split('_')[1])
-                                        for name in self._cosmo_info['select'] if name in output_channel_names]
+                                        for name in self._real_info['select'] if name in output_channel_names]
 
         # Load era5 info and channel names
         with open(os.path.join(self._info_path,'era.yaml'), 'r') as file:
@@ -91,13 +97,14 @@ class ERA5_COSMO(DownscalingDataset):
         
         # Load stats for normalizing channels of input and output
 
-        cosmo_stats = torch.load(os.path.join(self._info_path,'cosmo-stats'), weights_only=False)
-        self.output_mean = cosmo_stats['mean'][self._cosmo_indeces]
-        self.output_std = cosmo_stats['stdev'][self._cosmo_indeces]
-
         era_stats = torch.load(os.path.join(self._info_path,'era-stats'), weights_only=False)
         self.input_mean = era_stats['mean'][self._era_indeces]
         self.input_std = era_stats['stdev'][self._era_indeces]
+
+        real_stats = torch.load(os.path.join(self._info_path,'realch1-stats'), weights_only=False)
+        self.output_mean = real_stats['mean'][self._real_indeces]
+        self.output_std = real_stats['stdev'][self._real_indeces]
+
         if self.static_data is not None:
             self.input_mean = np.concatenate((self.input_mean, self.static_mean), axis=0)
             self.input_std = np.concatenate((self.input_std, self.static_std), axis=0)
@@ -110,12 +117,13 @@ class ERA5_COSMO(DownscalingDataset):
         self.output_inverse_transforms = {}
         for transform_descriptor in transform_channels:
             channel, transformation = transform_descriptor.split('-')
-            input_channel_idx = input_channel_names.index(channel) if channel in input_channel_names else None
-            output_channel_idx = output_channel_names.index(channel) if channel in output_channel_names else None
+            input_channel_idx = self._era_info['select'].index(channel) if channel in self._era_info['select'] else None
+            # output_channel_idx = self._real_info['select'].index(ERA5_TO_REAL_CHANNEL_MAP[channel]) if ERA5_TO_REAL_CHANNEL_MAP[channel] in self._real_info['select'] else None
+            output_channel_idx = self._real_info['select'].index(channel) if channel in self._real_info['select'] else None
             if transformation.startswith('box_cox'):
                 lmbda_str = transformation.split('_')[-1]
                 lmbda = float(transformation.split('_')[-1])/(10**(len(lmbda_str)-1))
-                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx} ({input_channel_names[input_channel_idx]}), output idx: {output_channel_idx} ({output_channel_names[output_channel_idx]}))")
+                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx}, output idx: {output_channel_idx})")
                 if input_channel_idx is not None:
                     self.input_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.input_inverse_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
@@ -124,13 +132,13 @@ class ERA5_COSMO(DownscalingDataset):
                 if output_channel_idx is not None:
                     self.output_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.output_inverse_transforms[output_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
-                    self.output_mean[output_channel_idx] = torch.load(os.path.join(self._info_path,f"cosmo-{transform_descriptor}-mean"), weights_only=False)
-                    self.output_std[output_channel_idx] = torch.load(os.path.join(self._info_path,f"cosmo-{transform_descriptor}-std"), weights_only=False)
+                    self.output_mean[output_channel_idx] = torch.load(os.path.join(self._info_path,f"realch1-{transform_descriptor}-mean"), weights_only=False)
+                    self.output_std[output_channel_idx] = torch.load(os.path.join(self._info_path,f"realch1-{transform_descriptor}-std"), weights_only=False)
             else:
                 raise ValueError(f"Transformation: {transformation} for channel {channel} not implemented.")
 
     def __getitem__(self, idx):
-        """Get cosmo and era5 interpolated to cosmo grid"""
+        """Get real and era5 interpolated to real grid"""
         # get data point
         # squeeze the ensemble dimesnsion
         # reshape to image_shape
@@ -138,40 +146,27 @@ class ERA5_COSMO(DownscalingDataset):
         # orig_shape = [350,542] #TODO currently padding to be divisible by 16
         orig_shape = self.image_shape()
         try:
-            # start = time.perf_counter()
-            # era5_data = torch.load(os.path.join(self._era5_path,self._file_list[idx].split('.')[0]), weights_only=False)[self._era_indeces]
             era5_data = np.load(os.path.join(self._era5_path,self._file_list[idx]), mmap_mode='r')[self._era_indeces]
-            # end = time.perf_counter()
-            # logger.info(f"Reading time era: {end - start:.6f} seconds")
         except:
             logger.error(f"Error loading file {os.path.join(self._era5_path,self._file_list[idx])}")
             raise
-        # start = time.perf_counter()
         era5_data = np.flip(era5_data \
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
         era5_data = np.concatenate((era5_data, self.static_data), axis=0) if self.static_data is not None else era5_data
         era5_data = self.normalize_input(era5_data)
-        # end = time.perf_counter()
-        # logger.info(f"Preprocess time era: {end - start:.6f} seconds")
+
         try:
-            # start = time.perf_counter()
-            # cosmo_data = torch.load(os.path.join(self._cosmo_path,self._file_list[idx]), weights_only=False)[self._cosmo_indeces]
-            cosmo_data = np.load(os.path.join(self._cosmo_path,self._file_list[idx]), mmap_mode='r')[self._cosmo_indeces]
-            # end = time.perf_counter()
-            # logger.info(f"Reading time cosmo: {end - start:.6f} seconds")
+            real_data = np.load(os.path.join(self._real_path,self._file_list[idx]), mmap_mode='r')[self._real_indeces]
         except:
-            logger.error(f"Error loading file {os.path.join(self._cosmo_path,self._file_list[idx])}")
+            logger.error(f"Error loading file {os.path.join(self._real_path,self._file_list[idx])}")
             raise
-        # start = time.perf_counter()
-        cosmo_data = np.flip(cosmo_data\
+        real_data = np.flip(real_data\
                                 .squeeze() \
                                 .reshape(-1,*orig_shape),
                             1)
-        cosmo_data = self.normalize_output(cosmo_data)
-        # end = time.perf_counter()
-        # logger.info(f"Preprocess time cosmo: {end - start:.6f} seconds")
+        real_data = self.normalize_output(real_data)
 
         if self._n_month_hour_channels is not None and self._n_month_hour_channels>0:
             # extract month and hour from filename
@@ -183,8 +178,8 @@ class ERA5_COSMO(DownscalingDataset):
             time_grid = self.make_time_grids(hour, month)
             era5_data = np.concatenate((era5_data, time_grid), axis=0)
 
-        return torch.from_numpy(cosmo_data),\
-                torch.from_numpy(era5_data)
+        return torch.tensor(real_data),\
+                torch.tensor(era5_data)
 
     def __len__(self):
         return len(self._file_list)
@@ -192,13 +187,13 @@ class ERA5_COSMO(DownscalingDataset):
 
     def longitude(self) -> np.ndarray:
         """Get longitude values from the dataset."""
-        lat_lon = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
+        lat_lon = torch.load(os.path.join(self._info_path,output_dir_name+'-lat-lon'), weights_only=False)
         return lat_lon[:,1]
 
 
     def latitude(self) -> np.ndarray:
         """Get latitude values from the dataset."""
-        lat_lon = torch.load(os.path.join(self._info_path,'cosmo-lat-lon'), weights_only=False)
+        lat_lon = torch.load(os.path.join(self._info_path,output_dir_name+'-lat-lon'), weights_only=False)
         return lat_lon[:,0]
 
 
@@ -214,7 +209,7 @@ class ERA5_COSMO(DownscalingDataset):
 
     def output_channels(self) -> List[ChannelMetadata]:
         """Metadata for the output channels. A list of ChannelMetadata, one for each channel"""
-        return self._cosmo_channels
+        return self._real_channels
 
 
     def time(self) -> List:
@@ -225,8 +220,8 @@ class ERA5_COSMO(DownscalingDataset):
 
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data (same for input and output)."""
-        #TODO load from info, I hardcode it for now (cosmo from anemoi-datasets minus trim-edge=20)
-        return 352,544 #TODO 350,542 is orig size, UNet requires dimenions divisible by 16, for now, I just add zeros to orig images
+        #TODO load from info, I hardcode it for now (real from anemoi-datasets minus trim-edge=20)
+        return 704,1088
     
 
     def normalize_input(self, x: np.ndarray) -> np.ndarray:

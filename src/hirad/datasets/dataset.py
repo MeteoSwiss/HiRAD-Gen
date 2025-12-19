@@ -22,12 +22,14 @@ from hirad.utils.function_utils import InfiniteSampler
 from hirad.distributed import DistributedManager
 
 from .era5_cosmo import ERA5_COSMO
+from .era5_real import ERA5_REAL
 from .base import DownscalingDataset
 
 
 # this maps all known dataset types to the corresponding init function
 known_datasets = {
     "era5_cosmo": ERA5_COSMO,
+    "era5_real": ERA5_REAL,
 }
 
 

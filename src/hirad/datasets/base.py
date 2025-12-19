@@ -31,6 +31,20 @@ class ChannelMetadata:
     auxiliary: bool = False
 
 
+def get_channels_from_strings(channel_strings: List[str] | str) -> List[ChannelMetadata] | ChannelMetadata:
+    """Convert list of channel strings to ChannelMetadata objects."""
+    if isinstance(channel_strings, str):
+        return ChannelMetadata(channel_strings) if len(channel_strings.split('_'))==1 else ChannelMetadata(channel_strings.split('_')[0],channel_strings.split('_')[1])
+    else:
+        return [ChannelMetadata(name) if len(name.split('_'))==1 else ChannelMetadata(name.split('_')[0],name.split('_')[1]) for name in channel_strings]
+
+def get_strings_from_channels(channels: List[ChannelMetadata] | ChannelMetadata) -> List[str] | str:
+    """Convert list of ChannelMetadata objects to channel strings."""
+    if isinstance(channels, ChannelMetadata):
+        return channels.name if not channels.level else f"{channels.name}_{channels.level}"
+    else:
+        return [ch.name if not ch.level else f"{ch.name}_{ch.level}" for ch in channels]
+
 class DownscalingDataset(torch.utils.data.Dataset, ABC):
     """An abstract class that defines the interface for downscaling datasets."""
 
