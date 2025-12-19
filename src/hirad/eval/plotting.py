@@ -9,6 +9,7 @@ import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from pathlib import Path
 from datetime import datetime
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 
 
 # COSMO‑2 GRID: TODO: Add to dataset config
@@ -40,8 +41,8 @@ def get_channel_indices(dataset, channels=None):
         tp_out = indices['output']['tp']
         tp_in = indices['input'].get('tp', tp_out)  # Fallback to output index if not in input
     """
-    out_ch = {c.name: i for i, c in enumerate(dataset.output_channels())}
-    in_ch = {c.name: i for i, c in enumerate(dataset.input_channels())}
+    out_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.output_channels())}
+    in_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.input_channels())}
     
     if channels is None:
         return {'input': in_ch, 'output': out_ch}
