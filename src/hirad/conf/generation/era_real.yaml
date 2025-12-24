@@ -1,0 +1,73 @@
+num_ensembles: 8
+  # Number of ensembles to generate per input
+seed_batch_size: 4
+  # Size of the batched inference
+inference_mode: all
+  # Choose between "all" (regression + diffusion), "regression" or "diffusion"
+  # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
+  # img_shape_x and img_shape_y
+
+randomize: True
+  # Whether to randomize the random seeds for each generation. If false, fixed seeds
+  # from 0 to num_ensembles-1 will be used for each time step in times/times_range.
+random_seed: 2578458
+  # Base random seed. This is only used when randomize is True.
+  # random seed will be set for numpy random module to have reproducible randomized generative process.
+
+# Patching parameters
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+#   # Number of overlapping pixels between adjacent patches
+boundary_pix: 2
+#   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
+#   # artifact.
+
+hr_mean_conditioning: True
+# sample_res: full
+  # Sampling resolution
+# times_range: ['20200825-1200','20200827-1200',1]
+# times_range: ['20200601-0000','20200831-2300',1]
+# times_range: ['20200721-1900','20200721-2000',1]
+times_range: null
+  # Start date, end date and time interval (in hours) for the generation
+# times_range: ['20200601-0000','20200831-2300',1]
+  # Start date, end date and time interval (in hours) for the generation
+times:
+  - 20210721-1900
+  # - 20200721-1900 #null
+  # - 20200118-1800
+  # - 20200721-1900
+  # - 20200926-1800
+  # - 20200927-0000
+  # - 20200927-0600
+  # - 20200927-1200
+  # - 20160101-0600
+  # - 20160101-1200
+has_lead_time: False
+
+perf:
+  force_fp16: False
+    # Whether to force fp16 precision for the model. If false, it'll use the precision
+    # specified upon training.
+  use_torch_compile: False
+    # whether to use torch.compile on the diffusion model
+    # this will make the first time stamp generation very slow due to compilation overheads
+    # but will significantly speed up subsequent inference runs
+  num_writer_workers: 8
+    # number of workers to use for writing file
+    # To support multiple workers a threadsafe version of the netCDF library must be used
+
+io:
+  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_8_attention
+  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_all_channels
+  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_compression_diffusion
+  res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_real
+  # Checkpoint filename for the residual predictor model
+  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_8_attention
+  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_all_channels
+  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_compression_regression
+  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_real
+  # Checkpoint filename for the mean predictor model
+  output_path: .

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name="eval_precip"
+#SBATCH --job-name="corrdiff-first-stage"
 
 ### HARDWARE ###
 #SBATCH --partition=normal
@@ -8,32 +8,28 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=12:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
+
 ### OUTPUT ###
-#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/snapshot.log
+#SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/calculate_stats.log
+#SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/calculate_stats.err
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
 
-# Choose method to initialize dist in pythorch
-export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
-
+# Get master node.
 MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
-echo "Master node : $MASTER_ADDR"
 # Get IP for hostname.
 MASTER_ADDR="$(getent ahosts "$MASTER_ADDR" | awk '{ print $1; exit }')"
-echo "Master address : $MASTER_ADDR"
 export MASTER_ADDR
 export MASTER_PORT=29500
-echo "Master port: $MASTER_PORT"
 
 export OMP_NUM_THREADS=1
 
-
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     source ../hirad_env/hirad/bin/activate
-    python src/hirad/eval/snapshots.py --config-name=snapshot_era_real.yaml
+    python src/hirad/input_data/calculate_transformed_stats.py
 "

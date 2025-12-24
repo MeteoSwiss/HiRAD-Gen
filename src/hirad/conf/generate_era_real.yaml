@@ -1,0 +1,21 @@
+hydra:
+  job:
+    chdir: true
+    name: generate_era_real_5m
+    # name: july2020
+  run:
+    dir: /capstor/scratch/cscs/pstamenk//outputs/generation/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+  # Dataset
+  - dataset/era_real_inference
+
+  # Sampler
+  - sampler/stochastic
+  #- sampler/deterministic
+
+  # Generation
+  - generation/era_real
+    #- generation/patched_based
