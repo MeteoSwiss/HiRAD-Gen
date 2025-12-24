@@ -287,8 +287,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
-        # if use_torch_compile:
-        #     model = torch.compile(model)
+        if use_torch_compile:
+            model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
