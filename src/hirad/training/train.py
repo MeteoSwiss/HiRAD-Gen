@@ -266,6 +266,13 @@ def main(cfg: DictConfig) -> None:
             **model_args,
         )
         model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
+
+    # # Print the model summary
+    # if dist.rank == 0:
+    #     summary(model, input_size=[(1, img_out_channels, *img_shape), (1, img_in_channels, *img_shape), (1,1)], device=dist.device)
+
+    # raise NotImplementedError("Check if model_args are correct when using patching - img_in_channels should include global channels and lead time channels if applicable")
+
     
     model.train().requires_grad_(True).to(dist.device)
 
@@ -410,7 +417,7 @@ def main(cfg: DictConfig) -> None:
     elif cfg.model.name == "lt_aware_ce_regression":
         loss_fn = RegressionLossCE(prob_channels=prob_channels)
 
-        # Instantiate the optimizer
+    # Instantiate the optimizer
     optimizer = torch.optim.Adam(
         params=model.parameters(), 
         lr=cfg.training.hp.lr, 
@@ -504,9 +511,11 @@ def main(cfg: DictConfig) -> None:
                             f"accumulation round {n_i}", color="Magenta"
                         ):
                             with nvtx.annotate("loading data", color="green"):
+                                tick_read_start_time = time.time()
                                 img_clean, img_lr, *lead_time_label = next(
                                     dataset_iterator
                                 )
+                                tick_read_time = time.time() - tick_read_start_time
                                 if use_apex_gn:
                                     img_clean = img_clean.to(
                                         dist.device,
@@ -615,17 +624,21 @@ def main(cfg: DictConfig) -> None:
                         rank_0_only=True,
                     ):
                         # Print stats if we crossed the printing threshold with this batch
+                        torch.cuda.synchronize()
                         tick_end_time = time.time()
                         fields = []
                         fields += [f"samples {cur_nimg:<9.1f}"]
                         fields += [f"training_loss {average_loss:<7.2f}"]
                         fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
                         fields += [f"learning_rate {current_lr:<7.8f}"]
-                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
                         fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
                         fields += [
                             f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.4f}"
                         ]
+                        fields += [
+                            f"sec_for_reading {tick_read_time:<7.4f}"
+                        ]
+                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
                         fields += [
                             f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
                         ]
