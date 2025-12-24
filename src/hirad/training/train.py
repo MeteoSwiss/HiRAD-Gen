@@ -15,6 +15,8 @@ from hydra.utils import to_absolute_path
 from torch.nn.parallel import DistributedDataParallel
 import mlflow
 # from torchinfo import summary
+# from memory_profiler import profile
+# import transformer_engine.pytorch as te
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -28,7 +30,7 @@ from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.models import UNet, EDMPrecondSuperResolution
-from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
+from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE, ResidualEnergyLoss
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
 from hirad.inference import Generator
 
@@ -267,6 +269,11 @@ def main(cfg: DictConfig) -> None:
         )
         model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
     
+    # if dist.rank == 0:
+    #     summary(model, input_size=[(1, img_out_channels, *img_shape), (1, img_in_channels, *img_shape), (1,1)], device=dist.device)
+
+    # raise NotImplementedError("Check if model_args are correct when using patching - img_in_channels should include global channels and lead time channels if applicable")
+
     model.train().requires_grad_(True).to(dist.device)
 
     if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
@@ -287,8 +294,8 @@ def main(cfg: DictConfig) -> None:
 
     # Enable distributed data parallel if applicable
     if dist.world_size > 1:
-        # if use_torch_compile:
-        #     model = torch.compile(model)
+        if use_torch_compile:
+            model = torch.compile(model)
         model = DistributedDataParallel(
             model,
             device_ids=[dist.local_rank],
@@ -297,6 +304,7 @@ def main(cfg: DictConfig) -> None:
             find_unused_parameters=True,  # dist.find_unused_parameters,
             bucket_cap_mb=35,
             gradient_as_bucket_view=True,
+            # static_graph=True, # check this option  if it doesn't break anything
         )
 
     # Load the regression checkpoint if applicable #TODO test when training correction
@@ -372,6 +380,8 @@ def main(cfg: DictConfig) -> None:
     else:
         patch_nums_iter = [patch_num]
 
+    # logger0.info(f"patch number iterations are {patch_nums_iter}")
+
     # Set patch gradient accumulation only for patched diffusion models
     if cfg.model.name in {
         "patched_diffusion",
@@ -402,6 +412,12 @@ def main(cfg: DictConfig) -> None:
         "lt_aware_patched_diffusion",
     ):
         loss_fn = ResidualLoss(
+            regression_net=regression_net,
+            hr_mean_conditioning=cfg.model.hr_mean_conditioning,
+        )
+    elif cfg.model.name == "energy_loss_diffusion":
+        # raise NotImplementedError("energy_loss_diffusion is not implemented yet.")
+        loss_fn = ResidualEnergyLoss(
             regression_net=regression_net,
             hr_mean_conditioning=cfg.model.hr_mean_conditioning,
         )
@@ -480,12 +496,20 @@ def main(cfg: DictConfig) -> None:
     elif fp16:
         input_dtype = torch.float16
 
+
+    # start_writing_and_new_iteration_time = time.perf_counter()
     # enable profiler:
     with cuda_profiler():
         with profiler_emit_nvtx():
             while not done:
+                # torch.cuda.synchronize()
+                # end_writing_and_new_iteration_time = time.perf_counter()                
+                # logger.info(f"Writing and new iteration time: {end_writing_and_new_iteration_time - start_writing_and_new_iteration_time} seconds on gpu {dist.rank}.")
+
                 tick_start_nimg = cur_nimg
                 tick_start_time = time.time()
+
+                # start_zero_grad_time = time.perf_counter()
 
                 if cur_nimg - start_nimg == 24 * cfg.training.hp.total_batch_size:
                     logger0.info(f"Starting Profiler at {cur_nimg}")
@@ -499,14 +523,29 @@ def main(cfg: DictConfig) -> None:
                     # Compute & accumulate gradients
                     optimizer.zero_grad(set_to_none=True)
                     loss_accum = 0
+                    if cfg.model.name == "energy_loss_diffusion":
+                        precision_loss_accum = 0
+                        spread_loss_accum = 0
+                        orig_loss_accum = 0
+                    # torch.cuda.synchronize()
+                    # end_zero_grad_time = time.perf_counter()
+                    # logger.info(f"Zero grad time: {end_zero_grad_time - start_zero_grad_time} seconds on gpu {dist.rank}.")
+                    # start_data_read_time = time.perf_counter()
                     for n_i in range(num_accumulation_rounds):
                         with nvtx.annotate(
                             f"accumulation round {n_i}", color="Magenta"
                         ):
                             with nvtx.annotate("loading data", color="green"):
+                                tick_read_start_time = time.time()
                                 img_clean, img_lr, *lead_time_label = next(
                                     dataset_iterator
                                 )
+                                tick_read_time = time.time() - tick_read_start_time
+                                # torch.cuda.synchronize()
+                                # end_data_read_time = time.perf_counter()
+                                # logger.info(f"Data reading time: {end_data_read_time - start_data_read_time} seconds on gpu {dist.rank}.")
+                                # start_data_transfer_time = time.perf_counter()
+                                # tick_transfer_data_start_time = time.time()
                                 if use_apex_gn:
                                     img_clean = img_clean.to(
                                         dist.device,
@@ -529,6 +568,7 @@ def main(cfg: DictConfig) -> None:
                                         .to(input_dtype)
                                         .contiguous()
                                     )
+                                # tick_transfer_data_time = time.time() - tick_transfer_data_start_time
                             loss_fn_kwargs = {
                                 "net": model,
                                 "img_clean": img_clean,
@@ -552,6 +592,11 @@ def main(cfg: DictConfig) -> None:
                             if use_patch_grad_acc:
                                 loss_fn.y_mean = None
 
+                            # torch.cuda.synchronize()
+                            # end_data_transfer_time = time.perf_counter()
+                            # logger.info(f"Data transfer time: {end_data_transfer_time - start_data_transfer_time} seconds on gpu {dist.rank}.")
+
+                            # start_loss_time = time.perf_counter()
                             for patch_num_per_iter in patch_nums_iter:
                                 if patching is not None:
                                     patching.set_patch_num(patch_num_per_iter)
@@ -560,36 +605,91 @@ def main(cfg: DictConfig) -> None:
                                     with torch.autocast(
                                         "cuda", dtype=amp_dtype, enabled=enable_amp
                                     ):
-                                        loss = loss_fn(**loss_fn_kwargs)
-
+                                        if cfg.model.name == "energy_loss_diffusion":
+                                            loss, precision_loss, spread_loss, orig_loss = loss_fn(**loss_fn_kwargs)
+                                        else:
+                                            loss = loss_fn(**loss_fn_kwargs)
+                                # torch.cuda.synchronize()
+                                # end_loss_time = time.perf_counter()
+                                # logger.info(f"Loss computation time: {end_loss_time - start_loss_time} seconds on gpu {dist.rank}.")
+                                # start_loss_reduction_time = time.perf_counter()
                                 loss = loss.sum() / batch_size_per_gpu
+                                if cfg.model.name == "energy_loss_diffusion":
+                                    precision_loss = precision_loss.sum() / batch_size_per_gpu
+                                    spread_loss = spread_loss / batch_size_per_gpu
+                                    orig_loss = orig_loss.sum() / batch_size_per_gpu
+
                                 loss_accum += (
                                     loss
                                     / num_accumulation_rounds
                                     / len(patch_nums_iter)
                                 )
+                                if cfg.model.name == "energy_loss_diffusion":
+                                    precision_loss_accum += (
+                                        precision_loss 
+                                        / num_accumulation_rounds 
+                                        / len(patch_nums_iter)
+                                    )
+                                    spread_loss_accum += (
+                                        spread_loss 
+                                        / num_accumulation_rounds 
+                                        / len(patch_nums_iter)
+                                    )
+                                    orig_loss_accum = (
+                                        orig_loss 
+                                        / num_accumulation_rounds 
+                                        / len(patch_nums_iter)
+                                    )
+                                # torch.cuda.synchronize()
+                                # end_loss_reduction_time = time.perf_counter()
+                                # logger.info(f"Loss reduction time: {end_loss_reduction_time - start_loss_reduction_time} seconds on gpu {dist.rank}.")
+                                # start_backward_time = time.perf_counter()
                                 with nvtx.annotate(f"loss backward", color="yellow"):
                                     loss.backward()
+                                # torch.cuda.synchronize()
+                                # end_backward_time = time.perf_counter()
+                                # logger.info(f"Backward computation time: {end_backward_time - start_backward_time} seconds on gpu {dist.rank}.")
 
         
+                    # start_loss_aggregate_time = time.perf_counter()
                     with nvtx.annotate(f"loss aggregate", color="green"):
                         loss_sum = torch.tensor([loss_accum], device=dist.device)
+                        if cfg.model.name == "energy_loss_diffusion":
+                            precision_loss_sum = torch.tensor([precision_loss_accum], device=dist.device)
+                            spread_loss_sum = torch.tensor([spread_loss_accum], device=dist.device)
+                            orig_loss_sum = torch.tensor([orig_loss_accum], device=dist.device)
                         if dist.world_size > 1:
                             torch.distributed.barrier()
                             torch.distributed.all_reduce(
                                 loss_sum, op=torch.distributed.ReduceOp.SUM
                             )
+                            if cfg.model.name == "energy_loss_diffusion":
+                                torch.distributed.all_reduce(
+                                    precision_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                )
+                                torch.distributed.all_reduce(
+                                    spread_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                )
+                                torch.distributed.all_reduce(
+                                    orig_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                )
                         average_loss = (loss_sum / dist.world_size).cpu().item()
-
+                        if cfg.model.name == "energy_loss_diffusion":
+                            average_precision_loss = (precision_loss_sum / dist.world_size).cpu().item()
+                            average_spread_loss = (spread_loss_sum / dist.world_size).cpu().item()
+                            average_orig_loss = (orig_loss_sum / dist.world_size).cpu().item()
                         # update running mean of average loss since last periodic task
                         average_loss_running_mean += (
                             average_loss - average_loss_running_mean
                         ) / n_average_loss_running_mean
                         n_average_loss_running_mean += 1
+                    # torch.cuda.synchronize()
+                    # end_loss_aggregate_time = time.perf_counter()
+                    # logger.info(f"Loss aggregation time: {end_loss_aggregate_time - start_loss_aggregate_time} seconds on gpu {dist.rank}.")
 
                     # Update weights.
+                    # start_clipping_time = time.perf_counter()
                     with nvtx.annotate("update weights", color="blue"):
-
                         lr_rampup = cfg.training.hp.lr_rampup  # ramp up the learning rate
                         for g in optimizer.param_groups:
                             if lr_rampup > 0:
@@ -600,11 +700,20 @@ def main(cfg: DictConfig) -> None:
                         handle_and_clip_gradients(
                             model, grad_clip_threshold=cfg.training.hp.grad_clip_threshold
                         )
+                    # torch.cuda.synchronize()
+                    # end_clipping_time = time.perf_counter()
+                    # logger.info(f"LR rampup and gradient clipping time: {end_clipping_time - start_clipping_time} seconds on gpu {dist.rank}.")
+                    # start_update_weights_time = time.perf_counter()
                     with nvtx.annotate("optimizer step", color="blue"):
                         optimizer.step()
 
                     cur_nimg += cfg.training.hp.total_batch_size
                     done = cur_nimg >= cfg.training.hp.training_duration
+
+                    # torch.cuda.synchronize()
+                    # end_update_weights_time = time.perf_counter()
+                    # logger.info(f"Weights update time: {end_update_weights_time - start_update_weights_time} seconds on gpu {dist.rank}.")
+                    # logger.info(f"sec_for_reading {tick_read_time:<7.4f} on gpu {dist.rank}")
 
                     if is_time_for_periodic_task(
                         cur_nimg,
@@ -615,17 +724,29 @@ def main(cfg: DictConfig) -> None:
                         rank_0_only=True,
                     ):
                         # Print stats if we crossed the printing threshold with this batch
+                        # start_writing_and_new_iteration_time = time.perf_counter()
+                        torch.cuda.synchronize()
                         tick_end_time = time.time()
                         fields = []
                         fields += [f"samples {cur_nimg:<9.1f}"]
                         fields += [f"training_loss {average_loss:<7.2f}"]
                         fields += [f"training_loss_running_mean {average_loss_running_mean:<7.2f}"]
+                        if cfg.model.name == "energy_loss_diffusion":
+                            fields += [f"training_precision_loss {average_precision_loss:<7.2f}"]
+                            fields += [f"training_spread_loss {average_spread_loss:<7.2f}"]
+                            fields += [f"training_orig_loss {average_orig_loss:<7.2f}"]
                         fields += [f"learning_rate {current_lr:<7.8f}"]
-                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
-                        fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}"]
+                        fields += [f"sec_per_tick {(tick_end_time - tick_start_time):<7.4f}"]
                         fields += [
                             f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.4f}"
                         ]
+                        fields += [
+                            f"sec_for_reading {tick_read_time:<7.4f}"
+                        ]
+                        # fields += [
+                        #     f"sec_for_data_trf {tick_transfer_data_time:<7.4f}"
+                        # ]
+                        fields += [f"total_sec {(tick_end_time - start_time):<7.1f}"]
                         fields += [
                             f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}"
                         ]
@@ -646,6 +767,10 @@ def main(cfg: DictConfig) -> None:
                                 average_loss_running_mean,
                                 cur_nimg,
                             )
+                            if cfg.model.name == "energy_loss_diffusion":
+                                mlflow.log_metric("training_precision_loss", average_precision_loss, cur_nimg)
+                                mlflow.log_metric("training_spread_loss", average_spread_loss, cur_nimg)
+                                mlflow.log_metric("training_orig_loss", average_orig_loss, cur_nimg)
                             mlflow.log_metric("learning_rate", current_lr, cur_nimg)
                         # reset running mean of average loss
                         average_loss_running_mean = 0
@@ -655,6 +780,10 @@ def main(cfg: DictConfig) -> None:
                     # Validation
                     if validation_dataset_iterator is not None:
                         valid_loss_accum = 0
+                        if cfg.model.name == "energy_loss_diffusion":
+                            valid_precision_loss_accum = 0
+                            valid_spread_loss_accum = 0
+                            valid_orig_loss_accum = 0
                         if is_time_for_periodic_task(
                             cur_nimg,
                             cfg.training.io.validation_freq,
@@ -725,31 +854,99 @@ def main(cfg: DictConfig) -> None:
                                         with torch.autocast(
                                             "cuda", dtype=amp_dtype, enabled=enable_amp
                                         ):
-                                            loss_valid = loss_fn(**loss_valid_kwargs)
-
+                                            if cfg.model.name == "energy_loss_diffusion":
+                                                loss_valid, precision_loss_valid, spread_loss_valid, orig_loss_valid = loss_fn(**loss_valid_kwargs)
+                                            else:
+                                                loss_valid = loss_fn(**loss_valid_kwargs)
                                         loss_valid = (
                                             (loss_valid.sum() / batch_size_per_gpu)
                                             .cpu()
                                             .item()
                                         )
+                                        if cfg.model.name == "energy_loss_diffusion":
+                                            precision_loss_valid = (
+                                                (precision_loss_valid.sum() / batch_size_per_gpu)
+                                                .cpu()
+                                                .item()
+                                            )
+                                            spread_loss_valid = (
+                                                (spread_loss_valid.sum() / batch_size_per_gpu)
+                                                .cpu()
+                                                .item()
+                                            )
+                                            orig_loss_valid = (
+                                                (orig_loss_valid.sum() / batch_size_per_gpu)
+                                                .cpu()
+                                                .item()
+                                            )
                                         valid_loss_accum += (
                                             loss_valid
                                             / cfg.training.io.validation_steps
                                             / len(patch_nums_iter)
                                         )
+                                        if cfg.model.name == "energy_loss_diffusion":
+                                            valid_precision_loss_accum += (
+                                                precision_loss_valid 
+                                                / cfg.training.io.validation_steps 
+                                                / len(patch_nums_iter)
+                                            )
+                                            valid_spread_loss_accum += (
+                                                spread_loss_valid 
+                                                / cfg.training.io.validation_steps 
+                                                / len(patch_nums_iter)
+                                            )
+                                            valid_orig_loss_accum += (
+                                                orig_loss_valid 
+                                                / cfg.training.io.validation_steps 
+                                                / len(patch_nums_iter)
+                                            )
                                 valid_loss_sum = torch.tensor(
                                     [valid_loss_accum], device=dist.device
                                 )
+                                if cfg.model.name == "energy_loss_diffusion":
+                                    valid_precision_loss_sum = torch.tensor(
+                                        [valid_precision_loss_accum], device=dist.device
+                                    )
+                                    valid_spread_loss_sum = torch.tensor(
+                                        [valid_spread_loss_accum], device=dist.device
+                                    )
+                                    valid_orig_loss_sum = torch.tensor(
+                                        [valid_orig_loss_accum], device=dist.device
+                                    )
                                 if dist.world_size > 1:
                                     torch.distributed.barrier()
                                     torch.distributed.all_reduce(
                                         valid_loss_sum, op=torch.distributed.ReduceOp.SUM
                                     )
+                                    if cfg.model.name == "energy_loss_diffusion":
+                                        torch.distributed.all_reduce(
+                                            valid_precision_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                        )
+                                        torch.distributed.all_reduce(
+                                            valid_spread_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                        )
+                                        torch.distributed.all_reduce(
+                                            valid_orig_loss_sum, op=torch.distributed.ReduceOp.SUM
+                                        )
                                 average_valid_loss = valid_loss_sum / dist.world_size
+                                if cfg.model.name == "energy_loss_diffusion":
+                                    average_valid_precision_loss = valid_precision_loss_sum / dist.world_size
+                                    average_valid_spread_loss = valid_spread_loss_sum / dist.world_size
+                                    average_valid_orig_loss = valid_orig_loss_sum / dist.world_size
                                 if dist.rank == 0 and cfg.logging.method == "mlflow":
                                     mlflow.log_metric(
                                         "validation_loss", average_valid_loss, cur_nimg                                        
                                     )
+                                    if cfg.model.name == "energy_loss_diffusion":
+                                        mlflow.log_metric(
+                                            "validation_precision_loss", average_valid_precision_loss, cur_nimg                                        
+                                        )
+                                        mlflow.log_metric(
+                                            "validation_spread_loss", average_valid_spread_loss, cur_nimg                                        
+                                        )
+                                        mlflow.log_metric(
+                                            "validation_orig_loss", average_valid_orig_loss, cur_nimg                                        
+                                        )
 
 
                 # Save checkpoints
@@ -860,11 +1057,36 @@ def main(cfg: DictConfig) -> None:
                                                               'visualization',
                                                               os.path.split(output_path)[-1]))
 
+    print_io_ratio(logger0)
 
     if dist.world_size > 1:
         torch.distributed.barrier()
     # Done.
+
     logger0.info("Training Completed.")
+
+def print_io_ratio(logger):
+    io_file = "/proc/self/io"
+    rchar = None
+    read_bytes = None
+
+    with open(io_file, "r") as f:
+        for line in f:
+            if line.startswith("rchar:"):
+                rchar = int(line.split()[1])
+            elif line.startswith("read_bytes:"):
+                read_bytes = int(line.split()[1])
+
+    if rchar is None or read_bytes is None:
+        logger.info("Could not read rchar or read_bytes from /proc/self/io.")
+        return
+
+    ratio = read_bytes / rchar if rchar != 0 else float('nan')
+
+    logger.info("\n--- I/O Stats ---")
+    logger.info(f"rchar       : {rchar} bytes")
+    logger.info(f"read_bytes  : {read_bytes} bytes")
+    logger.info(f"ratio       : {ratio:.6f} (read_bytes / rchar)")
 
 if __name__ == "__main__":
     main()
