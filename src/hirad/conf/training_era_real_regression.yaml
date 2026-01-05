@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: era_real_regression
+    name: regression_era_real
   run:
-    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+    dir: ./outputs/training/${hydra:job.name}
 
 
 # Get defaults
@@ -20,9 +20,6 @@ defaults:
 
   # Training
   - training/era_real_regression
-
-  # Inference visualization
-  # - generation/era_cosmo_training
 
   # Logging
   - logging/era_real_regression

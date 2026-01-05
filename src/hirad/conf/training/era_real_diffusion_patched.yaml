@@ -40,7 +40,7 @@ perf:
     profile_mode: False
 # I/O
 io:
-    regression_checkpoint_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_real
+    regression_checkpoint_path: /path/to/regression/checkpoint
     # Where to load the regression checkpoint
     print_progress_freq: 2000
     # How often to print progress

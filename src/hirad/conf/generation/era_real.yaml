@@ -45,14 +45,8 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_8_attention
-  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_all_channels
-  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_compression_diffusion
-  res_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_diffusion_real
+  res_ckpt_path: /path/to/diffusion/checkpoint
   # Checkpoint filename for the residual predictor model
-  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_8_attention
-  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_all_channels
-  # reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_compression_regression
-  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/checkpoints/checkpoint_regression_real
+  reg_ckpt_path: /path/to/regression/checkpoint
   # Checkpoint filename for the mean predictor model
   output_path: .

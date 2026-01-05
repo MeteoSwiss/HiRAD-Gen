@@ -17,4 +17,3 @@ defaults:
 
   # Generation
   - generation/era_cosmo_test
-    #- generation/patched_based

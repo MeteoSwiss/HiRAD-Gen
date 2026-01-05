@@ -2,7 +2,6 @@ hydra:
   job:
     chdir: true
     name: generation_era_real_results
-    # name: july2020
   run:
     dir: ./outputs/generation/${hydra:job.name}
 
@@ -18,4 +17,3 @@ defaults:
 
   # Generation
   - generation/era_real
-    #- generation/patched_based

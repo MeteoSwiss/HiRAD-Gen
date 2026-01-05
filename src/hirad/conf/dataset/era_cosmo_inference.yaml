@@ -1,6 +1,6 @@
 type: era5_cosmo
 # dataset_path: /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/validation/
-# dataset_path: /iopsstor/scratch/cscs/mmcgloho/run-1_2/validation/
+dataset_path: /iopsstor/scratch/cscs/mmcgloho/run-1_2/validation/
 input_dir_name: era-interpolated
 output_dir_name: cosmo-orig
 # input_channel_names: ['10u', '10v', '2d', '2t', 

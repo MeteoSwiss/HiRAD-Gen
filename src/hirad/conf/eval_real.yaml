@@ -1,5 +1,5 @@
 # Path to the inference output directory
-inference_output_dir: '/capstor/scratch/cscs/pstamenk/outputs/generation/generate_era_real_8m'
+inference_output_dir: '/path/to/generation/results/directory'
 results_dir_name: 'evaluation_maps'
 
 # Constants for evaluation depend on dataset specifics and should be modified accordingly
@@ -8,7 +8,7 @@ conv_factor_hourly: 1000  # Convert precip of ERA5 from meters to mm/h
 conv_factor: 24000 # Convert the precip of ERA5 from meters/h to mm/day
 wet_threshold: 0.1 # Threshold for wet-hour in mm/h
 log_interval: 24 # Log progress every N timesteps
-land_sea_mask_path: '/users/pstamenk/HiRAD-Gen/lsm_real.npy'
+land_sea_mask_path: '/path/to/land_sea_mask.npy' # Path to land-sea mask numpy file
 
 # Constants describing the grid for plotting
 lat_start: -4.42
