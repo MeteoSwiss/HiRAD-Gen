@@ -5,19 +5,19 @@ This script computes and visualizes the distribution of precipitation values
 over land.
 """
 import logging
+import argparse
+import yaml
 from pathlib import Path
 
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf
 import xarray as xr
 
-from hirad.datasets import get_dataset_and_sampler_inference
-from hirad.distributed import DistributedManager
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR_HOURLY, LOG_INTERVAL
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask
 
 
 def save_distribution_plot(hist_data_dict, bin_edges, labels, colors, title, ylabel, out_path, percentiles_data=None):
@@ -100,26 +100,50 @@ def save_distribution_plot(hist_data_dict, bin_edges, labels, colors, title, yla
     plt.close()
 
 
-@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
-def main(cfg: DictConfig):
+def main(cfg: dict):
     # Setup logging
-    DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+    generation_dir = cfg.get("inference_output_dir", None)
+    if generation_dir is None:
+        logger.error("No inference_output_dir specified in config.")
+        return
+    
+    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
+        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+        return
+
+    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
+    if not generation_config_path.exists():
+        logger.error(f"Generation config file {generation_config_path} does not exist.")
+        return
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
     logger.info("Starting computation for domain-mean precipitation distribution over land")
-    times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    if cfg.get("times_range", None):
+        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
+    elif cfg.get("times", None):
+        times = cfg.get("times")
+    elif gen_cfg.get("generation").get("times_range", None):
+        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
+    elif gen_cfg.get("generation").get("times", None):
+        times = gen_cfg.get("generation").get("times")
+    else:
+        logger.error("No times or times_range specified in config or generation config.")
+        return
     logger.info(f"Loaded {len(times)} timesteps to process")
 
     # Initialize dataset
-    ds_cfg = OmegaConf.to_container(cfg.dataset)
-    dataset, _ = get_dataset_and_sampler_inference(
-        ds_cfg, times, cfg.generation.get('has_lead_time', False)
-    )
+    dataset_cfg = gen_cfg.get("dataset")
+    dataset_type = dataset_cfg.pop("type")
+    dataset = known_datasets[dataset_type](**dataset_cfg)
     logger.info("Dataset and sampler initialized")
 
     # Output root
-    out_root = Path(cfg.generation.io.output_path or './outputs')
+    out_root = Path(generation_dir)
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -128,7 +152,7 @@ def main(cfg: DictConfig):
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
-    land_mask = load_land_sea_mask()
+    land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
     # Define histogram bins
     bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
@@ -147,10 +171,10 @@ def main(cfg: DictConfig):
         
         try:
             for i, ts in enumerate(times):
-                if i % LOG_INTERVAL == 0:
+                if i % cfg.get("log_interval") == 0:
                     logger.info(f"Processing timestep {i+1}/{len(times)}")
                 
-                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * CONV_FACTOR_HOURLY * land_mask
+                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * cfg.get("conv_factor_hourly") * land_mask
                 
                 # Apply scaling factor for baseline
                 # if mode == 'baseline':
@@ -179,10 +203,10 @@ def main(cfg: DictConfig):
     all_member_values = []
     
     for i, ts in enumerate(times):
-        if i % LOG_INTERVAL == 0:
+        if i % cfg.get("log_interval") == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
-        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False) * CONV_FACTOR_HOURLY  # [n_members, n_channels, lat, lon]
+        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False) * cfg.get("conv_factor_hourly")  # [n_members, n_channels, lat, lon]
         
         if n_members is None:
             n_members = preds.shape[0]
@@ -233,10 +257,12 @@ def main(cfg: DictConfig):
         }
     
     # Create distribution plots
-    labels = ['COSMO-2  Analysis', 'ERA5', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in hist_data else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff Ensemble']
+    labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in hist_data else ['Target', 'Input', 'CorrDiff Ensemble']
     colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in hist_data else ['blue', 'orange', 'green']
     
-    fn = out_root / 'precipitation_distribution_over_land.png'
+    output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
+    output_path.mkdir(parents=True, exist_ok=True)
+    fn = output_path / 'precipitation_distribution_over_land.png'
     save_distribution_plot(
         hist_data,
         bins,
@@ -251,4 +277,11 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    main(cfg)

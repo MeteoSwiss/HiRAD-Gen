@@ -1,4 +1,6 @@
 import logging
+import argparse
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -7,31 +9,54 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import xarray as xr
-from omegaconf import DictConfig, OmegaConf
 
-from hirad.datasets import get_dataset_and_sampler_inference
-from hirad.distributed import DistributedManager
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, LOG_INTERVAL, concat_and_group_diurnal
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
 
-@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
-def main(cfg: DictConfig):
+def main(cfg: dict):
     # Initialize
-    DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+    generation_dir = cfg.get("inference_output_dir", None)
+    if generation_dir is None:
+        logger.error("No inference_output_dir specified in config.")
+        return
+    
+    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
+        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+        return
+
+    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
+    if not generation_config_path.exists():
+        logger.error(f"Generation config file {generation_config_path} does not exist.")
+        return
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
     # Load times
     logger.info("Starting computation for diurnal cycles of 2m temperature and windspeed")
-    times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    if cfg.get("times_range", None):
+        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
+    elif cfg.get("times", None):
+        times = cfg.get("times")
+    elif gen_cfg.get("generation").get("times_range", None):
+        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
+    elif gen_cfg.get("generation").get("times", None):
+        times = gen_cfg.get("generation").get("times")
+    else:
+        logger.error("No times or times_range specified in config or generation config.")
+        return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
     # Dataset
-    ds_cfg = OmegaConf.to_container(cfg.dataset)
-    dataset, _ = get_dataset_and_sampler_inference(
-        ds_cfg, times, cfg.generation.get('has_lead_time', False)
-    )
+    dataset_cfg = gen_cfg.get("dataset")
+    dataset_type = dataset_cfg.pop("type")
+    dataset = known_datasets[dataset_type](**dataset_cfg)
+    logger.info("Dataset initialized")
 
     # Indices for channels
     indices = get_channel_indices(dataset)
@@ -49,12 +74,12 @@ def main(cfg: DictConfig):
     v_in = in_ch.get('10v', v_out)
 
     # Output path
-    out_root = Path(cfg.generation.io.output_path or './outputs')
+    out_root = Path(generation_dir)
     def load(ts, fn):
         return torch.load(out_root/ts/fn, weights_only=False)
 
     # Land-sea mask
-    land_mask = load_land_sea_mask()
+    land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
     # Prepare lists to collect DataArrays
     target_temp, baseline_temp, pred_temp, mean_pred_temp = [], [], [], []
@@ -102,7 +127,7 @@ def main(cfg: DictConfig):
             mean_pred_wind.append(mean_over_land(
                 np.hypot(regression_pred[u_out], regression_pred[v_out]), ("lat","lon"), land_mask.coords, dt))
 
-        if idx % LOG_INTERVAL == 0 or idx == len(times):
+        if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
     # Compute diurnal means and stds
@@ -140,9 +165,11 @@ def main(cfg: DictConfig):
         plt.close()
 
     data = [temp_target_mean, temp_baseline_mean, temp_pred_mean, temp_mean_pred_mean] if mean_pred_temp else [temp_target_mean, temp_baseline_mean, temp_pred_mean]
-    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_temp else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)']
+    labels = ['Target', 'Input', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_temp else ['Target', 'Input', 'CorrDiff ± Std(Members)']
     stds = [None, None, temp_pred_std, None] if mean_pred_temp else [None, None, temp_pred_std]
 
+    output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
+    output_path.mkdir(parents=True, exist_ok=True)
     # Generate plots
     save_plot(
         temp_target_mean.hour,
@@ -151,11 +178,11 @@ def main(cfg: DictConfig):
         labels,
         '2m Temperature [°C]',
         'Diurnal Cycle of 2m Temperature',
-        out_root / 'diurnal_cycle_2t.png'
+        output_path / 'diurnal_cycle_2t.png'
     )
 
     data = [wind_target_mean, wind_baseline_mean, wind_pred_mean, wind_mean_pred_mean] if mean_pred_wind else [wind_target_mean, wind_baseline_mean, wind_pred_mean]
-    labels = ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wind else ['COSMO-2  Analysis', 'ERA5', 'CorrDiff ± Std(Members)']
+    labels = ['Target', 'Input', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wind else ['Target', 'Input', 'CorrDiff ± Std(Members)']
     stds = [None, None, wind_pred_std, None] if mean_pred_wind else [None, None, wind_pred_std]
 
     save_plot(
@@ -165,10 +192,17 @@ def main(cfg: DictConfig):
         labels,
         'Windspeed [m/s]',
         'Diurnal Cycle of Windspeed',
-        out_root / 'diurnal_cycle_windspeed.png'
+        output_path / 'diurnal_cycle_windspeed.png'
     )
 
     logger.info("Plots saved.")
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    main(cfg)

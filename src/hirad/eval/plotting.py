@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -12,10 +13,22 @@ from datetime import datetime
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 
 
-# COSMO‑2 GRID: TODO: Add to dataset config
-LAT = np.arange(-4.42, 3.36 + 0.02, 0.02)
-LON = np.arange(-6.82, 4.80 + 0.02, 0.02)
-RELAX_ZONE = 19 # Number of points dropped on each side (relaxation zone)
+
+@dataclass
+class GridConfig:
+    lat: np.ndarray
+    lon: np.ndarray
+    height: int
+    width: int
+    relax_zone: int
+
+DEFAULT_GRID_CONFIG = GridConfig(
+    lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
+    lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
+    height=352,
+    width=544,
+    relax_zone=19
+)
 
 # Constants for data processing
 CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
@@ -53,13 +66,13 @@ def get_channel_indices(dataset, channels=None):
     
     return {'input': filtered_in, 'output': filtered_out}
 
-def load_land_sea_mask(path=LAND_SEA_MASK_PATH):
+def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
     """Load and retrun a land-sea mask as xarray DataArray."""
-    lsm_data = np.load(path).reshape(352, 544)
+    lsm_data = np.load(path).reshape(height, width)
     return xr.DataArray(
         np.where(lsm_data >= 0.5, 1.0, np.nan),
         dims=['lat', 'lon'],
-        coords={"lat": np.arange(352), "lon": np.arange(544)}
+        coords={"lat": np.arange(height), "lon": np.arange(width)}
     )
 
 def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
@@ -84,12 +97,30 @@ def plot_map(values: np.array,
              cmap=None,
              extend='neither',
              norm=None,
-             ticks=None):
+             ticks=None,
+             grid_cfg = DEFAULT_GRID_CONFIG,
+             patch_idx=0,
+             patch_size=None
+             ):
     """Plot observed or interpolated data in a scatter plot."""
     logging.info(f'Creating map: {filename}')
 
-    latitudes  = LAT[RELAX_ZONE : RELAX_ZONE + 352]
-    longitudes = LON[RELAX_ZONE : RELAX_ZONE + 544]
+    if patch_size is None:
+        patch_size = (grid_cfg.height, grid_cfg.width)
+    # TODO: implement properly plotting of pathces for patched diffusion inference inspection
+    # n_col_stacked = math.ceil(704/patch_size[0])
+    # last_start = (n_col_stacked-1) * patch_size[0]
+    # # print(n_col_stacked)
+    # latitudes_start = last_start-(patch_idx%n_col_stacked)*patch_size[0]
+    # # print(latitudes_start)
+    # longitudes_start = (patch_idx//n_col_stacked)*patch_size[1]
+    # # print(longitudes_start)
+    # lat = LAT if lat is None else lat
+    # lon = LON if lon is None else lon
+    # latitudes  = lat[RELAX_ZONE : RELAX_ZONE + patch_size[0]] #LAT[RELAX_ZONE+latitudes_start:RELAX_ZONE+latitudes_start+patch_size[0]] #LAT[RELAX_ZONE : RELAX_ZONE + 352]
+    # longitudes = lon[RELAX_ZONE : RELAX_ZONE + patch_size[1]] #LON[RELAX_ZONE+longitudes_start:RELAX_ZONE+longitudes_start+patch_size[1]] #LON[RELAX_ZONE : RELAX_ZONE + 544]
+    latitudes  = grid_cfg.lat[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.height]
+    longitudes = grid_cfg.lon[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.width]
     lon2d, lat2d = np.meshgrid(longitudes, latitudes)
 
     fig, ax = plt.subplots(
@@ -127,7 +158,7 @@ def plot_map(values: np.array,
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=1000.0):
+def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG):
     """Plot precipitation data with specific colormap and thresholds."""
     # Scale and mask values below threshold
     values = rfac * values # m/h --> mm/h
@@ -150,7 +181,8 @@ def plot_map_precipitation(values, filename, title='', threshold=0.1, rfac=1000.
         ticks=bounds,
         title=title,
         label='mm/h',
-        extend='max'
+        extend='max',
+        grid_cfg=grid_cfg,
     )
 
 def wind_direction(u, v):

@@ -1,18 +1,18 @@
 """Probability of exceedance for wind speed and components."""
 import logging
+import argparse
+import yaml
 from pathlib import Path
 
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf
 import xarray as xr
 
-from hirad.datasets import get_dataset_and_sampler_inference
-from hirad.distributed import DistributedManager
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, LOG_INTERVAL
+from hirad.eval.plotting import get_channel_indices
 
 
 def compute_wind_speed(u, v):
@@ -121,26 +121,50 @@ def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title
     plt.close()
 
 
-@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
-def main(cfg: DictConfig):
+def main(cfg: dict):
     # Setup logging
-    DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+    generation_dir = cfg.get("inference_output_dir", None)
+    if generation_dir is None:
+        logger.error("No inference_output_dir specified in config.")
+        return
+    
+    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
+        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+        return
+
+    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
+    if not generation_config_path.exists():
+        logger.error(f"Generation config file {generation_config_path} does not exist.")
+        return
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
     logger.info("Starting computation for probability of exceedance for wind speed")
-    times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    if cfg.get("times_range", None):
+        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
+    elif cfg.get("times", None):
+        times = cfg.get("times")
+    elif gen_cfg.get("generation").get("times_range", None):
+        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
+    elif gen_cfg.get("generation").get("times", None):
+        times = gen_cfg.get("generation").get("times")
+    else:
+        logger.error("No times or times_range specified in config or generation config.")
+        return
     logger.info(f"Loaded {len(times)} timesteps to process")
 
     # Initialize dataset
-    ds_cfg = OmegaConf.to_container(cfg.dataset)
-    dataset, _ = get_dataset_and_sampler_inference(
-        ds_cfg, times, cfg.generation.get('has_lead_time', False)
-    )
-    logger.info("Dataset and sampler initialized")
+    dataset_cfg = gen_cfg.get("dataset")
+    dataset_type = dataset_cfg.pop("type")
+    dataset = known_datasets[dataset_type](**dataset_cfg)
+    logger.info("Dataset initialized")
 
     # Output root
-    out_root = Path(cfg.generation.io.output_path or './outputs')
+    out_root = Path(generation_dir)
 
     # Find channel indices for wind components
     indices = get_channel_indices(dataset)
@@ -180,7 +204,7 @@ def main(cfg: DictConfig):
         
         try:
             for i, ts in enumerate(times):
-                if i % LOG_INTERVAL == 0:
+                if i % cfg.get("log_interval") == 0:
                     logger.info(f"Processing timestep {i+1}/{len(times)}")
                 
                 data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
@@ -233,7 +257,7 @@ def main(cfg: DictConfig):
     member_samples = {'speed': [], 'u': [], 'v': []}
     
     for i, ts in enumerate(times):
-        if i % LOG_INTERVAL == 0:
+        if i % cfg.get("log_interval") == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
         preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
@@ -312,7 +336,7 @@ def main(cfg: DictConfig):
                 )
     
     # Create exceedance plots
-    labels = ['COSMO-2 Analysis', 'ERA5', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['COSMO-2 Analysis', 'ERA5', 'CorrDiff Ensemble']
+    labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['Target', 'Input', 'CorrDiff Ensemble']
     colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in exceedance_data['speed'] else ['blue', 'orange', 'green']
     
     # Define plot configurations
@@ -325,8 +349,10 @@ def main(cfg: DictConfig):
          'All-hour 10v Component [m/s] (Pooled Data)'),
     ]
     
+    output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
+    output_path.mkdir(parents=True, exist_ok=True)
     for filename, var, title, ylabel in plot_configs:
-        fn = out_root / filename
+        fn = output_path / filename
         save_exceedance_plot(
             exceedance_data[var],
             thresholds,
@@ -341,4 +367,11 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    main(cfg)

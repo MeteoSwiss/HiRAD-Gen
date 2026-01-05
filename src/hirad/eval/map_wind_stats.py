@@ -1,15 +1,15 @@
 import logging
+import argparse
+import yaml
 from pathlib import Path
 
 import hydra
 import numpy as np
 import torch
-from omegaconf import DictConfig, OmegaConf
 
-from hirad.datasets import get_dataset_and_sampler_inference
-from hirad.distributed import DistributedManager
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import plot_map, get_channel_indices, LOG_INTERVAL
+from hirad.eval.plotting import plot_map, get_channel_indices, GridConfig
 
 
 def compute_wind_speed(u, v):
@@ -121,73 +121,107 @@ def apply_wind_statistic_streaming(times, out_root, mode, u_channel, v_channel, 
         return accumulator / count
 
 
-def plot_wind_stat_map(data, filename, stat_config, label):
+def plot_wind_stat_map(data, filename, stat_config, label, grid_cfg):
     """Plot wind statistic map."""
     if stat_config['type'] == 'mean_speed':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Speed [m/s]', vmin=0, vmax=10, cmap='inferno', extend='max'
+            label='Wind Speed [m/s]', vmin=0, vmax=10, cmap='inferno', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] == 'max_speed':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Speed [m/s]', vmin=0, vmax=30, cmap='inferno', extend='max'
+            label='Wind Speed [m/s]', vmin=0, vmax=30, cmap='inferno', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] == 'wind_power':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Power Density [m³/s³]', vmin=0, vmax=1000, cmap='plasma', extend='max'
+            label='Wind Power Density [m³/s³]', vmin=0, vmax=1000, cmap='plasma', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] in ['calm_freq', 'light_breeze_freq', 'moderate_breeze_freq', 'strong_breeze_freq', 'gale_freq']:
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Frequency [%]', vmin=0, vmax=80, cmap='GnBu', extend='max'
+            label='Frequency [%]', vmin=0, vmax=80, cmap='GnBu', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] == 'prevailing_direction':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Direction [degrees from N]', vmin=0, vmax=360, cmap='twilight', extend='neither'
+            label='Direction [degrees from N]', vmin=0, vmax=360, cmap='twilight', extend='neither', grid_cfg=grid_cfg
         )
     elif stat_config['type'] == 'direction_variability':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Circular Std Dev [degrees]', vmin=20, vmax=140, cmap='viridis', extend='max'
+            label='Circular Std Dev [degrees]', vmin=20, vmax=140, cmap='viridis', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] in ['mean_u', 'mean_v']:
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Wind Component [m/s]', vmin=-5, vmax=5, cmap='RdBu_r', extend='both'
+            label='Wind Component [m/s]', vmin=-5, vmax=5, cmap='RdBu_r', extend='both', grid_cfg=grid_cfg
         )
     else:
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]}',
-            label='Value', vmin=None, vmax=None, cmap='viridis', extend='neither'
+            label='Value', vmin=None, vmax=None, cmap='viridis', extend='neither', grid_cfg=grid_cfg
         )
 
 
-@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
-def main(cfg: DictConfig):
-    DistributedManager.initialize()
+def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+    grid_cfg = GridConfig(
+        lat = np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
+        lon = np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
+        height = cfg.get("height"),
+        width = cfg.get("width"),
+        relax_zone = cfg.get("relax_zone")
+    )
+
+    generation_dir = cfg.get("inference_output_dir", None)
+    if generation_dir is None:
+        logger.error("No inference_output_dir specified in config.")
+        return
+    
+    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
+        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+        return
+
+    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
+    if not generation_config_path.exists():
+        logger.error(f"Generation config file {generation_config_path} does not exist.")
+        return
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
     logger.info("Starting wind statistics generation")
-    times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    if cfg.get("times_range", None):
+        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
+    elif cfg.get("times", None):
+        times = cfg.get("times")
+    elif gen_cfg.get("generation").get("times_range", None):
+        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
+    elif gen_cfg.get("generation").get("times", None):
+        times = gen_cfg.get("generation").get("times")
+    else:
+        logger.error("No times or times_range specified in config or generation config.")
+        return
     logger.info(f"Processing {len(times)} timesteps")
 
-    ds_cfg = OmegaConf.to_container(cfg.dataset)
-    dataset, _ = get_dataset_and_sampler_inference(
-        ds_cfg, times, cfg.generation.get('has_lead_time', False)
-    )
-    out_root = Path(cfg.generation.io.output_path or './outputs')
+    dataset_cfg = gen_cfg.get("dataset")
+    dataset_type = dataset_cfg.pop("type")
+    dataset = known_datasets[dataset_type](**dataset_cfg)
+    out_root = Path(generation_dir)
+    output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
+    output_path.mkdir(parents=True, exist_ok=True)
     indices = get_channel_indices(dataset)
     
     u10_out = indices['output'].get('10u')
@@ -283,13 +317,14 @@ def main(cfg: DictConfig):
                     stat_config['type'], stat_config.get('param')
                 )
                 
-                map_output_dir = out_root / f"maps_wind_{stat_config['stat_name']}"
+                map_output_dir = output_path / f"maps_wind_{stat_config['stat_name']}"
                 map_output_dir.mkdir(parents=True, exist_ok=True)
                 plot_wind_stat_map(
                     result,
                     str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'),
                     stat_config,
-                    label
+                    label,
+                    grid_cfg
                 )
                 del result
             except Exception as e:
@@ -323,7 +358,7 @@ def main(cfg: DictConfig):
                     sin_acc = cos_acc = speed_acc = None
                     
                     for i, ts in enumerate(times):
-                        if i % LOG_INTERVAL == 0:
+                        if i % cfg.get("log_interval") == 0:
                             logger.info(f"Loading prediction member {member_idx} timestep {i+1}/{len(times)}: {ts}")
                         
                         u, v = load_member_data(ts)
@@ -413,10 +448,10 @@ def main(cfg: DictConfig):
                     else:
                         member_result = accumulator / count
                     
-                    map_output_dir = out_root / f"maps_wind_{stat_config['stat_name']}"
+                    map_output_dir = output_path / f"maps_wind_{stat_config['stat_name']}"
                     map_output_dir.mkdir(parents=True, exist_ok=True)
                     member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
-                    plot_wind_stat_map(member_result, member_filename, stat_config, f'CorrDiff Member {member_idx+1}')
+                    plot_wind_stat_map(member_result, member_filename, stat_config, f'CorrDiff Member {member_idx+1}', grid_cfg)
                     del member_result
                 
                 except Exception as e:
@@ -430,4 +465,11 @@ def main(cfg: DictConfig):
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    main(cfg)

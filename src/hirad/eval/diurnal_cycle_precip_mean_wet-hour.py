@@ -1,4 +1,6 @@
 import logging
+import argparse
+import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -7,12 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import xarray as xr
-from omegaconf import DictConfig, OmegaConf
 
-from hirad.datasets import get_dataset_and_sampler_inference
-from hirad.distributed import DistributedManager
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, CONV_FACTOR, WET_THRESHOLD, LOG_INTERVAL, concat_and_group_diurnal
+from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
 
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     hrs = np.concatenate([hour.values, [24]])
@@ -35,25 +35,50 @@ def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     plt.savefig(out_path)
     plt.close()
 
-@hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
-def main(cfg: DictConfig):
+def main(cfg: dict):
     # Setup logging
-    DistributedManager.initialize()
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
+    generation_dir = cfg.get("inference_output_dir", None)
+    if generation_dir is None:
+        logger.error("No inference_output_dir specified in config.")
+        return
+    
+    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
+        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+        return
+
+    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
+    if not generation_config_path.exists():
+        logger.error(f"Generation config file {generation_config_path} does not exist.")
+        return
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
     logger.info("Starting computations for diurnal cycle of precipitation amount and wet-hours")
-    times = get_time_from_range(cfg.generation.times_range, "%Y%m%d-%H%M")
+    if cfg.get("times_range", None):
+        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
+    elif cfg.get("times", None):
+        times = cfg.get("times")
+    elif gen_cfg.get("generation").get("times_range", None):
+        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
+    elif gen_cfg.get("generation").get("times", None):
+        times = gen_cfg.get("generation").get("times")
+    else:
+        logger.error("No times or times_range specified in config or generation config.")
+        return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    ds_cfg = OmegaConf.to_container(cfg.dataset)
-    dataset, _ = get_dataset_and_sampler_inference(
-        ds_cfg, times, cfg.generation.get('has_lead_time', False)
-    )
+    dataset_cfg = gen_cfg.get("dataset")
+    dataset_type = dataset_cfg.pop("type")
+    dataset = known_datasets[dataset_type](**dataset_cfg)
+    logger.info("Dataset initialized")
 
     # Location of the output from inference
-    out_root = Path(cfg.generation.io.output_path or './outputs')
+    out_root = Path(generation_dir)
 
     # Find channel indices
     indices = get_channel_indices(dataset)
@@ -62,7 +87,7 @@ def main(cfg: DictConfig):
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     # Land-sea mask
-    land_mask = load_land_sea_mask()
+    land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
@@ -71,11 +96,11 @@ def main(cfg: DictConfig):
     # Collect data
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
-        target = torch.load(out_root/ts/f"{ts}-target", weights_only=False)[tp_out] * CONV_FACTOR
-        baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * CONV_FACTOR # / 6. # 6 because 1h -> accumulation period is 6h in hourly ERA5 dataset
-        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * CONV_FACTOR
+        target = torch.load(out_root/ts/f"{ts}-target", weights_only=False)[tp_out] * cfg.get("conv_factor")
+        baseline = torch.load(out_root/ts/f"{ts}-baseline", weights_only=False)[tp_in] * cfg.get("conv_factor")
+        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * cfg.get("conv_factor")
         try:
-            mean_pred = torch.load(out_root/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * CONV_FACTOR
+            mean_pred = torch.load(out_root/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * cfg.get("conv_factor")
         except:
             mean_pred = None
 
@@ -100,14 +125,14 @@ def main(cfg: DictConfig):
         if mean_pred is not None:
             mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction, i.e., freq(precip) > WET_THRESHOLD
-        target_wet.append(((da_target / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
-        baseline_wet.append(((da_baseline / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
-        pred_wet.append(((da_preds / 24> WET_THRESHOLD).mean(dim=("lat","lon")).assign_coords(time=dt)))
+        # Wet-hour fraction, i.e., freq(precip) > wet_threshold
+        target_wet.append(((da_target / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
+        baseline_wet.append(((da_baseline / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
+        pred_wet.append(((da_preds / 24> cfg.get("wet_threshold")).mean(dim=("lat","lon")).assign_coords(time=dt)))
         if mean_pred is not None:
-            mean_pred_wet.append(((da_mean_pred / 24 > WET_THRESHOLD).mean().assign_coords(time=dt)))
+            mean_pred_wet.append(((da_mean_pred / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
 
-        if idx % LOG_INTERVAL == 0 or idx == len(times):
+        if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
 
     # Compute diurnal means and stds
@@ -124,26 +149,35 @@ def main(cfg: DictConfig):
         wet_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wet, scale=100.0)
 
     # Generate plots
+    output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
+    output_path.mkdir(parents=True, exist_ok=True)
     save_plot(
         amount_target_mean.hour,
         [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
-        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
+        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','CorrDiff ± Std(Members)'],
         'Precipitation (mm/day)',
         'Diurnal Cycle of Precip Amount',
-        out_root / 'diurnal_cycle_precip_amount.png'
+        output_path / 'diurnal_cycle_precip_amount.png'
     )
     save_plot(
         wet_target_mean.hour,
         [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if mean_pred_wet else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
         [None, None, wet_pred_std, None] if mean_pred_wet else [None, None, wet_pred_std],
-        ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wet else ['COSMO-2  Analysis','ERA5','CorrDiff ± Std(Members)'],
+        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wet else ['Target','Input','CorrDiff ± Std(Members)'],
         'Wet-Hour Fraction [%]',
         'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
-        out_root / 'diurnal_cycle_precip_wethours.png'
+        output_path / 'diurnal_cycle_precip_wethours.png'
     )
 
     logger.info("Plots saved.")
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    main(cfg)
