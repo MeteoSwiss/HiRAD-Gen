@@ -1,8 +1,6 @@
 type: era5_real
 dataset_path: /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset/train
 validation_path: /iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset/validation
-# dataset_path: /iopsstor/scratch/cscs/pstamenk/datasets/basic-torch/era5-cosmo-1h-all-channels
-# validation_path: /iopsstor/scratch/cscs/mmcgloho/run-1_2/validation/
 input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
 output_channel_names: [2t, 10u, 10v, tp]
 static_channel_names: ['z']
