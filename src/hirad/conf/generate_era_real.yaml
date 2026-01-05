@@ -1,10 +1,10 @@
 hydra:
   job:
     chdir: true
-    name: generate_era_real_5m
+    name: generation_era_real_results
     # name: july2020
   run:
-    dir: /capstor/scratch/cscs/pstamenk//outputs/generation/${hydra:job.name}
+    dir: ./outputs/generation/${hydra:job.name}
 
 # Get defaults
 defaults:

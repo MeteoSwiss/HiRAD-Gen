@@ -1,7 +1,7 @@
 hydra:
   job:
     chdir: true
-    name: diffusion_era5_cosmo_7500000_test
+    name: generation_era_cosmo_results
   run:
     dir: ./outputs/generation/${hydra:job.name}
 

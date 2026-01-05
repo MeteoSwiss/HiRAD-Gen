@@ -1,9 +1,10 @@
 hydra:
   job:
     chdir: true
-    name: regression_era5_cosmo_mlflow_test_x16
+    name: regression_era_cosmo
   run:
-    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+    dir: ./outputs/training/${hydra:job.name}
+
 
 # Get defaults
 defaults:
@@ -19,9 +20,6 @@ defaults:
 
   # Training
   - training/era_cosmo_regression
-
-  # Inference visualization
-  # - generation/era_cosmo_training
 
   # Logging
   - logging/era_cosmo_regression

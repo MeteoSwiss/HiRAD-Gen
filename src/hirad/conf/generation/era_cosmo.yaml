@@ -6,26 +6,30 @@ inference_mode: all
   # Choose between "all" (regression + diffusion), "regression" or "diffusion"
   # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
   # img_shape_x and img_shape_y
+
 randomize: True
   # Whether to randomize the random seeds for each generation. If false, fixed seeds
   # from 0 to num_ensembles-1 will be used for each time step in times/times_range.
-random_seed: 129 
+random_seed: 2578458
   # Base random seed. This is only used when randomize is True.
   # random seed will be set for numpy random module to have reproducible randomized generative process.
 
-  # Number of overlapping pixels between adjacent patches
-# boundary_pixels: 0
-  # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
-  # artifact.
+# Patching parameters
 patching: False
+# patch_shape_x: 128
+# patch_shape_y: 128
+# overlap_pix: 4
+#   # Number of overlapping pixels between adjacent patches
+# boundary_pix: 2
+#   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
+#   # artifact.
+
 hr_mean_conditioning: True
 # sample_res: full
   # Sampling resolution
-times_range: ['20200101-0000','20200102-0000',1]
+times_range: ['20200601-0000','20200831-2300',1]
+  # Start date, end date and time interval (in hours) for the generation
 times: null
-#  - 20200926-1800
-  #- 20160101-0600
-  # - 20160101-1200
 has_lead_time: False
 
 perf:
@@ -41,10 +45,8 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/diffusion_full/checkpoints_diffusion
-  res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era5_cosmo/checkpoints_diffusion
-  # res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era5_cosmo_cmp_fix_2/checkpoints_diffusion
-    # Checkpoint filename for the diffusion model  
-  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
-    # Checkpoint filename for the mean predictor model
+  res_ckpt_path: /path/to/diffusion/model/weights
+  # Checkpoint filename for the residual predictor model
+  reg_ckpt_path: /oath/to/regression/model/weigths
+  # Checkpoint filename for the mean predictor model
   output_path: .

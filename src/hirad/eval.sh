@@ -30,17 +30,7 @@ export MASTER_ADDR
 export MASTER_PORT=29500
 echo "Master port: $MASTER_PORT"
 
-# Get number of physical cores using Python
-# PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
-# # Use SLURM_NTASKS (number of processes to be launched by torchrun)
-# LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
-# # Compute threads per process
-# OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
-# export OMP_NUM_THREADS=$OMP_THREADS
-export OMP_NUM_THREADS=72
-# echo "Physical cores: $PHYSICAL_CORES"
-# echo "Local processes: $LOCAL_PROCS"
-# echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
+export OMP_NUM_THREADS=1
 
 # python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
 srun --environment=./ci/edf/modulus_env.toml bash -c "

@@ -25,26 +25,11 @@ boundary_pix: 2
 #   # artifact.
 
 hr_mean_conditioning: True
-# sample_res: full
-  # Sampling resolution
-# times_range: ['20200825-1200','20200827-1200',1]
-# times_range: ['20200601-0000','20200831-2300',1]
-# times_range: ['20200721-1900','20200721-2000',1]
-times_range: null
+
+times_range: ['20211015-0000','20211015-2300',1]
   # Start date, end date and time interval (in hours) for the generation
-# times_range: ['20200601-0000','20200831-2300',1]
-  # Start date, end date and time interval (in hours) for the generation
-times:
-  - 20210721-1900
-  # - 20200721-1900 #null
-  # - 20200118-1800
-  # - 20200721-1900
-  # - 20200926-1800
-  # - 20200927-0000
-  # - 20200927-0600
-  # - 20200927-1200
-  # - 20160101-0600
-  # - 20160101-1200
+
+times: null
 has_lead_time: False
 
 perf:
