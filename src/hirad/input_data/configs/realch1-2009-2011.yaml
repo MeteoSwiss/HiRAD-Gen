@@ -1,0 +1,8 @@
+#dataset: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-ifsnames-v1.0.zarr'
+#dataset: '/store_new/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+dataset: '/store_new/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-ifsnames-v1.0.zarr'
+#dataset: '/scratch/mch/fzanetta/data/anemoi/datasets/mch-realch1-fdb-1km-2020-2020-1h-pl13-v0.2.zarr'
+select: ['2t', '10u', '10v', 'tp']
+#select: ['TD_2M', 'U_10M', 'V_10M', 'TOT_PREC_1H']  # TOT_PREC in v0.1
+start: 2009-01-01
+end: 2011-12-31

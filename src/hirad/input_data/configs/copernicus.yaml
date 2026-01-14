@@ -1,0 +1,6 @@
+path: '/capstor/store/mch/msopr/hirad-gen/copernicus-datasets/'
+channels: ['cp', 'tp']
+#start: 2015-10-01
+start: 2020-01-01
+end: 2020-11-30
+frequency: 1
