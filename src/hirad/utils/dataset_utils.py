@@ -1,3 +1,4 @@
+import torch
 import numpy as np
 from scipy.spatial import Delaunay
 from typing import Optional
@@ -17,11 +18,8 @@ class GridData():
         latitudes_orig (np.ndarray): Latitude coordinates of original points.
         longitudes_target (np.ndarray): Longitude coordinates of target points.
         latitudes_target (np.ndarray): Latitude coordinates of target points.
-        tri (Delaunay): Delaunay triangulation of original points.
-        simplex_id (np.ndarray): Simplex indices for each target point.
-        lambda1 (np.ndarray): Barycentric coordinate 1 for each target point.
-        lambda2 (np.ndarray): Barycentric coordinate 2 for each target point.
-        lambda3 (np.ndarray): Barycentric coordinate 3 for each target point.
+        is_torch (bool): Whether tensors are prepared for PyTorch operations.
+        device (torch.device | None): Device for PyTorch tensors if applicable.
     """
 
     def __init__(
@@ -54,6 +52,9 @@ class GridData():
         
         self.longitudes_target = np.asarray(longitudes_target)
         self.latitudes_target = np.asarray(latitudes_target)
+
+        self.is_torch = False
+        self.device = None
         
         self._prepare_interpolation()
 
@@ -68,24 +69,24 @@ class GridData():
         """
         # Compute Delaunay triangulation
         coords_orig = np.stack([self.longitudes_orig, self.latitudes_orig], axis=-1)
-        self.tri = Delaunay(coords_orig)
+        self._tri = Delaunay(coords_orig)
 
         # Find simplex indices for target points
         coords_target = np.stack([self.longitudes_target, self.latitudes_target], axis=-1)
-        self.simplex_id = self.tri.find_simplex(coords_target)
+        self._simplex_id = self._tri.find_simplex(coords_target)
 
         # Check for points outside convex hull
-        if np.any(self.simplex_id == -1):
-            n_outside = np.sum(self.simplex_id == -1)
+        if np.any(self._simplex_id == -1):
+            n_outside = np.sum(self._simplex_id == -1)
             print(f"Warning: {n_outside} target points are outside the convex hull of original points")
 
         # Get corner coordinates of simplices
-        longitudes_corners = self.longitudes_orig[self.tri.simplices]
-        latitudes_corners = self.latitudes_orig[self.tri.simplices]
+        longitudes_corners = self.longitudes_orig[self._tri.simplices]
+        latitudes_corners = self.latitudes_orig[self._tri.simplices]
         
         # Get corner coordinates for each target point's simplex
-        longitude_corners_per_target = longitudes_corners[self.simplex_id]
-        latitude_corners_per_target = latitudes_corners[self.simplex_id]
+        longitude_corners_per_target = longitudes_corners[self._simplex_id]
+        latitude_corners_per_target = latitudes_corners[self._simplex_id]
         
         # Extract traingle vertices
         x1, y1 = longitude_corners_per_target[:, 0], latitude_corners_per_target[:, 0]
@@ -94,15 +95,59 @@ class GridData():
         
         denominator = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
 
-        self.lambda1 = ((y2 - y3) * (self.longitudes_target - x3) + 
+        self._lambda1 = ((y2 - y3) * (self.longitudes_target - x3) + 
                         (x3 - x2) * (self.latitudes_target - y3)) / denominator
         
-        self.lambda2 = ((y3 - y1) * (self.longitudes_target - x3) + 
+        self._lambda2 = ((y3 - y1) * (self.longitudes_target - x3) + 
                         (x1 - x3) * (self.latitudes_target - y3)) / denominator
         
-        self.lambda3 = 1 - self.lambda1 - self.lambda2
+        self._lambda3 = 1 - self._lambda1 - self._lambda2
+
+
+    def to_torch(self, device: torch.device ='cpu') -> None:
+        """
+        Prepare barycentric coordinates and simplex indices for PyTorch operations.
+        
+        This method converts the precomputed numpy arrays to PyTorch tensors
+        and moves them to the specified device.
+        
+        Args:
+            device: The torch device to move tensors to (e.g., 'cpu' or 'cuda').
+        """
+        if isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+
+        self._lambda1 = torch.from_numpy(self._lambda1).to(device)
+        self._lambda2 = torch.from_numpy(self._lambda2).to(device)
+        self._lambda3 = torch.from_numpy(self._lambda3).to(device)
+
+        # Convert indexing arrays
+        self._simplex_id = torch.from_numpy(self._simplex_id).to(device)
+        self._tri.simplices = torch.from_numpy(self._tri.simplices).to(device)
+        
+        self.is_torch = True
+
+    def to_numpy(self) -> None:
+        """
+        Convert barycentric coordinates and simplex indices back to numpy arrays.
+        
+        This method converts the precomputed PyTorch tensors back to numpy arrays.
+        """
+        if not self.is_torch:
+            return  # Already in numpy format
+
+        self._lambda1 = self._lambda1.cpu().numpy()
+        self._lambda2 = self._lambda2.cpu().numpy()
+        self._lambda3 = self._lambda3.cpu().numpy()
+
+        self._simplex_id = self._simplex_id.cpu().numpy()
+        self._tri.simplices = self._tri.simplices.cpu().numpy()
+        
+        self.is_torch = False
+        self.device = None
     
-    def interpolate(self, values: np.ndarray, fill_value: Optional[float] = np.nan) -> np.ndarray:
+    def interpolate(self, values: np.ndarray | torch.Tensor, fill_value: Optional[float] = np.nan) -> np.ndarray:
         """
         Interpolate values from original points to target points.
         
@@ -125,22 +170,22 @@ class GridData():
             )
         
         # Find the corner values of each simplice
-        values_simplices = values[:,self.tri.simplices]
+        values_simplices = values[:,self._tri.simplices]
         
         # Find the simplice corner values for each target point
-        values_per_target_simplices = values_simplices[:,self.simplex_id]
+        values_per_target_simplices = values_simplices[:,self._simplex_id]
         
         # Perform barycentric interpolation
-        out = (self.lambda1 * values_per_target_simplices[:,:,0] +
-               self.lambda2 * values_per_target_simplices[:,:,1] +
-               self.lambda3 * values_per_target_simplices[:,:,2])
+        out = (self._lambda1 * values_per_target_simplices[:,:,0] +
+               self._lambda2 * values_per_target_simplices[:,:,1] +
+               self._lambda3 * values_per_target_simplices[:,:,2])
 
         # Handle points outside convex hull
-        if np.any(self.simplex_id == -1):
-            out[:, self.simplex_id == -1] = fill_value
+        if (not self.is_torch and np.any(self._simplex_id == -1)) or (self.is_torch and torch.any(self._simplex_id == -1)):
+            out[:, self._simplex_id == -1] = fill_value
 
         return out
     
-    def __call__(self, values: np.ndarray, fill_value: Optional[float] = np.nan) -> np.ndarray:
+    def __call__(self, values: np.ndarray | torch.Tensor, fill_value: Optional[float] = np.nan) -> np.ndarray:
         """Alias for forward method to make class callable."""
         return self.interpolate(values, fill_value)
