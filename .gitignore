@@ -184,7 +184,6 @@ outputs/*
 temp.*
 
 # local script
-interpolate.sh
 cosmo-grid.npz
 *.out
 .conda/* 

@@ -11,7 +11,7 @@ import numpy as np
 from meteodatalab.operators import regrid
 import xarray as xr
 from meteodatalab import ogd_api
-from hirad.input_data.interpolate_basic import plot_and_save_projection
+from hirad.input_data import interpolate_basic
 import yaml
 import torch
 from pandas import to_datetime
@@ -110,6 +110,72 @@ def regridded_to_numpy(regridded: xr.DataArray, trim_edge=0):
 	# reshape to (time,channel,ensemble,grid)
 	data = data.reshape(data.shape[1], data.shape[0], data.shape[3]*data.shape[4])
 	return data
+ 
+def interpolate_anemoi_range_to_rotlatlon(i_start: int, i_end: int, ds: Dataset, ds_name: str, input_grid: np.ndarray, output_grid: np.ndarray, output_data_path: str, format='torch', output_plots_path: str = None, plot_indices=[0]):
+	torch_data = np.zeros([i_end-i_start, len(ds.variables), 1, output_grid.shape[0]])
+		
+	xarrays = anemoi_to_xarray(ds, i_start, i_end)
+	for j in range(len(xarrays)):
+		logging.info(f'regridding {ds.variables[j]} for time {ds.dates[i_start]} to {ds.dates[i_end-1]}')
+		xarray = xarrays[j]
+		start = datetime.datetime.now()
+		regridded=regrid.icon2rotlatlon(xarray)
+		end = datetime.datetime.now()
+		logging.info(f'   regridding took {end-start} seconds')
+		torch_data[0:i_end-i_start,j,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
+		
+	logging.info('saving torch data')
+	for k in range(torch_data.shape[0]):
+		interpolate_basic.save_datetime_file(torch_data[k,:], ds.dates[i_start + k], output_data_path, format=format)
+		if (i_start + k) in plot_indices:
+			logging.info(f'plotting {i_start+k}')
+			datestr = interpolate_basic.format_date(ds.dates[i_start+k])
+			for v in range(torch_data.shape[1]):
+				interpolate_basic.plot_and_save_projection(input_grid[:,0], input_grid[:,1],
+							ds[i_start+k,v,0,:],
+							os.path.join(output_plots_path, f'{datestr}-{ds.variables[v]}-iconnative.png'),
+							s=0.005)
+				interpolate_basic.plot_and_save_projection(output_grid[:,0], output_grid[:,1],
+							torch_data[k,v,0,:],
+							os.path.join(output_plots_path, f'{datestr}-{ds.variables[v]}-rotlatlon.png'),
+							s=0.005)
+
+def interpolate_anemoi_to_rotlatlon(infile_anemoi: str, ds_name: str, output_grid: np.ndarray, output_path: str, format='torch', plot_indices=[0]):
+	
+	# Copy the realch1.yml file to the info directory
+	shutil.copy(infile_anemoi, os.path.join(output_path, 'info'))
+
+	with open(infile_anemoi) as realch1_file:
+		realch1_config = yaml.safe_load(realch1_file)
+	realch1 = open_dataset(realch1_config)
+	variables = realch1.variables
+	input_grid = np.column_stack((realch1.longitudes, realch1.latitudes))
+
+	# Get the lat/lon info by regridding one variable
+	xarrays = anemoi_to_xarray(realch1, 0, 1)
+	regridded=regrid.icon2rotlatlon(xarrays[0])
+	logging.info('getting geo coords')
+	lats, lons = get_geo_coords(regridded, trim_edge=TRIM_EDGE)
+	output_grid=np.column_stack((lons, lats))
+	
+	# Save grid to file
+	grid = np.column_stack((lats, lons))
+	torch.save(grid, os.path.join(output_path, 'info', 'realch1-lat-lon'))
+
+	# Save stats
+	interpolate_basic.save_anemoi_stats(realch1, os.path.join(output_path, f'info/{ds_name}-stats'))
+
+	output_data_path = os.path.join(output_path, ds_name)
+	output_plots_path = os.path.join(output_path, 'plots')
+
+	# Split regridding into batches; too many time points seems to not scale well.
+	for i in range(0, len(realch1.dates), XARRAY_BATCH):
+		start_index = i
+		end_index = min(i+XARRAY_BATCH, len(realch1.dates))
+		logging.info(f'start={start_index} end={end_index}')
+		interpolate_anemoi_range_to_rotlatlon(start_index, end_index, realch1, ds_name,
+										input_grid, output_grid, output_data_path, format, output_plots_path, plot_indices)
+		
 
 def main():
 	# yml format
@@ -126,56 +192,9 @@ def main():
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=logging.INFO,
         datefmt='%Y-%m-%d %H:%M:%S') 
-
-	# Copy the realch1.yml file to the info directory
-	shutil.copy(realch1_config_file, os.path.join(output_directory, 'info'))
-
-	with open(realch1_config_file) as realch1_file:
-		realch1_config = yaml.safe_load(realch1_file)
-	realch1 = open_dataset(realch1_config)
-	variables = realch1.variables
-
-	# Get the lat/lon info by regridding one variable
-	xarrays = anemoi_to_xarray(realch1, 0, 1)
-	regridded=regrid.icon2rotlatlon(xarrays[0])
-	logging.info('getting geo coords')
-	lats, lons = get_geo_coords(regridded, trim_edge=TRIM_EDGE)
 	
-	# Save grid to file
-	grid = np.column_stack((lats, lons))
-	torch.save(grid, os.path.join(output_directory, 'info', 'realch1-lat-lon'))
+	interpolate_anemoi_to_rotlatlon(realch1_config_file, 'realch1', None, output_directory, 'numpy', [0])
 
-	# Split regridding into batches; too many time points seems to not scale well.
-	for i in range(0, len(realch1.dates), XARRAY_BATCH):
-		start_index = i
-		end_index = min(i+XARRAY_BATCH, len(realch1.dates))
-		torch_data = np.zeros([end_index-start_index, len(realch1.variables), 1, len(lats)])
-		
-		xarrays = anemoi_to_xarray(realch1, start_index, end_index)
-		for j in range(len(xarrays)):
-			logging.info(f'regridding {variables[j]} for time {realch1.dates[start_index]} to {realch1.dates[end_index]}')
-			xarray = xarrays[j]
-			start = datetime.datetime.now()
-			regridded=regrid.icon2rotlatlon(xarray)
-			end = datetime.datetime.now()
-			logging.info(f'   regridding took {end-start} seconds')
-			torch_data[0:end_index-start_index,j,:,:] = regridded_to_numpy(regridded, trim_edge=TRIM_EDGE)
-		
-		logging.info('saving torch data')
-		for k in range(torch_data.shape[0]):
-			fmtdate = to_datetime(realch1.dates[start_index + k]).strftime('%Y%m%d-%H%M')
-			torch.save(torch_data[k,:], os.path.join(output_directory, 'realch1', fmtdate))
-
-	# Output plots for each variable, for first time point
-	for i in range(torch_data.shape[1]):
-		plot_and_save_projection(realch1.longitudes, realch1.latitudes,
-					realch1[0,i,0,:],
-					os.path.join(output_directory, 'plots', f'{variables[i]}-iconnative.png'),
-					s=0.005)
-		plot_and_save_projection(lons, lats,
-					torch_data[0,i,0,:],
-					os.path.join(output_directory, 'plots', f'{variables[i]}-rotlatlon.png'),
-					s=0.005)
 
 
 if __name__ == "__main__":

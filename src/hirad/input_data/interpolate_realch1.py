@@ -77,7 +77,7 @@ def main():
     max_lon = max(realch1_lon) + interpolate_basic.ERA_MARGIN_DEGREES
     logging.info('reading era')
     
-    era = interpolate_basic.read_era5_anemoi(era_config_file,
+    era = interpolate_basic.read_anemoi_ds(era_config_file,
                                              area=(max_lat, min_lon, min_lat, max_lon))
     era_grid = np.column_stack((era.longitudes, era.latitudes))
     realch1_grid = np.column_stack((realch1_lon, realch1_lat))

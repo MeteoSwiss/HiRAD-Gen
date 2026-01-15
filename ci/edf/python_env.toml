@@ -1,0 +1,7 @@
+image = "/capstor/scratch/cscs/mmcgloho/python-ubuntu.sqsh"
+
+mounts = ["/capstor", "/iopsstor", "/users"]
+
+# The initial directory in the container. 
+workdir = "${PWD}"
+
