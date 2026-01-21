@@ -23,6 +23,7 @@ from hirad.distributed import DistributedManager
 
 from .era5_cosmo import ERA5_COSMO
 from .era5_real import ERA5_REAL
+from .anemoi_dataset import ANEMOI_ERA5_COSMO, ANEMOI_ERA5_REAL
 from .base import DownscalingDataset
 
 
@@ -30,6 +31,8 @@ from .base import DownscalingDataset
 known_datasets = {
     "era5_cosmo": ERA5_COSMO,
     "era5_real": ERA5_REAL,
+    "anemoi_era5_cosmo": ANEMOI_ERA5_REAL,
+    "anemoi_era5_real": ANEMOI_ERA5_REAL,
 }
 
 
