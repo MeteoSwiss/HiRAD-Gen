@@ -38,25 +38,6 @@ from .layers import (
     PositionalEmbedding,
     UNetBlock,
 )
-from .meta import ModelMetaData
-
-
-@dataclass
-class MetaData(ModelMetaData):
-    name: str = "SongUNet"
-    # Optimization
-    jit: bool = False
-    cuda_graphs: bool = False
-    amp_cpu: bool = False
-    amp_gpu: bool = True
-    torch_fx: bool = False
-    # Data type
-    bf16: bool = True
-    # Inference
-    onnx: bool = False
-    # Physics informed
-    func_torch: bool = False
-    auto_grad: bool = False
 
 
 class SongUNet(nn.Module):
