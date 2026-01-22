@@ -30,16 +30,8 @@ import torch.amp as amp
 from einops import rearrange
 from torch.nn.functional import elu, gelu, leaky_relu, relu, sigmoid, silu, tanh
 
-from hirad.models import weight_init
+from .utils import weight_init, _validate_amp
 
-_is_apex_available = False
-if torch.cuda.is_available():
-    try:
-        apex_gn_module = importlib.import_module("apex.contrib.group_norm")
-        ApexGroupNorm = getattr(apex_gn_module, "GroupNorm")
-        _is_apex_available = True
-    except ImportError:
-        pass
 
 class Linear(torch.nn.Module):
     """
@@ -88,17 +80,17 @@ class Linear(torch.nn.Module):
         self.amp_mode = amp_mode
         init_kwargs = dict(mode=init_mode, fan_in=in_features, fan_out=out_features)
         self.weight = torch.nn.Parameter(
-            weight_init([out_features, in_features], **init_kwargs) * init_weight
+            _weight_init([out_features, in_features], **init_kwargs) * init_weight
         )
         self.bias = (
-            torch.nn.Parameter(weight_init([out_features], **init_kwargs) * init_bias)
+            torch.nn.Parameter(_weight_init([out_features], **init_kwargs) * init_bias)
             if bias
             else None
         )
 
     def forward(self, x):
         weight, bias = self.weight, self.bias
-        # pdb.set_trace()
+        _validate_amp(self.amp_mode)
         if not self.amp_mode:
             if self.weight is not None and self.weight.dtype != x.dtype:
                 weight = self.weight.to(x.dtype)
@@ -196,14 +188,14 @@ class Conv2d(torch.nn.Module):
         )
         self.weight = (
             torch.nn.Parameter(
-                weight_init([out_channels, in_channels, kernel, kernel], **init_kwargs)
+                _weight_init([out_channels, in_channels, kernel, kernel], **init_kwargs)
                 * init_weight
             )
             if kernel
             else None
         )
         self.bias = (
-            torch.nn.Parameter(weight_init([out_channels], **init_kwargs) * init_bias)
+            torch.nn.Parameter(_weight_init([out_channels], **init_kwargs) * init_bias)
             if kernel and bias
             else None
         )
@@ -213,6 +205,7 @@ class Conv2d(torch.nn.Module):
 
     def forward(self, x):
         weight, bias, resample_filter = self.weight, self.bias, self.resample_filter
+        _validate_amp(self.amp_mode)
         if not self.amp_mode:
             if self.weight is not None and self.weight.dtype != x.dtype:
                 weight = self.weight.to(x.dtype)
@@ -278,10 +271,7 @@ class Conv2d(torch.nn.Module):
                     stride=2,
                     padding=f_pad,
                 )
-
-            #TODO during inference, model breaks here for some reason
-            # current fix is to disable torch.backends.cudnn.enabled = False
-            if w is not None:  # ask in corrdiff channel whether w will ever be none
+            if w is not None:
                 if self.fused_conv_bias:
                     x = torch.nn.functional.conv2d(x, w, padding=w_pad, bias=b)
                 else:
@@ -297,35 +287,49 @@ class GroupNorm(torch.nn.Module):
 
     Group Normalization (GN) divides the channels of the input tensor into groups and
     normalizes the features within each group independently. It does not require the
-    batch size as in Batch Normalization, making itsuitable for batch sizes of any size
+    batch size as in Batch Normalization, making it suitable for batch sizes of any size
     or even for batch-free scenarios.
 
     Parameters
     ----------
     num_channels : int
         Number of channels in the input tensor.
-    num_groups : int, optional
-        Desired number of groups to divide the input channels, by default 32.
-        This might be adjusted based on the `min_channels_per_group`.
-    min_channels_per_group : int, optional
+    num_groups : int, optional, default=32
+        Desired number of groups to divide the input channels.
+        This might be adjusted based on the ``min_channels_per_group``.
+    min_channels_per_group : int, optional, default=4
         Minimum channels required per group. This ensures that no group has fewer
-        channels than this number. By default 4.
-    eps : float, optional
-        A small number added to the variance to prevent division by zero, by default
-        1e-5.
-    use_apex_gn : bool, optional
-        A boolean flag indicating whether we want to use Apex GroupNorm for NHWC layout.
-        Need to set this as False on cpu. Defaults to False.
-    fused_act : bool, optional
-        Whether to fuse the activation function with GroupNorm. Defaults to False.
-    act : str, optional
-        The activation function to use when fusing activation with GroupNorm. Defaults to None.
-    amp_mode : bool, optional
-        A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
-    Notes
-    -----
-    If `num_channels` is not divisible by `num_groups`, the actual number of groups
-    might be adjusted to satisfy the `min_channels_per_group` condition.
+        channels than this number.
+    eps : float, optional, default=1e-5
+        A small number added to the variance to prevent division by zero.
+    use_apex_gn : bool, optional, default=False
+        Deprecated. Please use
+        :func:`~physicsnemo.nn.get_group_norm` instead.
+    fused_act : bool, optional, default=False
+        Deprecated. Please use
+        :func:`~physicsnemo.nn.get_group_norm` instead.
+    act : str, optional, default=None
+        The activation function to use when fusing activation with GroupNorm.
+    amp_mode : bool, optional, default=False
+        A boolean flag indicating whether mixed-precision (AMP) training is
+        enabled.
+
+    Forward
+    -------
+    x : torch.Tensor
+        4-D input tensor of shape :math:`(B, C, H, W)`, where :math:`B` is batch
+        size, :math:`C` is ``num_channels``, and :math:`H, W` are spatial
+        dimensions.
+
+    Outputs
+    -------
+    torch.Tensor
+        Output tensor of the same shape as input: :math:`(B, C, H, W)`.
+
+    .. note::
+
+    If ``num_channels`` is not divisible by ``num_groups``, the actual number of
+    groups might be adjusted to satisfy the ``min_channels_per_group`` condition.
     """
 
     def __init__(
@@ -336,55 +340,45 @@ class GroupNorm(torch.nn.Module):
         eps: float = 1e-5,
         use_apex_gn: bool = False,
         fused_act: bool = False,
-        act: str = None,
+        act: str | None = None,
         amp_mode: bool = False,
     ):
-        if fused_act and act is None:
-            raise ValueError("'act' must be specified when 'fused_act' is set to True.")
-
         super().__init__()
-        self.num_groups = min(num_groups, num_channels // min_channels_per_group)
+        # backwards compatibility warnings
+        if use_apex_gn:
+            raise ValueError(
+                "'use_apex_gn' is deprecated. Please use 'get_group_norm' to enable "
+                "Apex-based group norm."
+            )
+        if fused_act:
+            raise ValueError(
+                "'fused_act' is deprecated and only supported for Apex-based group norm. "
+                "Please use `get_group_norm` to enable fused activations."
+            )
+
+        # initialize groupnorm
+        self.num_groups: int = _compute_groupnorm_groups(
+            num_channels, num_groups, min_channels_per_group
+        )
         self.eps = eps
         self.weight = torch.nn.Parameter(torch.ones(num_channels))
         self.bias = torch.nn.Parameter(torch.zeros(num_channels))
-        if use_apex_gn and not _is_apex_available:
-            raise ValueError("'apex' is not installed, set `use_apex_gn=False`")
-        self.use_apex_gn = use_apex_gn
-        self.fused_act = fused_act
         self.act = act.lower() if act else act
         self.act_fn = None
-        self.amp_mode = amp_mode
-        if self.use_apex_gn:
-            if self.act:
-                self.gn = ApexGroupNorm(
-                    num_groups=self.num_groups,
-                    num_channels=num_channels,
-                    eps=self.eps,
-                    affine=True,
-                    act=self.act,
-                )
-
-            else:
-                self.gn = ApexGroupNorm(
-                    num_groups=self.num_groups,
-                    num_channels=num_channels,
-                    eps=self.eps,
-                    affine=True,
-                )
-        if self.fused_act:
+        if self.act is not None:
             self.act_fn = self.get_activation_function()
+        self.amp_mode = amp_mode
 
     def forward(self, x):
         weight, bias = self.weight, self.bias
+        _validate_amp(self.amp_mode)
         if not self.amp_mode:
-            if not self.use_apex_gn:
-                if weight.dtype != x.dtype:
-                    weight = self.weight.to(x.dtype)
-                if bias.dtype != x.dtype:
-                    bias = self.bias.to(x.dtype)
-        if self.use_apex_gn:
-            x = self.gn(x)
-        elif self.training:
+            if weight.dtype != x.dtype:
+                weight = self.weight.to(x.dtype)
+            if bias.dtype != x.dtype:
+                bias = self.bias.to(x.dtype)
+
+        if self.training:
             # Use default torch implementation of GroupNorm for training
             # This does not support channels last memory format
             x = torch.nn.functional.group_norm(
@@ -394,12 +388,9 @@ class GroupNorm(torch.nn.Module):
                 bias=bias,
                 eps=self.eps,
             )
-            if self.fused_act:
-                x = self.act_fn(x)
         else:
             # Use custom GroupNorm implementation that supports channels last
             # memory layout for inference
-            x = x.float()
             x = rearrange(x, "b (g c) h w -> b g c h w", g=self.num_groups)
 
             mean = x.mean(dim=[2, 3, 4], keepdim=True)
@@ -412,10 +403,10 @@ class GroupNorm(torch.nn.Module):
             bias = rearrange(bias, "c -> 1 c 1 1")
             x = x * weight + bias
 
-            if self.fused_act:
-                x = self.act_fn(x)
+        if self.act_fn is not None:
+            x = self.act_fn(x)
         return x
-    
+
     def get_activation_function(self):
         """
         Get activation function given string input
@@ -437,275 +428,115 @@ class GroupNorm(torch.nn.Module):
         return act_fn
 
 
-class AttentionOp(torch.autograd.Function):
+class Attention(torch.nn.Module):
     """
-    Attention weight computation, i.e., softmax(Q^T * K).
-    Performs all computation using FP32, but uses the original datatype for
-    inputs/outputs/gradients to conserve memory.
-    """
+    Self-attention block used in U-Net-style architectures, such as DDPM++, NCSN++, and ADM.
+    Applies GroupNorm followed by multi-head self-attention and a projection layer.
 
-    @staticmethod
-    def forward(ctx, q, k):
-        w = (
-            torch.einsum(
-                "ncq,nck->nqk",
-                q.to(torch.float32),
-                (k / torch.sqrt(torch.tensor(k.shape[1]))).to(torch.float32),
-            )
-            .softmax(dim=2)
-            .to(q.dtype)
-        )
-        ctx.save_for_backward(q, k, w)
-        return w
-
-    @staticmethod
-    def backward(ctx, dw):
-        q, k, w = ctx.saved_tensors
-        db = torch._softmax_backward_data(
-            grad_output=dw.to(torch.float32),
-            output=w.to(torch.float32),
-            dim=2,
-            input_dtype=torch.float32,
-        )
-
-        dq = torch.einsum("nck,nqk->ncq", k.to(torch.float32), db).to(
-            q.dtype
-        ) / np.sqrt(k.shape[1])
-        dk = torch.einsum("ncq,nqk->nck", q.to(torch.float32), db).to(
-            k.dtype
-        ) / np.sqrt(k.shape[1])
-        return dq, dk
-
-
-class UNetBlock(torch.nn.Module):
-    """
-    Unified U-Net block with optional up/downsampling and self-attention. Represents
-    the union of all features employed by the DDPM++, NCSN++, and ADM architectures.
-
-    Parameters:
-    -----------
-    in_channels : int
-        Number of input channels.
+    Parameters
+    ----------
     out_channels : int
-        Number of output channels.
-    emb_channels : int
-        Number of embedding channels.
-    up : bool, optional
-        If True, applies upsampling in the forward pass. By default False.
-    down : bool, optional
-        If True, applies downsampling in the forward pass. By default False.
-    attention : bool, optional
-        If True, enables the self-attention mechanism in the block. By default False.
-    num_heads : int, optional
-        Number of attention heads. If None, defaults to `out_channels // 64`.
-    channels_per_head : int, optional
-        Number of channels per attention head. By default 64.
-    dropout : float, optional
-        Dropout probability. By default 0.0.
-    skip_scale : float, optional
-        Scale factor applied to skip connections. By default 1.0.
-    eps : float, optional
-        Epsilon value used for normalization layers. By default 1e-5.
-    resample_filter : List[int], optional
-        Filter for resampling layers. By default [1, 1].
-    resample_proj : bool, optional
-        If True, resampling projection is enabled. By default False.
-    adaptive_scale : bool, optional
-        If True, uses adaptive scaling in the forward pass. By default True.
-    init : dict, optional
-        Initialization parameters for convolutional and linear layers.
-    init_zero : dict, optional
-        Initialization parameters with zero weights for certain layers. By default
-        {'init_weight': 0}.
-    init_attn : dict, optional
+        Number of channels :math:`C` in the input and output feature maps.
+    num_heads : int
+        Number of attention heads. Must be a positive integer.
+    eps : float, optional, default=1e-5
+        Epsilon value for numerical stability in GroupNorm.
+    init_zero : dict, optional, default={'init_weight': 0}
+        Initialization parameters with zero weights for certain layers.
+    init_attn : dict, optional, default=None
         Initialization parameters specific to attention mechanism layers.
         Defaults to 'init' if not provided.
-    use_apex_gn : bool, optional
+    init : dict, optional, default={}
+        Initialization parameters for convolutional and linear layers.
+    use_apex_gn : bool, optional, default=False
         A boolean flag indicating whether we want to use Apex GroupNorm for NHWC layout.
-        Need to set this as False on cpu. Defaults to False.
-    act : str, optional
-        The activation function to use when fusing activation with GroupNorm. Defaults to None.
-    fused_conv_bias: bool, optional
-        A boolean flag indicating whether bias will be passed as a parameter of conv2d. By default False.
-    profile_mode:
-        A boolean flag indicating whether to enable all nvtx annotations during profiling.
-    amp_mode : bool, optional
-        A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
+        Need to set this as False on cpu.
+    amp_mode : bool, optional, default=False
+        A boolean flag indicating whether mixed-precision (AMP) training is enabled.
+    fused_conv_bias: bool, optional, default=False
+        A boolean flag indicating whether bias will be passed as a parameter of conv2d.
+
+
+    Forward
+    -------
+    x : torch.Tensor
+        Input tensor of shape :math:`(B, C, H, W)`, where :math:`B` is batch
+        size, :math:`C` is `out_channels`, and :math:`H, W` are spatial
+        dimensions.
+
+    Outputs
+    -------
+    torch.Tensor
+        Output tensor of the same shape as input: :math:`(B, C, H, W)`.
     """
 
     def __init__(
         self,
-        in_channels: int,
+        *,
         out_channels: int,
-        emb_channels: int,
-        up: bool = False,
-        down: bool = False,
-        attention: bool = False,
-        num_heads: int = None,
-        channels_per_head: int = 64,
-        dropout: float = 0.0,
-        skip_scale: float = 1.0,
+        num_heads: int,
         eps: float = 1e-5,
-        resample_filter: List[int] = [1, 1],
-        resample_proj: bool = False,
-        adaptive_scale: bool = True,
-        init: Dict[str, Any] = dict(),
         init_zero: Dict[str, Any] = dict(init_weight=0),
         init_attn: Any = None,
+        init: Dict[str, Any] = dict(),
         use_apex_gn: bool = False,
-        act: str = "silu",
-        fused_conv_bias: bool = False,
-        profile_mode: bool = False,
         amp_mode: bool = False,
-    ):
+        fused_conv_bias: bool = False,
+    ) -> None:
         super().__init__()
-
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.emb_channels = emb_channels
-        self.num_heads = (
-            0
-            if not attention
-            else num_heads
-            if num_heads is not None
-            else out_channels // channels_per_head
-        )
-        self.dropout = dropout
-        self.skip_scale = skip_scale
-        self.adaptive_scale = adaptive_scale
-
-        self.profile_mode = profile_mode
-        self.amp_mode = amp_mode
-        self.norm0 = GroupNorm(
-            num_channels=in_channels,
+        # Parameters validation
+        if not isinstance(num_heads, int) or num_heads <= 0:
+            raise ValueError(
+                f"`num_heads` must be a positive integer, but got {num_heads}"
+            )
+        if out_channels % num_heads != 0:
+            raise ValueError(
+                f"`out_channels` must be divisible by `num_heads`, but got {out_channels} and {num_heads}"
+            )
+        self.num_heads = num_heads
+        self.norm = get_group_norm(
+            num_channels=out_channels,
             eps=eps,
             use_apex_gn=use_apex_gn,
-            fused_act=True,
-            act=act,
             amp_mode=amp_mode,
         )
-        self.conv0 = Conv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel=3,
-            up=up,
-            down=down,
-            resample_filter=resample_filter,
+        self.qkv = Conv2d(
+            in_channels=out_channels,
+            out_channels=out_channels * 3,
+            kernel=1,
             fused_conv_bias=fused_conv_bias,
             amp_mode=amp_mode,
-            **init,
+            **(init_attn if init_attn is not None else init),
         )
-        self.affine = Linear(
-            in_features=emb_channels,
-            out_features=out_channels * (2 if adaptive_scale else 1),
-            amp_mode=amp_mode,
-            **init,
-        )
-        if self.adaptive_scale:
-            self.norm1 = GroupNorm(
-                num_channels=out_channels,
-                eps=eps,
-                use_apex_gn=use_apex_gn,
-                amp_mode=amp_mode,
-            )
-        else:
-            self.norm1 = GroupNorm(
-                num_channels=out_channels,
-                eps=eps,
-                use_apex_gn=use_apex_gn,
-                act=act,
-                fused_act=True,
-                amp_mode=amp_mode,
-            )
-        self.conv1 = Conv2d(
-            in_channels=out_channels, 
-            out_channels=out_channels, 
-            kernel=3, 
+        self.proj = Conv2d(
+            in_channels=out_channels,
+            out_channels=out_channels,
+            kernel=1,
             fused_conv_bias=fused_conv_bias,
             amp_mode=amp_mode,
             **init_zero,
         )
 
-        self.skip = None
-        if out_channels != in_channels or up or down:
-            kernel = 1 if resample_proj or out_channels != in_channels else 0
-            fused_conv_bias = fused_conv_bias if kernel != 0 else False
-            self.skip = Conv2d(
-                in_channels=in_channels,
-                out_channels=out_channels,
-                kernel=kernel,
-                up=up,
-                down=down,
-                resample_filter=resample_filter,
-                fused_conv_bias=fused_conv_bias,
-                amp_mode=amp_mode,
-                **init,
-            )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        if self.num_heads:
-            self.norm2 = GroupNorm(
-                num_channels=out_channels,
-                eps=eps,
-                use_apex_gn=use_apex_gn,
-                amp_mode=amp_mode,
-            )
-            self.qkv = Conv2d(
-                in_channels=out_channels,
-                out_channels=out_channels * 3,
-                kernel=1,
-                fused_conv_bias=fused_conv_bias,
-                amp_mode=amp_mode,
-                **(init_attn if init_attn is not None else init),
-            )
-            self.proj = Conv2d(
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel=1,
-                fused_conv_bias=fused_conv_bias,
-                amp_mode=amp_mode,
-                **init_zero,
-            )
+        x1: torch.Tensor = self.qkv(self.norm(x))
 
-    def forward(self, x, emb):
-        with nvtx.annotate(
-            message="UNetBlock", color="purple"
-        ) if self.profile_mode else contextlib.nullcontext():
-            orig = x
-            x = self.conv0(self.norm0(x))
-            params = self.affine(emb).unsqueeze(2).unsqueeze(3)
-            if not self.amp_mode:
-                if params.dtype != x.dtype:
-                    params = params.to(x.dtype)
-
-            if self.adaptive_scale:
-                scale, shift = params.chunk(chunks=2, dim=1)
-                x = silu(torch.addcmul(shift, self.norm1(x), scale + 1))
-            else:
-                x = self.norm1(x.add_(params))
-
-            x = self.conv1(
-                torch.nn.functional.dropout(x, p=self.dropout, training=self.training)
-            )
-            x = x.add_(self.skip(orig) if self.skip is not None else orig)
-            x = x * self.skip_scale
-
-            if self.num_heads:
-                q, k, v = (
-                    self.qkv(self.norm2(x))
-                    .reshape(
-                        x.shape[0], self.num_heads, x.shape[1] // self.num_heads, 3, -1
-                    )
-                    .unbind(3)
+        q, k, v = (
+            (
+                x1.reshape(
+                    x.shape[0], self.num_heads, x.shape[1] // self.num_heads, 3, -1
                 )
-                # w = AttentionOp.apply(q, k)
-                # a = torch.einsum("nqk,nck->ncq", w, v)
-                # Compute attention in one step
-                with amp.autocast(x.device.type, enabled=self.amp_mode):
-                    attn = torch.nn.functional.scaled_dot_product_attention(q, k, v)
-                x = self.proj(attn.reshape(*x.shape)).add_(x)
-                x = x * self.skip_scale
+            )
+            .permute(0, 1, 4, 3, 2)
+            .unbind(-2)
+        )
+        attn = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, scale=1 / math.sqrt(k.shape[-1])
+        )
+        attn = attn.transpose(-1, -2)
 
-            return x
+        x: torch.Tensor = self.proj(attn.reshape(*x.shape)).add_(x)
+        return x
 
 
 class PositionalEmbedding(torch.nn.Module):
@@ -723,7 +554,18 @@ class PositionalEmbedding(torch.nn.Module):
         If True, the embedding considers the endpoint. By default False.
     amp_mode : bool, optional
         A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
-
+    learnable : bool, optional
+        A boolean flag indicating whether learnable positional embedding is enabled. Defaults to False.
+    freq_embed_dim: int, optional
+        The dimension of the frequency embedding. Defaults to None, in which case it will be set to num_channels.
+    mlp_hidden_dim: int, optional
+        The dimension of the hidden layer in the MLP. Defaults to None, in which case it will be set to 2 * num_channels.
+        Only applicable if learnable is True; if learnable is False, this parameter is ignored.
+    embed_fn: Literal["cos_sin", "np_sin_cos"], optional
+        The function to use for embedding into sin/cos features (allows for swapping the order of sin/cos). Defaults to 'cos_sin'.
+        Options:
+            - 'cos_sin': Uses torch to compute frequency embeddings and returns in order (cos, sin)
+            - 'np_sin_cos': Uses numpy to compute frequency embeddings and returns in order (sin, cos)
     """
 
     def __init__(
@@ -732,24 +574,65 @@ class PositionalEmbedding(torch.nn.Module):
         max_positions: int = 10000,
         endpoint: bool = False,
         amp_mode: bool = False,
+        learnable: bool = False,
+        freq_embed_dim: int | None = None,
+        mlp_hidden_dim: int | None = None,
+        embed_fn: Literal["cos_sin", "np_sin_cos"] = "cos_sin",
     ):
         super().__init__()
         self.num_channels = num_channels
         self.max_positions = max_positions
         self.endpoint = endpoint
         self.amp_mode = amp_mode
+        self.learnable = learnable
+        self.embed_fn = embed_fn
 
-    def forward(self, x):
+        if freq_embed_dim is None:
+            freq_embed_dim = num_channels
+        self.freq_embed_dim = freq_embed_dim
+
+        if learnable:
+            if mlp_hidden_dim is None:
+                mlp_hidden_dim = 2 * num_channels
+            self.mlp = torch.nn.Sequential(
+                torch.nn.Linear(freq_embed_dim, mlp_hidden_dim, bias=True),
+                torch.nn.SiLU(),
+                torch.nn.Linear(mlp_hidden_dim, num_channels, bias=True),
+            )
+
+        if self.embed_fn == "np_sin_cos":
+            half_embed_dim = freq_embed_dim // 2
+            pow = np.arange(half_embed_dim, dtype=np.float32) / half_embed_dim
+            w = np.exp(-np.log(self.max_positions) * pow)
+            self.register_buffer("freqs", torch.from_numpy(w).float())
+
+    def _cos_sin_embedding(self, x):
         freqs = torch.arange(
-            start=0, end=self.num_channels // 2, dtype=torch.float32, device=x.device
+            start=0, end=self.freq_embed_dim // 2, dtype=torch.float32, device=x.device
         )
-        freqs = freqs / (self.num_channels // 2 - (1 if self.endpoint else 0))
+        freqs = freqs / (self.freq_embed_dim // 2 - (1 if self.endpoint else 0))
         freqs = (1 / self.max_positions) ** freqs
+        _validate_amp(self.amp_mode)
         if not self.amp_mode:
             if freqs.dtype != x.dtype:
                 freqs = freqs.to(x.dtype)
         x = x.ger(freqs)
         x = torch.cat([x.cos(), x.sin()], dim=1)
+        return x
+
+    def _sin_cos_embedding_np(self, x):
+        x = torch.outer(x, self.freqs)
+        x = torch.cat([x.sin(), x.cos()], dim=1)
+        return x
+
+    def forward(self, x):
+        if self.embed_fn == "cos_sin":
+            x = self._cos_sin_embedding(x)
+        elif self.embed_fn == "np_sin_cos":
+            x = self._sin_cos_embedding_np(x)
+
+        if self.learnable:
+            x = self.mlp(x)
         return x
 
 
@@ -781,6 +664,7 @@ class FourierEmbedding(torch.nn.Module):
 
     def forward(self, x):
         freqs = self.freqs
+        _validate_amp(self.amp_mode)
         if not self.amp_mode:
             if x.dtype != self.freqs.dtype:
                 freqs = self.freqs.to(x.dtype)

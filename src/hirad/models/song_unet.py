@@ -36,86 +36,192 @@ from .layers import (
     GroupNorm,
     Linear,
     PositionalEmbedding,
-    UNetBlock,
 )
 
+from .unet_block import UNetBlock
 
-class SongUNet(nn.Module):
-    """
-    Reimplementation of the DDPM++ and NCSN++ architectures, U-Net variants with
-    optional self-attention, embeddings, and encoder-decoder components.
+from .utils import _recursive_property, get_group_norm
+
+
+class SongUNet(Module):
+    r"""
+    This architecture is a diffusion backbone for 2D image generation.
+    It is a reimplementation of the `DDPM++
+    <https://proceedings.mlr.press/v139/nichol21a.html>`_ and `NCSN++ <https://arxiv.org/abs/2011.13456>`_
+    architectures, which are U-Net variants
+    with optional self-attention, embeddings, and encoder-decoder components.
 
     This model supports conditional and unconditional setups, as well as several
     options for various internal architectural choices such as encoder and decoder
     type, embedding type, etc., making it flexible and adaptable to different tasks
     and configurations.
 
+    This architecture supports conditioning on the noise level (called *noise labels*),
+    as well as on additional vector-valued labels (called *class labels*) and (optional)
+    vector-valued augmentation labels. The conditioning mechanism relies on addition
+    of the conditioning embeddings in the U-Net blocks of the encoder. To condition
+    on images, the simplest mechanism is to concatenate the image to the input
+    before passing it to the SongUNet.
+
+    The model first applies a mapping operation to generate embeddings for all
+    the conditioning inputs (the noise level, the class labels, and the
+    optional augmentation labels).
+
+    Then, at each level in the U-Net encoder, a sequence of blocks is applied:
+
+    • A first block downsamples the feature map resolution by a factor of 2
+      (odd resolutions are floored). This block does not change the number of
+      channels.
+
+    • A sequence of ``num_blocks`` U-Net blocks are applied, each with a different
+      number of channels. These blocks do not change the feature map
+      resolution, but they multiply the number of channels by a factor
+      specified in ``channel_mult``.
+      If required, the U-Net blocks also apply self-attention at the specified
+      resolutions.
+
+    • At the end of the level, the feature map is cached to be used in a skip
+      connection in the decoder.
+
+    The decoder is a mirror of the encoder, with the same number of levels and
+    the same number of blocks per level. It multiplies the feature map resolution
+    by a factor of 2 at each level.
+
     Parameters
     -----------
-    img_resolution : Union[List[int], int]
-        The resolution of the input/output image. Can be a single int for square images
-        or a list [height, width] for rectangular images.
+    img_resolution : Union[List[int, int], int]
+        The resolution of the input/output image. Can be a single int :math:`H` for
+        square images or a list :math:`[H, W]` for rectangular images.
+
+        *Note:* This parameter is only used as a convenience to build the
+        network. In practice, the model can still be used with images of
+        different resolutions. The only exception to this rule is when
+        ``additive_pos_embed`` is True, in which case the resolution of the latent
+        state :math:`\mathbf{x}` must match ``img_resolution``.
     in_channels : int
-        Number of channels in the input image.
+        Number of channels :math:`C_{in}` in the input image. May include channels from both
+        the latent state and additional channels when conditioning on images.
+        For an unconditional model, this should be equal to ``out_channels``.
     out_channels : int
-        Number of channels in the output image.
-    label_dim : int, optional
-        Number of class labels; 0 indicates an unconditional model. By default 0.
-    augment_dim : int, optional
-        Dimensionality of augmentation labels; 0 means no augmentation. By default 0.
-    model_channels : int, optional
-        Base multiplier for the number of channels across the network. By default 128.
-    channel_mult : List[int], optional
-        Per-resolution multipliers for the number of channels. By default [1,2,2,2].
-    channel_mult_emb : int, optional
-        Multiplier for the dimensionality of the embedding vector. By default 4.
-    num_blocks : int, optional
-        Number of residual blocks per resolution. By default 4.
-    attn_resolutions : List[int], optional
-        Resolutions at which self-attention layers are applied. By default [16].
-    dropout : float, optional
-        Dropout probability applied to intermediate activations. By default 0.10.
-    label_dropout : float, optional
-        Dropout probability of class labels for classifier-free guidance. By default 0.0.
-    embedding_type : str, optional
-        Timestep embedding type: 'positional' for DDPM++, 'fourier' for NCSN++, 'zero' for none.
-        By default 'positional'.
-    channel_mult_noise : int, optional
-        Timestep embedding size: 1 for DDPM++, 2 for NCSN++. By default 1.
-    encoder_type : str, optional
-        Encoder architecture: 'standard' for DDPM++, 'residual' for NCSN++. , 'skip' for skip connections.
-        By default 'standard'.
-    decoder_type : str, optional
-        Decoder architecture: 'standard' or 'skip' for skip connections. By default 'standard'.
-    resample_filter : List[int], optional
-        Resampling filter coefficients: [1,1] for DDPM++, [1,3,3,1] for NCSN++. By default [1,1].
-    checkpoint_level : int, optional
-        Number of layers that should use gradient checkpointing (0 disables checkpointing).
-        Higher values trade memory for computation. By default 0.
-    additive_pos_embed : bool, optional
-        If True, adds a learned positional embedding after the first convolution layer.
-        Used in StormCast model. By default False.
-    use_apex_gn : bool, optional
-        A boolean flag indicating whether we want to use Apex GroupNorm for NHWC layout.
-        Need to set this as False on cpu. Defaults to False.
-    act : str, optional
-        The activation function to use when fusing activation with GroupNorm. Defaults to None.
-    profile_mode:
-        A boolean flag indicating whether to enable all nvtx annotations during profiling.
-    amp_mode : bool, optional
-        A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
+        Number of channels :math:`C_{out}` in the output image. Should be equal to the number
+        of channels :math:`C_{\mathbf{x}}` in the latent state.
+    label_dim : int, optional, default=0
+        Dimension of the vector-valued ``class_labels`` conditioning; 0
+        indicates no conditioning on class labels.
+    augment_dim : int, optional, default=0
+        Dimension of the vector-valued `augment_labels` conditioning; 0 means
+        no conditioning on augmentation labels.
+    model_channels : int, optional, default=128
+        Base multiplier for the number of channels accross the entire network.
+    channel_mult : List[int], optional, default=[1, 2, 2, 2]
+        Multipliers for the number of channels at every level in
+        the encoder and decoder. The length of ``channel_mult`` determines the
+        number of levels in the U-Net. At level ``i``, the number of channel in
+        the feature map is ``channel_mult[i] * model_channels``.
+    channel_mult_emb : int, optional, default=4
+        Multiplier for the number of channels in the embedding vector. The
+        embedding vector has ``model_channels * channel_mult_emb`` channels.
+    num_blocks : int, optional, default=4
+        Number of U-Net blocks at each level.
+    attn_resolutions : List[int], optional, default=[16]
+        Resolutions of the levels at which self-attention layers are applied.
+        Note that the feature map resolution must match exactly the value
+        provided in `attn_resolutions` for the self-attention layers to be
+        applied.
+    dropout : float, optional, default=0.10
+        Dropout probability applied to intermediate activations within the
+        U-Net blocks.
+    label_dropout : float, optional, default=0.0
+        Dropout probability applied to the `class_labels`. Typically used for
+        classifier-free guidance.
+    embedding_type : Literal["fourier", "positional", "zero"], optional, default="positional"
+        Diffusion timestep embedding type: 'positional' for DDPM++, 'fourier'
+        for NCSN++, 'zero' for none.
+    channel_mult_noise : int, optional, default=1
+        Multiplier for the number of channels in the noise level embedding. The
+        noise level embedding vector has ``model_channels * channel_mult_noise`` channels.
+    encoder_type : Literal["standard", "skip", "residual"], optional, default="standard"
+        Encoder architecture: 'standard' for DDPM++, 'residual' for NCSN++, 'skip' for skip connections.
+    decoder_type : Literal["standard", "skip"], optional, default="standard"
+        Decoder architecture: 'standard' or 'skip' for skip connections.
+    resample_filter : List[int], optional, default=[1, 1]
+        Resampling filter coefficients applied in the U-Net blocks
+        convolutions: [1,1] for DDPM++, [1,3,3,1] for NCSN++.
+    checkpoint_level : int, optional, default=0
+        Number of levels that should use gradient checkpointing. Only levels at
+        which the feature map resolution is large enough will be checkpointed
+        (0 disables checkpointing, higher values means more layers are checkpointed).
+        Higher values trade memory for computation.
+    additive_pos_embed : bool, optional, default=False
+        If ``True``, adds a learnable positional embedding after the first convolution layer.
+        Used in StormCast model.
+
+        *Note:* Those positional embeddings encode spatial position information
+        of the image pixels, unlike the ``embedding_type`` parameter which encodes
+        temporal information about the diffusion process. In that sense it is a
+        simpler version of the positional embedding used in
+        :class:`~hirad.models.SongUNetPosEmbd`.
+    use_apex_gn : bool, optional, default=False
+        A flag indicating whether we want to use Apex GroupNorm for NHWC layout.
+        Apex needs to be installed for this to work. Need to set this as False on cpu.
+    act : str, optional, default=None
+        The activation function to use when fusing activation with GroupNorm.
+        Required when ``use_apex_gn`` is ``True``.
+    profile_mode : bool, optional, default=False
+        A flag indicating whether to enable all nvtx annotations during
+        profiling.
+    amp_mode : bool, optional, default=False
+        A flag indicating whether mixed-precision (AMP) training is enabled.
 
 
-    Reference
-    ----------
-    Song, Y., Sohl-Dickstein, J., Kingma, D.P., Kumar, A., Ermon, S. and
-    Poole, B., 2020. Score-based generative modeling through stochastic differential
-    equations. arXiv preprint arXiv:2011.13456.
+    Forward
+    -------
+    x : torch.Tensor
+        The input image of shape :math:`(B, C_{in}, H_{in}, W_{in})`. In
+        general ``x`` is the channel-wise concatenation of the latent state
+        :math:`\mathbf{x}` and additional images used for conditioning. For an
+        unconditional model, ``x`` is simply the latent state
+        :math:`\mathbf{x}`.
 
-    Note
-    -----
-    Equivalent to the original implementation by Song et al., available at
-    https://github.com/yang-song/score_sde_pytorch
+        *Note:* :math:`H_{in}` and :math:`W_{in}` do not need to match
+        :math:`H` and :math:`W` defined in ``img_resolution``, except when
+        ``additive_pos_embed`` is ``True``. In that case, the resolution of
+        ``x`` must match ``img_resolution``.
+    noise_labels : torch.Tensor
+        The noise labels of shape :math:`(B,)`. Used for conditioning on
+        the diffusion noise level.
+    class_labels : torch.Tensor
+        The class labels of shape :math:`(B, \text{label_dim})`. Used for
+        conditioning on any vector-valued quantity. Can pass ``None`` when
+        ``label_dim`` is 0.
+    augment_labels : torch.Tensor, optional, default=None
+        The augmentation labels of shape :math:`(B, \text{augment_dim})`. Used
+        for conditioning on any additional vector-valued quantity. Can pass
+        ``None`` when ``augment_dim`` is 0.
+
+    Outputs
+    -------
+    torch.Tensor
+        The denoised latent state of shape :math:`(B, C_{out}, H_{in}, W_{in})`.
+
+
+    . important::
+        • The terms *noise levels* (or *noise labels*) are used to refer to the diffusion time-step, as these are conceptually equivalent.
+        • The terms *labels* and *classes* originate from the original paper and EDM repository,
+          where this architecture was used for class-conditional image generation. While these terms
+          suggest class-based conditioning, the architecture can actually be conditioned on any vector-valued
+          conditioning.
+        • The term *positional embedding* used in the `embedding_type` parameter
+          also comes from the original paper and EDM repository. Here,
+          *positional* refers to the diffusion time-step, similar to how position is used in transformer
+          architectures. Despite the name, these embeddings encode temporal information about the
+          diffusion process rather than spatial position information.
+        • Limitations on input image resolution: for a model that has :math:`N` levels,
+          the latent state :math:`\mathbf{x}` must have resolution that is a multiple of :math:`2^{N-1}` in each dimension.
+          This is due to a limitation in the decoder that does not support shape mismatch
+          in the residual connections from the encoder to the decoder. For images that do not match
+          this requirement, it is recommended to interpolate your data on a grid of the required resolution
+          beforehand.
 
     Example
     --------
@@ -127,6 +233,10 @@ class SongUNet(nn.Module):
     >>> output_image.shape
     torch.Size([1, 2, 16, 16])
     """
+
+    # Arguments of the __init__ method that can be overridden with the
+    # ``Module.from_checkpoint`` method.
+    _overridable_args: Set[str] = {"use_apex_gn", "act"}
 
     def __init__(
         self,
@@ -142,10 +252,10 @@ class SongUNet(nn.Module):
         attn_resolutions: List[int] = [16],
         dropout: float = 0.10,
         label_dropout: float = 0.0,
-        embedding_type: str = "positional",
+        embedding_type: Literal["fourier", "positional", "zero"] = "positional",
         channel_mult_noise: int = 1,
-        encoder_type: str = "standard",
-        decoder_type: str = "standard",
+        encoder_type: Literal["standard", "skip", "residual"] = "standard",
+        decoder_type: Literal["standard", "skip"] = "standard",
         resample_filter: List[int] = [1, 1],
         checkpoint_level: int = 0,
         additive_pos_embed: bool = False,
@@ -172,7 +282,7 @@ class SongUNet(nn.Module):
                 f"Invalid decoder_type: {decoder_type}. Must be one of {valid_decoder_types}."
             )
 
-        super().__init__() #meta=MetaData()
+        super().__init__(meta=MetaData())
         self.label_dropout = label_dropout
         self.embedding_type = embedding_type
         emb_channels = model_channels * channel_mult_emb
@@ -185,7 +295,7 @@ class SongUNet(nn.Module):
             emb_channels=emb_channels,
             num_heads=1,
             dropout=dropout,
-            skip_scale=np.sqrt(0.5),
+            skip_scale=0.7071067811865476,  # 1 / sqrt(2)
             eps=1e-6,
             resample_filter=resample_filter,
             resample_proj=True,
@@ -199,8 +309,7 @@ class SongUNet(nn.Module):
             profile_mode=profile_mode,
             amp_mode=amp_mode,
         )
-        self.profile_mode = profile_mode
-        self.amp_mode = amp_mode
+        self.use_apex_gn = use_apex_gn
 
         # for compatibility with older versions that took only 1 dimension
         self.img_resolution = img_resolution
@@ -210,8 +319,14 @@ class SongUNet(nn.Module):
             self.img_shape_y = img_resolution[0]
             self.img_shape_x = img_resolution[1]
 
+        self._num_levels = len(channel_mult)
+        self._input_shape_mult = 2 ** (self._num_levels - 1)
+
         # set the threshold for checkpointing based on image resolution
-        self.checkpoint_threshold = (self.img_shape_y >> checkpoint_level) + 1
+        self.checkpoint_threshold = (
+            math.floor(math.sqrt(self.img_shape_x * self.img_shape_y))
+            >> checkpoint_level
+        ) + 1
 
         # Optional additive learned positition embed after the first conv
         self.additive_pos_embed = additive_pos_embed
@@ -358,7 +473,7 @@ class SongUNet(nn.Module):
                         resample_filter=resample_filter,
                         amp_mode=amp_mode,
                     )
-                self.dec[f"{res}x{res}_aux_norm"] = GroupNorm(
+                self.dec[f"{res}x{res}_aux_norm"] = get_group_norm(
                     num_channels=cout,
                     eps=1e-6,
                     use_apex_gn=use_apex_gn,
@@ -373,10 +488,81 @@ class SongUNet(nn.Module):
                     **init_zero,
                 )
 
+        # Set properties recursively on submodules
+        self.profile_mode = profile_mode
+        self.amp_mode = amp_mode
+
+    # Properties that are recursively set on submodules
+    profile_mode = _recursive_property(
+        "profile_mode", bool, "Should be set to ``True`` to enable profiling."
+    )
+    amp_mode = _recursive_property(
+        "amp_mode",
+        bool,
+        "Should be set to ``True`` to enable automatic mixed precision.",
+    )
+
     def forward(self, x, noise_labels, class_labels, augment_labels=None):
-        with nvtx.annotate(
-            message="SongUNet", color="blue"
-        ) if self.profile_mode else contextlib.nullcontext():
+        with (
+            nvtx.annotate(message="SongUNet", color="blue")
+            if self.profile_mode
+            else contextlib.nullcontext()
+        ):
+            # Validate input shapes
+            batch_size = x.shape[0]
+
+            if x.ndim != 4:
+                raise ValueError(
+                    f"Expected 'x' to be a 4D tensor, "
+                    f"got {x.ndim}D tensor with shape {tuple(x.shape)}"
+                )
+
+            # Check spatial dimensions are powers of 2 or multiples of 2^{N-1}
+            for d in x.shape[-2:]:
+                # Check if d is a power of 2
+                is_power_of_2 = (d & (d - 1)) == 0 and d > 0
+                # If not power of 2, must be multiple of self._input_shape_mult
+                if not (
+                    (is_power_of_2 and d < self._input_shape_mult)
+                    or (d % self._input_shape_mult == 0)
+                ):
+                    raise ValueError(
+                        f"Input spatial dimensions ({x.shape[-2:]}) must be "
+                        f"either powers of 2 or multiples of 2**(N-1) where "
+                        f"N (={self._num_levels}) is the number of levels "
+                        f"in the U-Net."
+                    )
+
+            # TODO: noise_labels of shape (1,) means that all inputs share the
+            # same noise level. This should be removed in the future, though.
+            if noise_labels.ndim != 1 or noise_labels.shape[0] not in (batch_size, 1):
+                raise ValueError(
+                    f"Expected 'noise_labels' shape ({batch_size},) or (1,), "
+                    f"got {tuple(noise_labels.shape)}"
+                )
+
+            if class_labels is not None and (
+                class_labels.ndim != 2 or class_labels.shape[0] != batch_size
+            ):
+                raise ValueError(
+                    f"Expected 'class_labels' shape ({batch_size}, C), "
+                    f"got {tuple(class_labels.shape)}"
+                )
+
+            if augment_labels is not None and (
+                augment_labels.ndim != 2 or augment_labels.shape[0] != batch_size
+            ):
+                raise ValueError(
+                    f"Expected 'augment_labels' shape ({batch_size}, C), "
+                    f"got {tuple(augment_labels.shape)}"
+                )
+
+            if (
+                self.use_apex_gn
+                and (not x.is_contiguous(memory_format=torch.channels_last))
+                and x.dim() == 4
+            ):
+                x = x.to(memory_format=torch.channels_last)
             if self.embedding_type != "zero":
                 # Mapping.
                 emb = self.map_noise(noise_labels)
@@ -399,16 +585,20 @@ class SongUNet(nn.Module):
                 emb = silu(self.map_layer1(emb))
             else:
                 emb = torch.zeros(
-                    (noise_labels.shape[0], self.emb_channels), device=x.device
+                    (noise_labels.shape[0], self.emb_channels),
+                    device=x.device,
+                    dtype=x.dtype,
                 )
 
             # Encoder.
             skips = []
             aux = x
             for name, block in self.enc.items():
-                with nvtx.annotate(
-                    f"SongUNet encoder: {name}", color="blue"
-                ) if self.profile_mode else contextlib.nullcontext():
+                with (
+                    nvtx.annotate(f"SongUNet encoder: {name}", color="blue")
+                    if self.profile_mode
+                    else contextlib.nullcontext()
+                ):
                     if "aux_down" in name:
                         aux = block(aux)
                     elif "aux_skip" in name:
@@ -423,7 +613,10 @@ class SongUNet(nn.Module):
                     else:
                         # For UNetBlocks check if we should use gradient checkpointing
                         if isinstance(block, UNetBlock):
-                            if x.shape[-1] > self.checkpoint_threshold:
+                            if (
+                                math.floor(math.sqrt(x.shape[-2] * x.shape[-1]))
+                                > self.checkpoint_threshold
+                            ):
                                 # self.checkpoint = checkpoint?
                                 # else: self.checkpoint  = lambda(block,x,emb:block(x,emb))
                                 x = checkpoint(block, x, emb, use_reentrant=False)
@@ -438,9 +631,11 @@ class SongUNet(nn.Module):
             aux = None
             tmp = None
             for name, block in self.dec.items():
-                with nvtx.annotate(
-                    f"SongUNet decoder: {name}", color="blue"
-                ) if self.profile_mode else contextlib.nullcontext():
+                with (
+                    nvtx.annotate(f"SongUNet decoder: {name}", color="blue")
+                    if self.profile_mode
+                    else contextlib.nullcontext()
+                ):
                     if "aux_up" in name:
                         aux = block(aux)
                     elif "aux_norm" in name:
@@ -453,9 +648,12 @@ class SongUNet(nn.Module):
                             x = torch.cat([x, skips.pop()], dim=1)
                         # check for checkpointing on decoder blocks and up sampling blocks
                         if (
-                            x.shape[-1] > self.checkpoint_threshold and "_block" in name
+                            math.floor(math.sqrt(x.shape[-2] * x.shape[-1]))
+                            > self.checkpoint_threshold
+                            and "_block" in name
                         ) or (
-                            x.shape[-1] > (self.checkpoint_threshold / 2)
+                            math.floor(math.sqrt(x.shape[-2] * x.shape[-1]))
+                            > (self.checkpoint_threshold / 2)
                             and "_up" in name
                         ):
                             x = checkpoint(block, x, emb, use_reentrant=False)
@@ -464,107 +662,143 @@ class SongUNet(nn.Module):
             return aux
 
 
+# ------------------------------------------------------------------------------
+# Specialized architectures
+# ------------------------------------------------------------------------------
+
+
 class SongUNetPosEmbd(SongUNet):
-    """Extends SongUNet with positional embeddings.
+    r"""This specialized architecture extends
+    :class:`~hirad.models.SongUNet` with positional
+    embeddings that encode global spatial coordinates of the pixels.
 
-    This model supports conditional and unconditional setups, as well as several
-    options for various internal architectural choices such as encoder and decoder
-    type, embedding type, etc., making it flexible and adaptable to different tasks
-    and configurations.
+    This model supports the same type of conditioning as the base SongUNet, and
+    can be in addition conditioned on the positional embeddings. Conditioning on
+    the positional embeddings is performed with a channel-wise concatenation to
+    the input image before the first layer of the U-Net. Multiple types of
+    positional embeddings are supported. Positional embeddings are represented by
+    a 2D grid of shape :math:`(C_{PE}, H, W)`, where :math:`H` and
+    :math:`W` correspond to the ``img_resolution`` parameter.
 
-    This model adds positional embeddings to the base SongUNet architecture. The embeddings
-    can be selected using either a selector function or global indices, with the selector
-    approach being more computationally efficient.
+    The following types of positional embeddings are
+    supported:
 
-    The model provides two methods for selecting positional embeddings:
+    • learnable: uses a 2D grid of learnable parameters.
 
-    1. Using a selector function (preferred method). See
-       :meth:`positional_embedding_selector` for details.
+    • linear: uses a 2D rectilinear grid over the domain :math:`[-1, 1] \times
+      [-1, 1]`.
+
+    • sinusoidal: uses sinusoidal functions of the spatial coordinates, with
+      possibly multiple frequency bands.
+
+    • test: uses a 2D grid of integer indices, only used for testing.
+
+    When the input image spatial resolution is smaller than the global
+    positional embeddings, it is necessary to select a subset (or *patch*) of the embedding
+    grid that correspond to the spatial locations of the input image pixels. The
+    model provides two methods for selecting the subset of positional
+    embeddings:
+
+    1. Using a selector function. See :meth:`positional_embedding_selector` for
+       details.
+
     2. Using global indices. See :meth:`positional_embedding_indexing` for
        details.
 
+    If none of these are provided, the entire grid of positional embeddings is
+    used and channel-wise concatenated to the input image.
+
+    Most parameters are the same as in the parent class
+    :class:`~hirad.models.SongUNet`. Only the ones
+    that differ are listed below.
+
     Parameters
-    -----------
-    img_resolution : Union[List[int], int]
-        The resolution of the input/output image. Can be a single int for square images
-        or a list [height, width] for rectangular images.
+    ----------
+    img_resolution : Union[List[int, int], int]
+        The resolution of the input/output image. Can be a single int for
+        square images or a list :math:`[H, W]` for rectangular images.
+        Used to set the resolution of the positional embedding grid. It must
+        correspond to the spatial resolution of the *global* domain/image.
     in_channels : int
-        Number of channels in the input image.
-    out_channels : int
-        Number of channels in the output image.
-    label_dim : int, optional
-        Number of class labels; 0 indicates an unconditional model. By default 0.
-    augment_dim : int, optional
-        Dimensionality of augmentation labels; 0 means no augmentation. By default 0.
-    model_channels : int, optional
-        Base multiplier for the number of channels across the network. By default 128.
-    channel_mult : List[int], optional
-        Per-resolution multipliers for the number of channels. By default [1,2,2,2,2].
-    channel_mult_emb : int, optional
-        Multiplier for the dimensionality of the embedding vector. By default 4.
-    num_blocks : int, optional
-        Number of residual blocks per resolution. By default 4.
-    attn_resolutions : List[int], optional
-        Resolutions at which self-attention layers are applied. By default [28].
-    dropout : float, optional
-        Dropout probability applied to intermediate activations. By default 0.13.
-    label_dropout : float, optional
-        Dropout probability of class labels for classifier-free guidance. By default 0.0.
-    embedding_type : str, optional
-        Timestep embedding type: 'positional' for DDPM++, 'fourier' for NCSN++.
-        By default 'positional'.
-    channel_mult_noise : int, optional
-        Timestep embedding size: 1 for DDPM++, 2 for NCSN++. By default 1.
-    encoder_type : str, optional
-        Encoder architecture: 'standard' for DDPM++, 'residual' for NCSN++. , 'skip' for skip connections.
-        By default'standard'.
-    decoder_type : str, optional
-        Decoder architecture: 'standard' or 'skip' for skip connections. By default 'standard'.
-    resample_filter : List[int], optional
-        Resampling filter coefficients: [1,1] for DDPM++, [1,3,3,1] for NCSN++. By default [1,1].
-    gridtype : str, optional
-        Type of positional grid to use: 'sinusoidal', 'learnable', 'linear', or 'test'.
-        Controls how positional information is encoded. By default 'sinusoidal'.
-    N_grid_channels : int, optional
-        Number of channels in the positional embedding grid. For 'sinusoidal' must be 4 or
-        multiple of 4. For 'linear' must be 2. By default 4.
-    checkpoint_level : int, optional
-        Number of layers that should use gradient checkpointing (0 disables checkpointing).
-        Higher values trade memory for computation. By default 0.
-    additive_pos_embed : bool, optional
-        If True, adds a learned positional embedding after the first convolution layer.
-        Used in StormCast model. By default False.
-    use_apex_gn : bool, optional
-        A boolean flag indicating whether we want to use Apex GroupNorm for NHWC layout.
-        Need to set this as False on cpu. Defaults to False.
-    act : str, optional
-        The activation function to use when fusing activation with GroupNorm. Defaults to None.
-    profile_mode:
-        A boolean flag indicating whether to enable all nvtx annotations during profiling.
-    amp_mode : bool, optional
-        A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
-    lead_time_mode : bool, optional
-        A boolean flag indicating whether we are running SongUNet with lead time embedding. Defaults to False.
-    lead_time_channels : int, optional
-        Number of channels in the lead time embedding. These are learned embeddings that
-        encode temporal forecast information. By default None.
-    lead_time_steps : int, optional
-        Number of discrete lead time steps to support. Each step gets its own learned
-        embedding vector. By default 9.
-    prob_channels : List[int], optional
-        Indices of probability output channels that should use softmax activation.
-        Used for classification outputs. By default empty list.
+        Number of channels :math:`C_{in} + C_{PE}`, where :math:`C_{in}` is the
+        number of channels in the image passed to the U-Net and :math:`C_{PE}`
+        is the number of channels in the positional embedding grid.
 
-    Note
-    -----
-    Equivalent to the original implementation by Song et al., available at
-    https://github.com/yang-song/score_sde_pytorch
+        **Important:** in comparison to the base
+        :class:`~hirad.models.SongUNet`, this
+        parameter should also include the number of channels in the positional
+        embedding grid :math:`C_{PE}`.
+    gridtype : Literal["sinusoidal", "learnable", "linear", "test"], optional, default="sinusoidal"
+        Type of positional embedding to use. Controls how spatial pixels locations are encoded.
+    N_grid_channels : int, optional, default=4
+        Number of channels :math:`C_{PE}` in the positional embedding grid. For 'sinusoidal' must be 4 or
+        multiple of 4. For 'linear' and 'test' must be 2. For 'learnable' can be any
+        value. If 0, positional embedding is disabled (but ``lead_time_mode`` may still be used).
+    lead_time_mode : bool, optional, default=False
+        Provided for convenience. It is recommended to use the architecture
+        :class:`~hirad.models.SongUNetPosLtEmbd`
+        for a lead-time aware model.
+    lead_time_channels : int, optional, default=None
+        Provided for convenience. Refer to :class:`~hirad.models.SongUNetPosLtEmbd`.
+    lead_time_steps : int, optional, default=9
+        Provided for convenience. Refer to :class:`~hirad.models.SongUNetPosLtEmbd`.
+    prob_channels : List[int], optional, default=[]
+        Provided for convenience. Refer to :class:`~hirad.models.SongUNetPosLtEmbd`.
 
-    Example
+
+    Forward
+    -------
+    x : torch.Tensor
+        The input image of shape :math:`(B, C_{in}, H_{in}, W_{in})`,
+        where :math:`H_{in}` and :math:`W_{in}` are the spatial dimensions of
+        the input image (does not need to be the full image).
+        In general ``x`` is the channel-wise concatenation of the latent state :math:`\mathbf{x}` and
+        additional images used for conditioning. For an unconditional model, ``x``
+        is simply the latent state :math:`\mathbf{x}`.
+
+        *Note:* :math:`H_{in}` and :math:`W_{in}` do not need to match the
+        ``img_resolution`` parameter, except when ``additive_pos_embed`` is ``True``.
+        In all other cases, the resolution of ``x`` must be smaller than
+        ``img_resolution``.
+    noise_labels : torch.Tensor
+        The noise labels of shape :math:`(B,)`. Used for conditioning on
+        the diffusion noise level.
+    class_labels : torch.Tensor
+        The class labels of shape :math:`(B, \text{label_dim})`. Used for
+        conditioning on any vector-valued quantity. Can pass ``None`` when
+        ``label_dim`` is 0.
+    global_index : torch.Tensor, optional, default=None
+        The global indices of the positional embeddings to use. If neither
+        ``global_index`` nor ``embedding_selector`` are provided, the entire
+        positional embedding grid of shape :math:`(C_{PE}, H, W)` is used.
+        In this case ``x`` must have the same spatial resolution as the positional
+        embedding grid. See :meth:`positional_embedding_indexing` for details.
+    embedding_selector : Callable, optional, default=None
+        A function that selects the positional embeddings to use. See
+        :meth:`positional_embedding_selector` for details.
+    augment_labels : torch.Tensor, optional, default=None
+        The augmentation labels of shape :math:`(B, \text{augment_dim})`. Used
+        for conditioning on any additional vector-valued quantity. Can pass
+        ``None`` when ``augment_dim`` is 0.
+
+    Outputs
+    -------
+    torch.Tensor
+        The output tensor of shape :math:`(B, C_{out}, H_{in}, W_{in})`.
+
+
+    . important::
+        Unlike positional embeddings defined by ``embedding_type`` in the parent
+        class :class:`~hirad.models.SongUNet` that
+        encode the diffusion time-step (or noise level), the positional embeddings in this
+        specialized architecture encode global spatial coordinates of the
+        pixels.
+
+    Examples
     --------
     >>> import torch
-    >>> from physicsnemo.models.diffusion.song_unet import SongUNetPosEmbd
-    >>> from physicsnemo.utils.patching import GridPatching2D
+    >>> from hirad.models. import SongUNetPosEmbd
+    >>> from hirad.utils.patching import GridPatching2D
     >>>
     >>> # Model initialization - in_channels must include both original input channels (2)
     >>> # and the positional embedding channels (N_grid_channels=4 by default)
@@ -582,19 +816,19 @@ class SongUNetPosEmbd(SongUNet):
     >>> patching = GridPatching2D(img_shape=(16, 16), patch_shape=(16, 16))
     >>> global_index = patching.global_index(batch_size=1)
     >>> output_image = model(
-    ...     input_image, noise_labels, class_labels,
-    ...     global_index=global_index
-    ... )
+    ..     input_image, noise_labels, class_labels,
+    ..     global_index=global_index
+    .. )
     >>> output_image.shape
     torch.Size([1, 2, 16, 16])
     >>>
     >>> # Using a custom embedding selector to select all positional embeddings
     >>> def patch_embedding_selector(emb):
-    ...     return patching.apply(emb[None].expand(1, -1, -1, -1))
+    ..     return patching.apply(emb[None].expand(1, -1, -1, -1))
     >>> output_image = model(
-    ...     input_image, noise_labels, class_labels,
-    ...     embedding_selector=patch_embedding_selector
-    ... )
+    ..     input_image, noise_labels, class_labels,
+    ..     embedding_selector=patch_embedding_selector
+    .. )
     >>> output_image.shape
     torch.Size([1, 2, 16, 16])
     """
@@ -618,7 +852,7 @@ class SongUNetPosEmbd(SongUNet):
         encoder_type: str = "standard",
         decoder_type: str = "standard",
         resample_filter: List[int] = [1, 1],
-        gridtype: str = "sinusoidal",
+        gridtype: Literal["sinusoidal", "learnable", "linear", "test"] = "sinusoidal",
         N_grid_channels: int = 4,
         checkpoint_level: int = 0,
         additive_pos_embed: bool = False,
@@ -627,44 +861,59 @@ class SongUNetPosEmbd(SongUNet):
         profile_mode: bool = False,
         amp_mode: bool = False,
         lead_time_mode: bool = False,
-        lead_time_channels: int = None,
+        lead_time_channels: int | None = None,
         lead_time_steps: int = 9,
         prob_channels: List[int] = [],
     ):
+        # Force users to use the correct class for models with lead-time embeddings
+        if not getattr(self, "_is_song_unet_pos_lt_embd", False) and (
+            lead_time_mode or lead_time_channels
+        ):
+            raise ValueError(
+                "For a model with lead-time embeddings, the recommended class is "
+                "`SongUNetPosLtEmbd` instead of `SongUNetPosEmbd`."
+            )
+
         super().__init__(
-            img_resolution,
-            in_channels,
-            out_channels,
-            label_dim,
-            augment_dim,
-            model_channels,
-            channel_mult,
-            channel_mult_emb,
-            num_blocks,
-            attn_resolutions,
-            dropout,
-            label_dropout,
-            embedding_type,
-            channel_mult_noise,
-            encoder_type,
-            decoder_type,
-            resample_filter,
-            checkpoint_level,
-            additive_pos_embed,
-            use_apex_gn,
-            act,
-            profile_mode,
-            amp_mode,
+            img_resolution=img_resolution,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            label_dim=label_dim,
+            augment_dim=augment_dim,
+            model_channels=model_channels,
+            channel_mult=channel_mult,
+            channel_mult_emb=channel_mult_emb,
+            num_blocks=num_blocks,
+            attn_resolutions=attn_resolutions,
+            dropout=dropout,
+            label_dropout=label_dropout,
+            embedding_type=embedding_type,
+            channel_mult_noise=channel_mult_noise,
+            encoder_type=encoder_type,
+            decoder_type=decoder_type,
+            resample_filter=resample_filter,
+            checkpoint_level=checkpoint_level,
+            additive_pos_embed=additive_pos_embed,
+            use_apex_gn=use_apex_gn,
+            act=act,
+            profile_mode=profile_mode,
+            amp_mode=amp_mode,
         )
 
         self.gridtype = gridtype
         self.N_grid_channels = N_grid_channels
-        if self.gridtype == "learnable":
+        if (self.gridtype == "learnable") or (self.N_grid_channels == 0):
             self.pos_embd = self._get_positional_embedding()
         else:
-            self.register_buffer("pos_embd", self._get_positional_embedding().float())
+            self.register_buffer(
+                "pos_embd", self._get_positional_embedding().float(), persistent=False
+            )
         self.lead_time_mode = lead_time_mode
         if self.lead_time_mode:
+            if (lead_time_channels is None) or (lead_time_channels <= 0):
+                raise ValueError(
+                    "`lead_time_channels` must be >= 1 if `lead_time_mode` is enabled."
+                )
             self.lead_time_channels = lead_time_channels
             self.lead_time_steps = lead_time_steps
             self.lt_embd = self._get_lead_time_embedding()
@@ -673,6 +922,12 @@ class SongUNetPosEmbd(SongUNet):
                 self.scalar = torch.nn.Parameter(
                     torch.ones((1, len(self.prob_channels), 1, 1))
                 )
+        else:
+            if lead_time_channels:
+                raise ValueError(
+                    "When `lead_time_mode` is disabled, `lead_time_channels` may not be set."
+                )
+            self.lt_embd = None
 
     def forward(
         self,
@@ -684,24 +939,22 @@ class SongUNetPosEmbd(SongUNet):
         augment_labels=None,
         lead_time_label=None,
     ):
-        with nvtx.annotate(
-            message="SongUNetPosEmbd", color="blue"
-        ) if self.profile_mode else contextlib.nullcontext():
+        with (
+            nvtx.annotate(message="SongUNetPosEmbd", color="blue")
+            if self.profile_mode
+            else contextlib.nullcontext()
+        ):
             if embedding_selector is not None and global_index is not None:
                 raise ValueError(
-                    "Cannot provide both embedding_selector and global_index. "
-                    "embedding_selector is the preferred approach for better efficiency."
+                    "Cannot provide both embedding_selector and global_index."
                 )
 
-            if x.dtype != self.pos_embd.dtype:
-                self.pos_embd = self.pos_embd.to(x.dtype)
-
             # Append positional embedding to input conditioning
-            if self.pos_embd is not None:
+            if (self.pos_embd is not None) or (self.lt_embd is not None):
                 # Select positional embeddings with a selector function
                 if embedding_selector is not None:
                     selected_pos_embd = self.positional_embedding_selector(
-                        x, embedding_selector
+                        x, embedding_selector, lead_time_label=lead_time_label
                     )
                 # Select positional embeddings using global indices (selects all
                 # embeddings if global_index is None)
@@ -709,122 +962,129 @@ class SongUNetPosEmbd(SongUNet):
                     selected_pos_embd = self.positional_embedding_indexing(
                         x, global_index=global_index, lead_time_label=lead_time_label
                     )
-                x = torch.cat((x, selected_pos_embd), dim=1)
+                x = torch.cat((x, selected_pos_embd.to(x.dtype)), dim=1)
 
             out = super().forward(x, noise_labels, class_labels, augment_labels)
 
-            if self.lead_time_mode:
+            if self.lead_time_mode and self.prob_channels:
                 # if training mode, let crossEntropyLoss do softmax. The model outputs logits.
                 # if eval mode, the model outputs probability
-                all_channels = list(range(out.shape[1]))  # [0, 1, 2, ..., 10]
-                scalar_channels = [
-                    item for item in all_channels if item not in self.prob_channels
-                ]
-                if self.prob_channels and (not self.training):
-                    out_final = torch.cat(
-                        (
-                            out[:, scalar_channels],
-                            (out[:, self.prob_channels] * self.scalar).softmax(dim=1),
-                        ),
-                        dim=1,
-                    )
-                elif self.prob_channels and self.training:
-                    out_final = torch.cat(
-                        (
-                            out[:, scalar_channels],
-                            (out[:, self.prob_channels] * self.scalar),
-                        ),
-                        dim=1,
-                    )
+                scalar = self.scalar
+                if out.dtype != scalar.dtype:
+                    scalar = scalar.to(out.dtype)
+                if self.training:
+                    out[:, self.prob_channels] = out[:, self.prob_channels] * scalar
                 else:
-                    out_final = out
-                return out_final
-
+                    out[:, self.prob_channels] = (
+                        (out[:, self.prob_channels] * scalar)
+                        .softmax(dim=1)
+                        .to(out.dtype)
+                    )
             return out
 
     def positional_embedding_indexing(
         self,
         x: torch.Tensor,
         global_index: Optional[torch.Tensor] = None,
-        lead_time_label=None,
+        lead_time_label: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Select positional embeddings using global indices.
+        r"""Select positional embeddings using global indices.
 
-        This method either uses global indices to select specific embeddings or expands
-        the embeddings for the full input when no indices are provided.
+        This method uses global indices to select specific subset of the
+        positional embedding grid and/or the lead-time embedding grid (called
+        *patches*). If no indices are provided, the entire embedding grid is returned.
+        The positional embedding grid is returned if ``N_grid_channels > 0``, while
+        the lead-time embedding grid is returned if ``lead_time_mode == True``. If
+        both positional and lead-time embedding are enabled, both are returned
+        (concatenated). If neither is enabled, this function should not be called;
+        doing so will raise a ValueError.
 
-        Typically used in patch-based training, where the batch dimension
-        contains multiple patches extracted from a larger image.
-
-        Arguments
-        ---------
+        Parameters
+        ----------
         x : torch.Tensor
-            Input tensor of shape (B, C, H, W), used to determine batch size
-            and device.
-        global_index : Optional[torch.Tensor]
-            Optional tensor of indices for selecting embeddings. These should
-            correspond to the spatial indices of the batch elements in the
-            input tensor x. When provided, should have shape (P, 2, H, W) where
-            the second dimension contains y,x coordinates (indices of the
-            positional embedding grid).
+            Input tensor of shape :math:`(P \times B, C, H_{in}, W_{in})`.
+            Only used to determine batch size :math:`B` and device.
+        global_index : Optional[torch.Tensor], default=None
+            Tensor of shape :math:`(P, 2, H_{in}, W_{in})` that correspond to
+            the patches to extract from the positional embedding grid.
+            :math:`P` is the number of distinct patches in the input tensor ``x``.
+            The channel dimension should contain :math:`j`, :math:`i` indices that
+            should represent the indices of the pixels to extract from the
+            embedding grid.
+        lead_time_label : Optional[torch.Tensor], default=None
+            Tensor of shape :math:`(B,)` that corresponds to the lead-time
+            label for each batch element. Only used if ``lead_time_mode`` is True.
 
         Returns
         -------
         torch.Tensor
-            Selected positional embeddings with shape:
-            - If global_index provided: (B, N_pe, H, W)
-            - If global_index is None: (B, N_pe, H_pe, W_pe)
-            where N_pe is the number of positional embedding channels, and H_pe
-            and W_pe are the height and width of the positional embedding grid.
+            Selected embeddings with shape :math:`(P \times B, C_{PE} [+
+            C_{LT}], H_{in}, W_{in})`. :math:`C_{PE}` is the number of
+            embedding channels in the positional embedding grid, and
+            :math:`C_{LT}` is the number of embedding channels in the lead-time
+            embedding grid. If ``lead_time_label`` is provided, the lead-time
+            embedding channels are included. If ``global_index`` is `None`,
+            :math:`P = 1` is assumed, and the positional embedding grid is
+            duplicated :math:`B` times and returned with shape
+            :math:`(B, C_{PE} [+ C_{LT}], H, W)`.
 
         Example
         -------
         >>> # Create global indices using patching utility:
-        >>> from physicsnemo.utils.patching import GridPatching2D
+        >>> from hirad.utils.patching import GridPatching2D
         >>> patching = GridPatching2D(img_shape=(16, 16), patch_shape=(8, 8))
         >>> global_index = patching.global_index(batch_size=3)
         >>> print(global_index.shape)
         torch.Size([4, 2, 8, 8])
 
-        See Also
-        --------
-        :meth:`physicsnemo.utils.patching.RandomPatching2D.global_index`
-            For generating random patch indices.
-        :meth:`physicsnemo.utils.patching.GridPatching2D.global_index`
-            For generating deterministic grid-based patch indices.
-            See these methods for possible ways to generate the global_index parameter.
+        Notes
+        -----
+            - This method is typically used in patch-based diffusion (or
+              multi-diffusion), where a large input image is split into
+              multiple patches. The batch dimension of the input tensor contains the patches.
+              Patches are processed independently by the model, and the ``global_index`` parameter
+              is used to select the grid of positional embeddings corresponding
+              to each patch.
+            - See this method from :class:`hirad.utils.patching.BasePatching2D`
+              for generating the ``global_index`` parameter:
+              :meth:`~hirad.utils.patching.BasePatching2D.global_index`.
         """
+
+        # dtype casting of embeddings
+        pos_embd = self.pos_embd
+        if (pos_embd is not None) and (x.dtype != pos_embd.dtype):
+            pos_embd = pos_embd.to(x.dtype)
+        lt_embd = self.lt_embd
+        if (lt_embd is not None) and (x.dtype != lt_embd.dtype):
+            lt_embd = lt_embd.to(x.dtype)
+
         # If no global indices are provided, select all embeddings and expand
         # to match the batch size of the input
-        if x.dtype != self.pos_embd.dtype:
-            self.pos_embd = self.pos_embd.to(x.dtype)
-
         if global_index is None:
-            if self.lead_time_mode:
-                selected_pos_embd = []
-                if self.pos_embd is not None:
-                    selected_pos_embd.append(
-                        self.pos_embd[None].expand((x.shape[0], -1, -1, -1))
+            selected_embd = []
+            # Select positional embedding
+            if pos_embd is not None:
+                selected_embd.append(pos_embd[None].expand((x.shape[0], -1, -1, -1)))
+            # Select lead-time embedding
+            if lt_embd is not None:
+                if lead_time_label is None:
+                    raise ValueError(
+                        "`lead_time_label` must be provided when `lt_embd` is not None."
                     )
-                if self.lt_embd is not None:
-                    selected_pos_embd.append(
-                        torch.reshape(
-                            self.lt_embd[lead_time_label.int()],
-                            (
-                                x.shape[0],
-                                self.lead_time_channels,
-                                self.img_shape_y,
-                                self.img_shape_x,
-                            ),
-                        )
+                selected_embd.append(
+                    torch.reshape(
+                        lt_embd[lead_time_label.int()],
+                        (
+                            x.shape[0],
+                            self.lead_time_channels,
+                            self.img_shape_y,
+                            self.img_shape_x,
+                        ),
                     )
-                if len(selected_pos_embd) > 0:
-                    selected_pos_embd = torch.cat(selected_pos_embd, dim=1)
-            else:
-                selected_pos_embd = self.pos_embd[None].expand(
-                    (x.shape[0], -1, -1, -1)
-                )  # (B, N_pe, H, W)
+                )
 
+        # If global indices are provided, select the embeddings corresponding
+        # to the patches
         else:
             P = global_index.shape[0]
             B = x.shape[0] // P
@@ -834,102 +1094,160 @@ class SongUNetPosEmbd(SongUNet):
             global_index = torch.reshape(
                 torch.permute(global_index, (1, 0, 2, 3)), (2, -1)
             )  # (P, 2, X, Y) to (2, P*X*Y)
-            selected_pos_embd = self.pos_embd[
-                :, global_index[0], global_index[1]
-            ]  # (N_pe, P*X*Y)
-            selected_pos_embd = torch.permute(
-                torch.reshape(selected_pos_embd, (self.pos_embd.shape[0], P, H, W)),
-                (1, 0, 2, 3),
-            )  # (P, N_pe, X, Y)
 
-            selected_pos_embd = selected_pos_embd.repeat(
-                B, 1, 1, 1
-            )  # (B*P, N_pe, X, Y)
+            selected_embd = []
 
-            # Append positional and lead time embeddings to input conditioning
-            if self.lead_time_mode:
-                embeds = []
-                if self.pos_embd is not None:
-                    embeds.append(selected_pos_embd)  # reuse code below
-                if self.lt_embd is not None:
-                    lt_embds = self.lt_embd[
-                        lead_time_label.int()
-                    ]  # (B, self.lead_time_channels, self.img_shape_y, self.img_shape_x),
+            # Select positional embedding
+            if pos_embd is not None:
+                selected_pos_embd = pos_embd[
+                    :, global_index[0], global_index[1]
+                ]  # (C_pe, P*X*Y)
+                selected_pos_embd = torch.permute(
+                    torch.reshape(selected_pos_embd, (pos_embd.shape[0], P, H, W)),
+                    (1, 0, 2, 3),
+                )  # (P, C_pe, X, Y)
+                selected_pos_embd = selected_pos_embd.repeat(
+                    B, 1, 1, 1
+                )  # (B*P, C_pe, X, Y)
+                selected_embd.append(selected_pos_embd)
 
-                    selected_lt_pos_embd = lt_embds[
-                        :, :, global_index[0], global_index[1]
-                    ]  # (B, N_lt, P*X*Y)
-                    selected_lt_pos_embd = torch.reshape(
-                        torch.permute(
-                            torch.reshape(
-                                selected_lt_pos_embd,
-                                (B, self.lead_time_channels, P, H, W),
-                            ),
-                            (0, 2, 1, 3, 4),
-                        ).contiguous(),
-                        (B * P, self.lead_time_channels, H, W),
-                    )  # (B*P, N_pe, X, Y)
-                    embeds.append(selected_lt_pos_embd)
+            # Select lead-time embedding
+            if lt_embd is not None:
+                if lead_time_label is None:
+                    raise ValueError(
+                        "`lead_time_label` must be provided when `lt_embd` is not None."
+                    )
+                selected_lt_embd = lt_embd[
+                    lead_time_label.int()
+                ]  # (B, self.lead_time_channels, self.img_shape_y, self.img_shape_x),
+                selected_lt_embd = selected_lt_embd[
+                    :, :, global_index[0], global_index[1]
+                ]  # (B, C_lt, P*X*Y)
+                selected_lt_embd = torch.reshape(
+                    torch.permute(
+                        torch.reshape(
+                            selected_lt_embd,
+                            (B, self.lead_time_channels, P, H, W),
+                        ),
+                        (0, 2, 1, 3, 4),
+                    ).contiguous(),
+                    (B * P, self.lead_time_channels, H, W),
+                )  # (B*P, C_pe, X, Y)
+                selected_embd.append(selected_lt_embd)
 
-                if len(embeds) > 0:
-                    selected_pos_embd = torch.cat(embeds, dim=1)
+        # Concatenate all selected embeddings
+        if len(selected_embd) > 0:
+            selected_embd = torch.cat(selected_embd, dim=1)
+        else:
+            raise ValueError(
+                "`positional_embedding_indexing` should not be called when neither "
+                "lead-time nor positional embeddings are used."
+            )
 
-        return selected_pos_embd
-    
+        return selected_embd
+
     def positional_embedding_selector(
         self,
         x: torch.Tensor,
         embedding_selector: Callable[[torch.Tensor], torch.Tensor],
+        lead_time_label=None,
     ) -> torch.Tensor:
-        """Select positional embeddings using a selector function.
+        r"""Select positional embeddings using a selector function.
 
-        Similar to positional_embedding_indexing, but uses a selector function
-        to select the embeddings. This method provides a more efficient way to
-        select embeddings for batches of data.
-        Typically used with patch-based processing, where the batch dimension
-        contains multiple patches extracted from a larger image.
+        Similar to :meth:`positional_embedding_indexing`, but instead uses a selector
+        function to select the embeddings.
 
-        Arguments
-        ---------
+        Parameters
+        ----------
         x : torch.Tensor
-            Input tensor of shape (B, C, H, W) only used to determine dtype and
-            device.
-        embedding_selector : Callable
-            Function that takes as input an embedding tensor of shape (N_pe,
-            H_pe, W_pe) and returns selected embeddings with shape (batch_size, N_pe, H, W).
-            Each selected embedding should correspond to the positional
-            information of each batch element in x.
-            For patch-based processing, typically this should be based on
-            :meth:`physicsnemo.utils.patching.BasePatching2D.apply` method to
+            Input tensor of shape :math:`(P \times B, C, H_{in}, W_{in})`.
+            Only used to determine the dtype.
+        embedding_selector : Callable[[torch.Tensor], torch.Tensor]
+            Function that takes as input the entire embedding grid of shape
+            :math:`(C_{PE}, H, W)` (or :math:`(B, C_{LT}, H, W)`
+            when ``lead_time_label`` is provided) and returns selected embeddings with shape
+            :math:`(P \times B, C_{PE}, H_{in}, W_{in})` (or :math:`(P \times B, C_{LT}, H_{in}, W_{in})`
+            when ``lead_time_label`` is provided).
+            Each selected embedding should correspond to the portion of the embedding grid
+            that corresponds to the batch element in ``x``.
+            Typically this should be based on
+            :meth:`hirad.utils.patching.BasePatching2D.apply` method to
             maintain consistency with patch extraction.
-        embeds : Optional[torch.Tensor]
-            Optional tensor for combined positional and lead time embeddings tensor
+        lead_time_label : Optional[torch.Tensor], default=None
+            Tensor of shape :math:`(B,)` that corresponds to the lead-time
+            label for each batch element. Only used if ``lead_time_mode`` is ``True``.
 
         Returns
         -------
         torch.Tensor
-            Selected positional embeddings with shape (B, N_pe, H, W)
-            where N_pe is the number of positional embedding channels.
+            A tensor of shape :math:`(P \times B, C_{PE} [+ C_{LT}], H_{in}, W_{in})`.
+            :math:`C_{PE}` is the number of embedding channels in the positional embedding grid,
+            and :math:`C_{LT}` is the number of embedding channels in the lead-time embedding grid.
+            If ``lead_time_label`` is provided, the lead-time embedding channels are included.
+
+        Notes
+        -----
+            - This method is typically used in patch-based diffusion (or
+              multi-diffusion), where a large input image is split into
+              multiple patches. The batch dimension of the input tensor contains the patches.
+              Patches are processed independently by the model, and the ``embedding_selector`` function is used
+              to select the grid of positional embeddings corresponding to each
+              patch.
+            - See the method
+              :meth:`~hirad.utils.patching.BasePatching2D.apply` from
+              :class:`hirad.utils.patching.BasePatching2D` for generating
+              the ``embedding_selector`` parameter, as well as the example
+              below.
 
         Example
         -------
         >>> # Define a selector function with a patching utility:
-        >>> from physicsnemo.utils.patching import GridPatching2D
+        >>> from hirad.utils.patching import GridPatching2D
         >>> patching = GridPatching2D(img_shape=(16, 16), patch_shape=(8, 8))
-        >>> batch_size = 4
+        >>> B = 4
         >>> def embedding_selector(emb):
-        ...     return patching.apply(emb[None].expand(batch_size, -1, -1, -1))
+        ..     return patching.apply(emb.expand(B, -1, -1, -1))
         >>>
-
-        See Also
-        --------
-        :meth:`physicsnemo.utils.patching.BasePatching2D.apply`
-            For the base patching method typically used in embedding_selector.
         """
-        if x.dtype != self.pos_embd.dtype:
-            self.pos_embd = self.pos_embd.to(x.dtype)
 
-        return embedding_selector(self.pos_embd)  # (B, N_pe, H, W)
+        # dtype casting of embeddings
+        pos_embd = self.pos_embd
+        if (pos_embd is not None) and (x.dtype != pos_embd.dtype):
+            pos_embd = pos_embd.to(x.dtype)  # (C_PE, H, W)
+        lt_embd = self.lt_embd
+        if (lt_embd is not None) and (x.dtype != lt_embd.dtype):
+            lt_embd = lt_embd.to(x.dtype)  # (lead_time_steps, C_LT, H, W)
+
+        embeddings: list[torch.Tensor] = []
+
+        # Select positional embedding
+        if pos_embd is not None:
+            selected_pos_embd = embedding_selector(pos_embd)  # (P * B, C_PE, H_p, W_p)
+            embeddings.append(selected_pos_embd)
+
+        # Select lead-time embedding
+        if lt_embd is not None:
+            if lead_time_label is None:
+                raise ValueError(
+                    "`lead_time_label` must be provided when `lt_embd` is not None."
+                )
+            selected_lt_embd: torch.Tensor = lt_embd[
+                lead_time_label.int()
+            ]  # (B, C_LT, H, W)
+            selected_lt_embd = embedding_selector(
+                selected_lt_embd
+            )  # (P * B, C_LT, H_p, W_p)
+            embeddings.append(selected_lt_embd)
+
+        if len(embeddings) > 0:
+            embeddings: torch.Tensor = torch.cat(embeddings, dim=1)
+        else:
+            raise ValueError(
+                "`positional_embedding_selector` should not be called when neither "
+                "lead-time nor positional embeddings are used."
+            )
+
+        return embeddings
 
     def _get_positional_embedding(self):
         if self.N_grid_channels == 0:
@@ -937,32 +1255,28 @@ class SongUNetPosEmbd(SongUNet):
         elif self.gridtype == "learnable":
             grid = torch.nn.Parameter(
                 torch.randn(self.N_grid_channels, self.img_shape_y, self.img_shape_x)
-            ) # (N_grid_channels, img_shape_y, img_shape_x)
+            )  # (N_grid_channels, img_shape_y, img_shape_x)
         elif self.gridtype == "linear":
             if self.N_grid_channels != 2:
                 raise ValueError("N_grid_channels must be set to 2 for gridtype linear")
-            x = np.meshgrid(np.linspace(-1, 1, self.img_shape_y))
-            y = np.meshgrid(np.linspace(-1, 1, self.img_shape_x))
-            grid_x, grid_y = np.meshgrid(y, x)
+            y = np.meshgrid(np.linspace(-1, 1, self.img_shape_y))
+            x = np.meshgrid(np.linspace(-1, 1, self.img_shape_x))
+            grid_y, grid_x = np.meshgrid(x, y)
             grid = torch.from_numpy(
-                np.stack((grid_x, grid_y), axis=0)
+                np.stack((grid_y, grid_x), axis=0)
             )  # (2, img_shape_y, img_shape_x)
             grid.requires_grad = False
         elif self.gridtype == "sinusoidal" and self.N_grid_channels == 4:
-            # print('sinusuidal grid added ......')
-            x1 = np.meshgrid(np.sin(np.linspace(0, 2 * np.pi, self.img_shape_y)))
-            x2 = np.meshgrid(np.cos(np.linspace(0, 2 * np.pi, self.img_shape_y)))
-            y1 = np.meshgrid(np.sin(np.linspace(0, 2 * np.pi, self.img_shape_x)))
-            y2 = np.meshgrid(np.cos(np.linspace(0, 2 * np.pi, self.img_shape_x)))
-            grid_x1, grid_y1 = np.meshgrid(y1, x1)
-            grid_x2, grid_y2 = np.meshgrid(y2, x2)
-            grid = torch.squeeze(
-                torch.from_numpy(
-                    np.expand_dims(
-                        np.stack((grid_x1, grid_y1, grid_x2, grid_y2), axis=0), axis=0
-                    )
-                )
-            ) # (4, img_shape_y, img_shape_x)
+            # print('sinusuidal grid added ...')
+            x1 = np.meshgrid(np.sin(np.linspace(0, 2 * np.pi, self.img_shape_x)))
+            x2 = np.meshgrid(np.cos(np.linspace(0, 2 * np.pi, self.img_shape_x)))
+            y1 = np.meshgrid(np.sin(np.linspace(0, 2 * np.pi, self.img_shape_y)))
+            y2 = np.meshgrid(np.cos(np.linspace(0, 2 * np.pi, self.img_shape_y)))
+            grid_x1, grid_y1 = np.meshgrid(x1, y1)
+            grid_x2, grid_y2 = np.meshgrid(x2, y2)
+            grid = torch.from_numpy(
+                np.stack((grid_x1, grid_y1, grid_x2, grid_y2), axis=0)
+            )
             grid.requires_grad = False
         elif self.gridtype == "sinusoidal" and self.N_grid_channels != 4:
             if self.N_grid_channels % 4 != 0:
@@ -983,14 +1297,14 @@ class SongUNetPosEmbd(SongUNet):
             )  # (N_grid_channels, img_shape_y, img_shape_x)
             grid.requires_grad = False
         elif self.gridtype == "test" and self.N_grid_channels == 2:
-            idx_x = torch.arange(self.img_shape_y)
-            idx_y = torch.arange(self.img_shape_x)
-            mesh_x, mesh_y = torch.meshgrid(idx_x, idx_y)
-            grid = torch.stack((mesh_x, mesh_y), dim=0)  # (2, img_shape_y, img_shape_x)
+            idx_x = torch.arange(self.img_shape_x)
+            idx_y = torch.arange(self.img_shape_y)
+            mesh_y, mesh_x = torch.meshgrid(idx_y, idx_x)
+            grid = torch.stack((mesh_y, mesh_x), dim=0)  # (2, img_shape_y, img_shape_x)
         else:
             raise ValueError("Gridtype not supported.")
         return grid
-    
+
     def _get_lead_time_embedding(self):
         if (self.lead_time_steps is None) or (self.lead_time_channels is None):
             return None
@@ -1005,107 +1319,115 @@ class SongUNetPosEmbd(SongUNet):
         return grid
 
 
+# TODO: the entire logic of the lead-time logic should be moved there. We
+# should use subclass of the SongUNetPosEmbd class and specialize it for
+# lead-time aware embeddings.
 class SongUNetPosLtEmbd(SongUNetPosEmbd):
-    """
-    This model is adapted from SongUNetPosEmbd, with the incorporation of lead-time aware
-    embeddings. The lead-time embedding is activated by setting the
-    `lead_time_channels` and `lead_time_steps` parameters.
+    r"""
+    This specialized architecture extends
+    :class:`~hirad.models.SongUNetPosEmbd` with two
+    additional capabilities:
 
-    Like SongUNetPosEmbd, this model provides two methods for selecting positional embeddings:
-    1. Using a selector function (preferred method). See
-       :meth:`positional_embedding_selector` for details.
-    2. Using global indices. See :meth:`positional_embedding_indexing` for
-       details.
+    1. The model can be conditioned on lead-time labels. These labels encode
+       *physical* time information, such as a forecasting horizon.
+
+    2. Similarly to the parent ``SongUNetPosEmbd``, this model predicts
+       regression targets, but it can also produce classification predictions.
+       More precisely, some of the output channels are probability outputs, that
+       are passed through a softmax activation function. This is useful for
+       multi-task applications, where the objective is a combination of both
+       regression and classification losses.
+
+    The mechanism to condition on lead-time labels is implemented by:
+
+    • First generating a grid of learnable lead-time embeddings of shape
+      :math:`(\text{lead_time_steps}, C_{LT}, H, W)`. The spatial resolution of
+      the lead-time embeddings is the same as the input/output image.
+
+    • Then, given an input ``x``, select the lead-time embeddings that
+      corresponds to the lead-times associated with the samples in the input
+      ``x``.
+
+    • Finally, concatenate channels-wise the selected lead-time embeddings and
+      positional embeddings to the input ``x`` and pass them to the U-Net network.
+
+    Most parameters are similar to the parent
+    :class:`~hirad.models.SongUNetPosEmbd`, at the
+    exception of the ones listed below.
 
     Parameters
     -----------
-    img_resolution : Union[List[int], int]
-        The resolution of the input/output image. Can be a single int for square images
-        or a list [height, width] for rectangular images.
     in_channels : int
-        Number of channels in the input image.
-    out_channels : int
-        Number of channels in the output image.
-    label_dim : int, optional
-        Number of class labels; 0 indicates an unconditional model. By default 0.
-    augment_dim : int, optional
-        Dimensionality of augmentation labels; 0 means no augmentation. By default 0.
-    model_channels : int, optional
-        Base multiplier for the number of channels across the network. By default 128.
-    channel_mult : List[int], optional
-        Per-resolution multipliers for the number of channels. By default [1,2,2,2,2].
-    channel_mult_emb : int, optional
-        Multiplier for the dimensionality of the embedding vector. By default 4.
-    num_blocks : int, optional
-        Number of residual blocks per resolution. By default 4.
-    attn_resolutions : List[int], optional
-        Resolutions at which self-attention layers are applied. By default [28].
-    dropout : float, optional
-        Dropout probability applied to intermediate activations. By default 0.13.
-    label_dropout : float, optional
-        Dropout probability of class labels for classifier-free guidance. By default 0.0.
-    embedding_type : str, optional
-        Timestep embedding type: 'positional' for DDPM++, 'fourier' for NCSN++.
-        By default 'positional'.
-    channel_mult_noise : int, optional
-        Timestep embedding size: 1 for DDPM++, 2 for NCSN++. By default 1.
-    encoder_type : str, optional
-        Encoder architecture: 'standard' for DDPM++, 'residual' for NCSN++, 'skip' for skip connections.
-        By default 'standard'.
-    decoder_type : str, optional
-        Decoder architecture: 'standard' or 'skip' for skip connections. By default 'standard'.
-    resample_filter : List[int], optional
-        Resampling filter coefficients: [1,1] for DDPM++, [1,3,3,1] for NCSN++. By default [1,1].
-    gridtype : str, optional
-        Type of positional grid to use: 'sinusoidal', 'learnable', 'linear', or 'test'.
-        Controls how positional information is encoded. By default 'sinusoidal'.
-    N_grid_channels : int, optional
-        Number of channels in the positional embedding grid. For 'sinusoidal' must be 4 or
-        multiple of 4. For 'linear' must be 2. By default 4.
-    lead_time_channels : int, optional
-        Number of channels in the lead time embedding. These are learned embeddings that
-        encode temporal forecast information. By default None.
-    lead_time_steps : int, optional
-        Number of discrete lead time steps to support. Each step gets its own learned
-        embedding vector. By default 9.
-    prob_channels : List[int], optional
-        Indices of probability output channels that should use softmax activation.
-        Used for classification outputs. By default empty list.
-    checkpoint_level : int, optional
-        Number of layers that should use gradient checkpointing (0 disables checkpointing).
-        Higher values trade memory for computation. By default 0.
-    additive_pos_embed : bool, optional
-        If True, adds a learned positional embedding after the first convolution layer.
-        Used in StormCast model. By default False.
-    use_apex_gn : bool, optional
-        A boolean flag indicating whether we want to use Apex GroupNorm for NHWC layout.
-        Need to set this as False on cpu. Defaults to False.
-    act : str, optional
-        The activation function to use when fusing activation with GroupNorm. Defaults to None.
-    profile_mode:
-        A boolean flag indicating whether to enable all nvtx annotations during profiling.
-    amp_mode : bool, optional
-        A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
+        Number of channels :math:`C_{in} + C_{PE} + C_{LT}` in the image passed to the U-Net.
 
+        *Important:* in comparison to the base :class:`~hirad.models.SongUNet`,
+        this parameter should also include the number of channels in the positional embedding grid
+        :math:`C_{PE}` and the number of channels in the lead-time embedding grid
+        :math:`C_{LT}`.
+    lead_time_channels : int, optional, default=None
+        Number of channels :math:`C_{LT}` in the lead time embedding. These are
+        learned embeddings that encode *physical* time information.
+    lead_time_steps : int, optional, default=9
+        Number of discrete lead time steps to support. Each step gets its own
+        learned embedding vector of shape :math:`(C_{LT}, H, W)`.
+    prob_channels : List[int], optional, default=[]
+        Indices of channels that are probability outputs (or *classification* predictions),
+        In training mode, the model outputs logits for these probability
+        channels, and in eval mode, the model applies a softmax to outputs the probabilities.
 
-    Note
+    Forward
+    -------
+    x : torch.Tensor
+        The input image of shape :math:`(B, C_{in}, H_{in}, W_{in})`,
+        where :math:`H_{in}` and :math:`W_{in}` are the spatial dimensions of
+        the input image (does not need to be the full image).
+    noise_labels : torch.Tensor
+        The noise labels of shape :math:`(B,)`. Used for conditioning on
+        the diffusion noise level.
+    class_labels : torch.Tensor
+        The class labels of shape :math:`(B, \text{label_dim})`. Used for
+        conditioning on any vector-valued quantity. Can pass ``None`` when
+        ``label_dim`` is 0.
+    global_index : torch.Tensor, optional, default=None
+        The global indices of the positional embeddings to use. See
+        :meth:`positional_embedding_indexing` for details. If neither
+        ``global_index`` nor ``embedding_selector`` are provided, the entire
+        positional embedding grid is used.
+    embedding_selector : Callable, optional, default=None
+        A function that selects the positional embeddings to use. See
+        :meth:`positional_embedding_selector` for details.
+    augment_labels : torch.Tensor, optional, default=None
+        The augmentation labels of shape :math:`(B, \text{augment_dim})`. Used
+        for conditioning on any additional vector-valued quantity.
+    lead_time_label : torch.Tensor, optional, default=None
+        The lead-time labels of shape :math:`(B,)`. Used for selecting
+        lead-time embeddings. It should contain the indices of the lead-time
+        embeddings that correspond to the lead-time of each sample in the batch.
+
+    Outputs
+    -------
+    torch.Tensor
+        The output tensor of shape :math:`(B, C_{out}, H_{in}, W_{in})`.
+
+    Notes
     -----
-    Equivalent to the original implementation by Song et al., available at
-    https://github.com/yang-song/score_sde_pytorch
+        - The lead-time embeddings differ from the diffusion time embeddings used in
+          :class:`~hirad.models.SongUNet` class, as they do not
+          encode diffusion time-step but *physical forecast time*.
 
     Example
     --------
     >>> import torch
-    >>> from physicsnemo.models.diffusion.song_unet import SongUNetPosLtEmbd
-    >>> from physicsnemo.utils.patching import GridPatching2D
+    >>> from hirad.models. import SongUNetPosLtEmbd
+    >>> from hirad.utils.patching import GridPatching2D
     >>>
     >>> # Model initialization - in_channels must include original input channels (2),
     >>> # positional embedding channels (N_grid_channels=4 by default) and
     >>> # lead time embedding channels (4)
     >>> model = SongUNetPosLtEmbd(
-    ...     img_resolution=16, in_channels=2+4+4, out_channels=2,
-    ...     lead_time_channels=4, lead_time_steps=9
-    ... )
+    ..     img_resolution=16, in_channels=2+4+4, out_channels=2,
+    ..     lead_time_channels=4, lead_time_steps=9
+    .. )
     >>> noise_labels = torch.randn([1])
     >>> class_labels = torch.randint(0, 1, (1, 1))
     >>> # The input has only the original 2 channels - positional embeddings and
@@ -1113,9 +1435,9 @@ class SongUNetPosLtEmbd(SongUNetPosEmbd):
     >>> input_image = torch.ones([1, 2, 16, 16])
     >>> lead_time_label = torch.tensor([3])
     >>> output_image = model(
-    ...     input_image, noise_labels, class_labels,
-    ...     lead_time_label=lead_time_label
-    ... )
+    ..     input_image, noise_labels, class_labels,
+    ..     lead_time_label=lead_time_label
+    .. )
     >>> output_image.shape
     torch.Size([1, 2, 16, 16])
     >>>
@@ -1123,25 +1445,12 @@ class SongUNetPosLtEmbd(SongUNetPosEmbd):
     >>> patching = GridPatching2D(img_shape=(16, 16), patch_shape=(16, 16))
     >>> global_index = patching.global_index(batch_size=1)
     >>> output_image = model(
-    ...     input_image, noise_labels, class_labels,
-    ...     lead_time_label=lead_time_label,
-    ...     global_index=global_index
-    ... )
+    ..     input_image, noise_labels, class_labels,
+    ..     lead_time_label=lead_time_label,
+    ..     global_index=global_index
+    .. )
     >>> output_image.shape
     torch.Size([1, 2, 16, 16])
-
-    # NOTE: commented out doctest for embedding_selector due to compatibility issue
-    # >>>
-    # >>> # Using custom embedding selector to select all the positional and lead time embeddings
-    # >>> def patch_embedding_selector(emb):
-    # ...     return patching.apply(emb[None].expand(1, -1, -1, -1))
-    # >>> output_image = model(
-    # ...     input_image, noise_labels, class_labels,
-    # ...     lead_time_label=lead_time_label,
-    # ...     embedding_selector=patch_embedding_selector
-    # ... )
-    # >>> output_image.shape
-    # torch.Size([1, 2, 16, 16])
 
     """
 
@@ -1166,7 +1475,7 @@ class SongUNetPosLtEmbd(SongUNetPosEmbd):
         resample_filter: List[int] = [1, 1],
         gridtype: str = "sinusoidal",
         N_grid_channels: int = 4,
-        lead_time_channels: int = None,
+        lead_time_channels: int | None = None,
         lead_time_steps: int = 9,
         prob_channels: List[int] = [],
         checkpoint_level: int = 0,
@@ -1176,36 +1485,37 @@ class SongUNetPosLtEmbd(SongUNetPosEmbd):
         profile_mode: bool = False,
         amp_mode: bool = False,
     ):
+        self._is_song_unet_pos_lt_embd = True
         super().__init__(
-            img_resolution,
-            in_channels,
-            out_channels,
-            label_dim,
-            augment_dim,
-            model_channels,
-            channel_mult,
-            channel_mult_emb,
-            num_blocks,
-            attn_resolutions,
-            dropout,
-            label_dropout,
-            embedding_type,
-            channel_mult_noise,
-            encoder_type,
-            decoder_type,
-            resample_filter,
-            gridtype,
-            N_grid_channels,
-            checkpoint_level,
-            additive_pos_embed,
-            use_apex_gn,
-            act,
-            profile_mode,
-            amp_mode,
-            True,  # Note: lead_time_mode=True is enforced here
-            lead_time_channels,
-            lead_time_steps,
-            prob_channels,
+            img_resolution=img_resolution,
+            in_channels=in_channels,
+            out_channels=out_channels,
+            label_dim=label_dim,
+            augment_dim=augment_dim,
+            model_channels=model_channels,
+            channel_mult=channel_mult,
+            channel_mult_emb=channel_mult_emb,
+            num_blocks=num_blocks,
+            attn_resolutions=attn_resolutions,
+            dropout=dropout,
+            label_dropout=label_dropout,
+            embedding_type=embedding_type,
+            channel_mult_noise=channel_mult_noise,
+            encoder_type=encoder_type,
+            decoder_type=decoder_type,
+            resample_filter=resample_filter,
+            gridtype=gridtype,
+            N_grid_channels=N_grid_channels,
+            checkpoint_level=checkpoint_level,
+            additive_pos_embed=additive_pos_embed,
+            use_apex_gn=use_apex_gn,
+            act=act,
+            profile_mode=profile_mode,
+            amp_mode=amp_mode,
+            lead_time_mode=True,  # Note: lead_time_mode=True is enforced here
+            lead_time_channels=lead_time_channels,
+            lead_time_steps=lead_time_steps,
+            prob_channels=prob_channels,
         )
 
     def forward(
@@ -1228,4 +1538,5 @@ class SongUNetPosLtEmbd(SongUNetPosEmbd):
             lead_time_label=lead_time_label,
         )
 
-    # Nothing else is re-implemented, because everything is already in the parent SongUNetPosEmb
+    # Nothing else is re-implemented, because everything is already in the
+    # parent SongUNetPosEmbd
