@@ -152,13 +152,13 @@ class GridData():
         Interpolate values from original points to target points.
         
         Args:
-            values: Array of shape (n_samples, n_original_points) containing values
+            values: Array of shape (n_channels, n_original_points) or (batch, n_channels, n_original_points) containing values
                    at original point locations to be interpolated.
             fill_value: Value to use for target points outside the convex hull.
                        Defaults to np.nan.
         
         Returns:
-            Array of shape (n_samples, n_target_points) with interpolated values.
+            Array of shape (n_channels, n_target_points) or (batch, n_channels, n_original_points) with interpolated values.
             
         Raises:
             ValueError: If values shape is incompatible with original points.
@@ -168,6 +168,12 @@ class GridData():
                 f"Expected values with shape (..., {len(self.longitudes_orig)}), "
                 f"got shape {values.shape}"
             )
+
+        # Save original shape for reshaping later
+        orig_shape = values.shape
+
+        # In case that there is a batch dimension, flatten it for easier indexing
+        values = values.reshape(-1, values.shape[-1])  # shape (batch*n_channels, n_original_points)
         
         # Find the corner values of each simplice
         values_simplices = values[:,self._tri.simplices]
@@ -182,9 +188,9 @@ class GridData():
 
         # Handle points outside convex hull
         if (not self.is_torch and np.any(self._simplex_id == -1)) or (self.is_torch and torch.any(self._simplex_id == -1)):
-            out[:, self._simplex_id == -1] = fill_value
+            out[::, self._simplex_id == -1] = fill_value
 
-        return out
+        return out.reshape(orig_shape[:-1] + (out.shape[-1],))
     
     def __call__(self, values: np.ndarray | torch.Tensor, fill_value: Optional[float] = np.nan) -> np.ndarray:
         """Alias for forward method to make class callable."""
