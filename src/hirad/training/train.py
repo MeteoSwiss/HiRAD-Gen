@@ -142,8 +142,9 @@ def main(cfg: DictConfig) -> None:
         train_test_split=train_test_split,
         sampler_start_idx=cur_nimg,
     )
+    dataset.interpolator.to_torch(device=dist.device)
     logger0.info(f"Training on dataset with size {len(dataset)}")
-    logger0.info(f"Validating on dataset with size {len(validation_dataset)}")
+    logger0.info(f"Validating on dataset with size {len(validation_dataset) if validation_dataset else 0}")
 
     # Parse image configuration & update model args
     dataset_channels = len(dataset.input_channels())
@@ -516,6 +517,7 @@ def main(cfg: DictConfig) -> None:
                                     dataset_iterator
                                 )
                                 tick_read_time = time.time() - tick_read_start_time
+                                img_lr = dataset.interpolator(img_lr.to(dist.device)).reshape(*img_lr.shape[:-1], *img_shape)
                                 if use_apex_gn:
                                     img_clean = img_clean.to(
                                         dist.device,
