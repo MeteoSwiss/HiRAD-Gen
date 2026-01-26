@@ -31,7 +31,7 @@ from .base import DownscalingDataset
 known_datasets = {
     "era5_cosmo": ERA5_COSMO,
     "era5_real": ERA5_REAL,
-    "anemoi_era5_cosmo": ANEMOI_ERA5_REAL,
+    "anemoi_era5_cosmo": ANEMOI_ERA5_COSMO,
     "anemoi_era5_real": ANEMOI_ERA5_REAL,
 }
 
@@ -91,7 +91,7 @@ def init_dataset_from_config(
     sampler_start_idx: int = 0,
 ) -> Tuple[DownscalingDataset, Iterable]:
     dataset_cfg = copy.deepcopy(dataset_cfg)
-    dataset_type = dataset_cfg.pop("type", "era5_cosmo")
+    dataset_type = dataset_cfg.get("type", "era5_cosmo")
     if "validation_path" in dataset_cfg:
         del dataset_cfg['validation_path']
     if "train_test_split" in dataset_cfg:
