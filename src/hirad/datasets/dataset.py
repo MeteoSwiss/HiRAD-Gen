@@ -65,15 +65,22 @@ def init_train_valid_datasets_from_config(
     """
 
     config = copy.deepcopy(dataset_cfg)
-    if 'validation_path' in config:
-        del config['validation_path']
+    config.pop("validation", None)
+    config.pop("validation_start_date", None)
+    config.pop("validation_end_date", None)
     (dataset, dataset_iter) = init_dataset_from_config(
         config, dataloader_cfg, batch_size=batch_size, seed=seed, sampler_start_idx=sampler_start_idx,
     )
     if train_test_split:
         valid_dataset_cfg = copy.deepcopy(dataset_cfg)
-        valid_dataset_cfg["dataset_path"] =  valid_dataset_cfg["validation_path"]
-        del valid_dataset_cfg['validation_path']
+        del valid_dataset_cfg['validation']
+        if "validation_start_date" not in valid_dataset_cfg or "validation_end_date" not in valid_dataset_cfg:
+            raise ValueError("validation_start_date and validation_en_date must be specified in anemoi dataset_cfg when validation is set to True")
+        valid_dataset_cfg["start_date"] = valid_dataset_cfg["validation_start_date"]
+        valid_dataset_cfg["end_date"] = valid_dataset_cfg["validation_end_date"]
+        del valid_dataset_cfg['validation_start_date']
+        del valid_dataset_cfg['validation_end_date']
+
         (valid_dataset, valid_dataset_iter) = init_dataset_from_config(
             valid_dataset_cfg, dataloader_cfg, batch_size=batch_size, seed=seed
         )
@@ -89,14 +96,11 @@ def init_dataset_from_config(
     batch_size: int = 1,
     seed: int = 0,
     sampler_start_idx: int = 0,
+    pop_type: bool = True,
 ) -> Tuple[DownscalingDataset, Iterable]:
+
     dataset_cfg = copy.deepcopy(dataset_cfg)
     dataset_type = dataset_cfg.get("type", "era5_cosmo")
-    if "validation_path" in dataset_cfg:
-        del dataset_cfg['validation_path']
-    if "train_test_split" in dataset_cfg:
-        # handled by init_train_valid_datasets_from_config
-        del dataset_cfg["train_test_split"]
     dataset_init_func = known_datasets[dataset_type]
 
     dataset_obj = dataset_init_func(**dataset_cfg)

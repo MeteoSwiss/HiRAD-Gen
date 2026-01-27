@@ -3,3 +3,4 @@ from .era5_cosmo import ERA5_COSMO
 from .era5_real import ERA5_REAL
 from .base import DownscalingDataset, ChannelMetadata, get_channels_from_strings, get_strings_from_channels
 from .anemoi_dataset import AnemoiDataset, ANEMOI_ERA5_COSMO, ANEMOI_ERA5_REAL
+from .constants import REAL_TO_ERA_CHANNEL_MAP, ERA_TO_REAL_CHANNEL_MAP

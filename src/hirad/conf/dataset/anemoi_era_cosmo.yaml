@@ -14,3 +14,6 @@ n_month_hour_channels: 4
 start_date: '2015-11-29'
 end_date: '2019-10-31'
 trim_edge: 19
+validation: True
+validation_start_date: '2019-11-01'
+validation_end_date: '2020-10-28'
