@@ -82,10 +82,7 @@ def main(cfg: DictConfig) -> None:
     logger0 = RankZeroLoggingWrapper(logger, dist) # rank 0 logger
 
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
-    if hasattr(cfg.dataset, "validation_path") and cfg.dataset.validation_path is not None:
-        train_test_split = True
-    else:
-        train_test_split = False
+    train_test_split = getattr(cfg.dataset, "validation", False)
     fp_optimizations = cfg.training.perf.fp_optimizations
     songunet_checkpoint_level = cfg.training.perf.songunet_checkpoint_level
     fp16 = fp_optimizations == "fp16"
@@ -684,7 +681,7 @@ def main(cfg: DictConfig) -> None:
                                         img_lr_valid,
                                         *lead_time_label_valid,
                                     ) = next(validation_dataset_iterator)
-
+                                    img_lr_valid = dataset.interpolator(img_lr_valid.to(dist.device)).reshape(*img_lr_valid.shape[:-1], *img_shape)
                                     if use_apex_gn:
                                         img_clean_valid = img_clean_valid.to(
                                             dist.device,
