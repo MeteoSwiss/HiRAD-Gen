@@ -38,6 +38,9 @@ def regression_step(
     img_lr: torch.Tensor,
     latents_shape: torch.Size,
     lead_time_label: Optional[torch.Tensor] = None,
+    static_channels: Optional[torch.Tensor] = None,
+    date_embedding: Optional[torch.Tensor] = None,
+    use_apex_gn: bool = False,
 ) -> torch.Tensor:
     """
     Perform a regression step to produce ensemble mean prediction.
@@ -59,6 +62,11 @@ def regression_step(
     lead_time_label : Optional[torch.Tensor], optional
         Lead time label tensor for lead time conditioning,
         with shape (1, lead_time_dims). Default is None.
+    static_channels : torch.Tensor, optional
+        Static channels input of shape (C_static, H, W).
+
+    date_embedding : torch.Tensor, optional
+        Date embedding input of shape (B, C_date).
 
     Returns
     -------
@@ -79,6 +87,20 @@ def regression_step(
             f"Expected img_lr to have a batch size of 1, "
             f"but found {img_lr.shape[0]}."
         )
+
+    if static_channels is not None:
+        img_lr = torch.cat(
+            (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
+            dim=1,
+        )
+
+    if date_embedding is not None:
+        date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *img_lr.shape[2:])
+        if use_apex_gn:
+            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+        else:
+            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+        img_lr = torch.cat((img_lr, date_embedding), dim=1)    
 
     # Perform regression on a single batch element
     with torch.inference_mode():
@@ -105,6 +127,9 @@ def diffusion_step(
     device: torch.device,
     mean_hr: torch.Tensor = None,
     lead_time_label: torch.Tensor = None,
+    static_channels: Optional[torch.Tensor] = None,
+    date_embedding: Optional[torch.Tensor] = None,
+    use_apex_gn: bool = False,
 ) -> torch.Tensor:
 
     """
@@ -142,6 +167,12 @@ def diffusion_step(
     lead_time_label : torch.Tensor, optional
         Lead time label tensor for temporal conditioning,
         with shape (batch_size, lead_time_dims). Default is None.
+    static_channels : torch.Tensor, optional
+        Static channels input of shape (C_static, H, W).
+    date_embedding : torch.Tensor, optional
+        Date embedding input of shape (B, C_date).
+    use_apex_gn : bool, optional
+        Whether Apex's fused group normalization is used. Default is False.
 
     Returns
     -------
@@ -151,21 +182,21 @@ def diffusion_step(
     """
 
     # Check img_lr dimensions match expected shape
-    if img_lr.shape[2:] != img_shape:
+    if img_lr.shape[-2:] != img_shape:
         raise ValueError(
-            f"img_lr shape {img_lr.shape[2:]} does not match expected shape img_shape {img_shape}"
+            f"img_lr shape {img_lr.shape[-2:]} does not match expected shape img_shape {img_shape}"
         )
 
     # Check mean_hr dimensions if provided
     if mean_hr is not None:
-        if mean_hr.shape[2:] != img_shape:
+        if mean_hr.shape[-2:] != img_shape:
             raise ValueError(
                 f"mean_hr shape {mean_hr.shape[2:]} does not match expected shape img_shape {img_shape}"
             )
         if mean_hr.shape[0] != 1:
             raise ValueError(f"mean_hr must have batch size 1, got {mean_hr.shape[0]}")
 
-    img_lr = img_lr.to(memory_format=torch.channels_last)
+    # img_lr = img_lr.to(memory_format=torch.channels_last)
 
     # Handling of the high-res mean
     additional_args = {}
@@ -173,6 +204,11 @@ def diffusion_step(
         additional_args["mean_hr"] = mean_hr
     if lead_time_label is not None:
         additional_args["lead_time_label"] = lead_time_label
+    if static_channels is not None:
+        additional_args["static_channels"] = static_channels
+    if date_embedding is not None:
+        additional_args["date_embedding"] = date_embedding
+    additional_args["use_apex_gn"] = use_apex_gn
 
     # Loop over batches
     all_images = []

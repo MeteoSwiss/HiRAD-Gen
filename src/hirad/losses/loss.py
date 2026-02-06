@@ -377,10 +377,13 @@ class RegressionLoss:
         net: torch.nn.Module,
         img_clean: torch.Tensor,
         img_lr: torch.Tensor,
+        static_channels: Optional[torch.Tensor] = None,
+        date_embedding: Optional[torch.Tensor] = None,
         augment_pipe: Optional[
             Callable[[torch.Tensor], Tuple[torch.Tensor, Optional[torch.Tensor]]]
         ] = None,
         lead_time_label: Optional[torch.Tensor] = None,
+        use_apex_gn: bool = False,
     ) -> torch.Tensor:
         """
         Calculate and return the regression loss for
@@ -408,6 +411,12 @@ class RegressionLoss:
         img_lr : torch.Tensor
             Low-resolution input images of shape (B, C_lr, H, W).
             Used as input to the neural network.
+
+        static_channels : torch.Tensor, optional
+            Static channels input of shape (C_static, H, W).
+
+        date_embedding : torch.Tensor, optional
+            Date embedding input of shape (B, C_date).
 
         augment_pipe : callable, optional
             An optional data augmentation function.
@@ -440,6 +449,20 @@ class RegressionLoss:
         y_lr = y_tot[:, img_clean.shape[1] :, :, :]
 
         zero_input = torch.zeros_like(y, device=img_clean.device)
+
+        if static_channels is not None:
+            y_lr = torch.cat(
+                (y_lr, static_channels.expand(y_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+
+        if date_embedding is not None:
+            date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *y_lr.shape[2:])
+            if use_apex_gn:
+                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+            else:
+                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).contiguous() 
+            y_lr = torch.cat((y_lr, date_embedding), dim=1)
 
         if lead_time_label is not None:
             D_yn = net(
@@ -566,12 +589,15 @@ class ResidualLoss:
         net: torch.nn.Module,
         img_clean: torch.Tensor,
         img_lr: torch.Tensor,
+        static_channels: Optional[torch.Tensor] = None,
+        date_embedding: Optional[torch.Tensor] = None,
         patching: Optional[RandomPatching2D] = None,
         lead_time_label: Optional[torch.Tensor] = None,
         augment_pipe: Optional[
             Callable[[torch.Tensor], Tuple[torch.Tensor, Optional[torch.Tensor]]]
         ] = None,
         use_patch_grad_acc: bool = False,
+        use_apex_gn: bool = False,
     ) -> torch.Tensor:
         """
         Calculate and return the loss for denoising score matching.
@@ -633,6 +659,12 @@ class ResidualLoss:
             Used as input to the regression network and conditioning for the
             diffusion process.
 
+        static_channels : Optional[torch.Tensor], optional
+            Static channels input of shape (1, C_static, H, W), by default None.
+
+        date_embedding : Optional[torch.Tensor], optional
+            Date embedding input of shape (B, C_date), by default None
+
         patching : Optional[RandomPatching2D], optional
             Patching strategy for processing large images, by default None. See
             :class:`physicsnemo.utils.patching.RandomPatching2D` for details.
@@ -657,6 +689,8 @@ class ResidualLoss:
         use_patch_grad_acc: bool, optional
             A boolean flag indicating whether to enable multi-iterations of patching accumulations
             for amortizing regression cost. Default False.
+        use_apex_gn: bool, optional
+            A boolean flag indicating whether apex group norm is used in the model.
 
         Returns
         -------
@@ -699,27 +733,25 @@ class ResidualLoss:
         batch_size = y.shape[0]
 
         # if using multi-iterations of patching, switch to optimized version
-        if use_patch_grad_acc:
+        if not use_patch_grad_acc or self.y_mean is None:
             # form residual
-            if self.y_mean is None:
-                if lead_time_label is not None:
-                    y_mean = self.regression_net(
-                        torch.zeros_like(y, device=img_clean.device),
-                        y_lr_res,
-                        lead_time_label=lead_time_label,
-                        augment_labels=augment_labels,
-                    )
-                else:
-                    y_mean = self.regression_net(
-                        torch.zeros_like(y, device=img_clean.device),
-                        y_lr_res,
-                        augment_labels=augment_labels,
-                    )
-                self.y_mean = y_mean
+            if static_channels is not None:
+                y_lr_res = torch.cat(
+                    (y_lr_res, static_channels.expand(y_lr_res.shape[0], *static_channels.shape[1:])),
+                    dim=1,
+                )
+            # print(f"Shape of y_lr after static channels regression: y_lr_res {y_lr_res.shape} y_lr {y_lr.shape}")
 
-        # if on full domain, or if using patching without multi-iterations
-        else:
-            # form residual
+            if date_embedding is not None:
+                date_embedding_reg = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *y_lr_res.shape[2:])
+                if use_apex_gn:
+                    date_embedding_reg = date_embedding_reg.to(y_lr_res.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+                else:
+                    date_embedding_reg = date_embedding_reg.to(y_lr_res.dtype, non_blocking=True).contiguous() 
+                y_lr_res = torch.cat((y_lr_res, date_embedding_reg), dim=1)
+
+            # print(f"Shape of y_lr after date embedding regression: y_lr_res {y_lr_res.shape} y_lr {y_lr.shape}")
+            
             if lead_time_label is not None:
                 y_mean = self.regression_net(
                     torch.zeros_like(y, device=img_clean.device),
@@ -741,6 +773,11 @@ class ResidualLoss:
         if self.hr_mean_conditioning:
             y_lr = torch.cat((self.y_mean, y_lr), dim=1)
 
+        if static_channels is not None:
+            y_lr = torch.cat(
+                (y_lr, static_channels.expand(y_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
         # patchified training
         # conditioning: cat(y_mean, y_lr, input_interp, pos_embd), 4+12+100+4
         # removed patch_embedding_selector due to compilation issue with dynamo.
@@ -750,11 +787,31 @@ class ResidualLoss:
             y_patched = patching.apply(input=y)
             # Patched conditioning on y_lr and interp(img_lr)
             # (batch_size * patch_num, 2*c_in, patch_shape_y, patch_shape_x)
+            if static_channels is not None:
+                img_lr = torch.cat(
+                    (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
+                    dim=1,
+                )
+            # print(f"Shape of img_lr after static channels diffusion patching: img_lr {img_lr.shape}")
+            if date_embedding is not None:
+                date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *img_lr.shape[2:])
+                if use_apex_gn:
+                    date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+                else:
+                    date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+                img_lr = torch.cat((img_lr, date_embedding), dim=1)
             y_lr_patched = patching.apply(input=y_lr, additional_input=img_lr)
 
             y = y_patched
             y_lr = y_lr_patched
 
+        elif date_embedding is not None:
+            date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *y_lr.shape[2:])
+            if use_apex_gn:
+                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+            else:
+                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).contiguous() 
+            y_lr = torch.cat((y_lr, date_embedding), dim=1)
         # Add noise to the latent state
         n, sigma, weight = self.get_noise_params(y)
 

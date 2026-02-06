@@ -144,15 +144,18 @@ def main(cfg: DictConfig) -> None:
     logger0.info(f"Validating on dataset with size {len(validation_dataset) if validation_dataset else 0}")
 
     # Parse image configuration & update model args
-    dataset_channels = len(dataset.input_channels())
+    n_month_hour_channels = 2*dataset_cfg.get("n_month_hour_channels", 0)
+    dataset_channels = len(dataset.input_channels()) + len(dataset.static_channels()) + n_month_hour_channels
     img_in_channels = dataset_channels
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
     if cfg.model.hr_mean_conditioning:
         img_in_channels += img_out_channels
+    static_channels = dataset.get_static_data()
     logger0.info(f"Training on dataset with grid size {img_shape[0]}x{img_shape[1]}, {img_in_channels} input channels and {img_out_channels} output channels.")
     logger0.info(f"Input channels: {dataset.input_channels()}")
     logger0.info(f"Output channels: {dataset.output_channels()}")
+    logger0.info(f"Static channels: {dataset.static_channels()}")
 
     if cfg.model.name == "lt_aware_ce_regression":
         prob_channels = dataset.get_prob_channel_index() #TODO figure out what prob_channel are and update dataloader
@@ -210,7 +213,7 @@ def main(cfg: DictConfig) -> None:
         logger0.info("Patch-based training disabled")
     # interpolate global channel if patch-based model is used
     if use_patching:
-        img_in_channels += dataset_channels
+        img_in_channels += len(dataset.input_channels()) + len(dataset.static_channels())
     
     # Instantiate the model and move to device.
     model_args = {  # default parameters for all networks
@@ -485,6 +488,26 @@ def main(cfg: DictConfig) -> None:
     elif fp16:
         input_dtype = torch.float16
 
+    # prepare static channels if there are any
+    if static_channels is not None:
+        static_channels = static_channels[None, ::]
+        if use_apex_gn:
+            static_channels = static_channels.to(
+                dist.device,
+                dtype=input_dtype,
+                non_blocking=True,
+            ).to(memory_format=torch.channels_last)
+        else:
+            static_channels = (
+                static_channels.to(dist.device)
+                .to(input_dtype)
+                .contiguous()
+            )
+
+    # turn off for lead time labels for now since we are not using them
+    # TODO: implement lead time labels properly once we train on IFS?
+    lead_time_label = None
+
     # enable profiler:
     with cuda_profiler():
         with profiler_emit_nvtx():
@@ -510,11 +533,14 @@ def main(cfg: DictConfig) -> None:
                         ):
                             with nvtx.annotate("loading data", color="green"):
                                 tick_read_start_time = time.time()
-                                img_clean, img_lr, *lead_time_label = next(
+                                img_clean, img_lr, *date_str = next(
                                     dataset_iterator
                                 )
                                 tick_read_time = time.time() - tick_read_start_time
-                                img_lr = dataset.interpolator(img_lr.to(dist.device)).reshape(*img_lr.shape[:-1], *img_shape)
+                                img_lr = dataset.interpolator(img_lr.to(dist.device)).reshape(*img_lr.shape[:-1], *img_shape).flip(-2)
+                                date_embedding = None
+                                if n_month_hour_channels > 0:
+                                    date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
                                 if use_apex_gn:
                                     img_clean = img_clean.to(
                                         dist.device,
@@ -541,7 +567,10 @@ def main(cfg: DictConfig) -> None:
                                 "net": model,
                                 "img_clean": img_clean,
                                 "img_lr": img_lr,
+                                "static_channels": static_channels,
+                                "date_embedding": date_embedding,
                                 "augment_pipe": None,
+                                "use_apex_gn": use_apex_gn,
                             }
                             if use_patch_grad_acc is not None:
                                 loss_fn_kwargs[
@@ -675,13 +704,19 @@ def main(cfg: DictConfig) -> None:
                             dist.rank,
                         ):
                             with torch.no_grad():
+                                # turn off lead_time_label for now since we are not using them
+                                #TODO: implement lead time labels properly once we train on IFS?
+                                lead_time_label_valid = None
                                 for _ in range(cfg.training.io.validation_steps):
                                     (
                                         img_clean_valid,
                                         img_lr_valid,
-                                        *lead_time_label_valid,
+                                        *date_str,
                                     ) = next(validation_dataset_iterator)
-                                    img_lr_valid = dataset.interpolator(img_lr_valid.to(dist.device)).reshape(*img_lr_valid.shape[:-1], *img_shape)
+                                    img_lr_valid = dataset.interpolator(img_lr_valid.to(dist.device)).reshape(*img_lr_valid.shape[:-1], *img_shape).flip(-2)
+                                    date_embedding = None
+                                    if n_month_hour_channels > 0:
+                                        date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
                                     if use_apex_gn:
                                         img_clean_valid = img_clean_valid.to(
                                             dist.device,
@@ -710,7 +745,10 @@ def main(cfg: DictConfig) -> None:
                                         "net": model,
                                         "img_clean": img_clean_valid,
                                         "img_lr": img_lr_valid,
+                                        "static_channels": static_channels,
+                                        "date_embedding": date_embedding,
                                         "augment_pipe": None,
+                                        "use_apex_gn": use_apex_gn,
                                     }
                                     if use_patch_grad_acc is not None:
                                         loss_valid_kwargs[

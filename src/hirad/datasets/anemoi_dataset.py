@@ -84,10 +84,10 @@ class AnemoiDataset(DownscalingDataset):
 
         # Load static info and channel names
         if static_channel_names:
-            self._static_channel_names = [ChannelMetadata(name) if len(name.split('_'))==1 
+            self._static_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
                                             else ChannelMetadata(name.split('_')[0],name.split('_')[1])
                                             for name in static_channel_names]
-            static_dataset = open_dataset(target_anemoi_dataset_path, select=static_channel_names, start=start_date, end=start_date)
+            static_dataset = open_dataset(target_anemoi_dataset_path, select=static_channel_names, start=start_date, end=start_date, trim_edge=trim_edge)
             assert static_dataset.shape[1] == len(static_channel_names)
             # take first time point, and squeeze() to remove ensemble dimension
             static_data = static_dataset[0,:,:,:].squeeze()
@@ -97,11 +97,11 @@ class AnemoiDataset(DownscalingDataset):
             target_shape = static_dataset.field_shape
             self.static_data_normalized = (static_data - self.static_mean.reshape((self.static_mean.shape[0],1))) \
                                             / self.static_std.reshape((self.static_std.shape[0],1))
-            
+            self.static_data_normalized = torch.from_numpy(self.static_data_normalized.reshape(-1, *target_shape))
             # self.normalize_input(np.flip(static_data.squeeze().reshape(-1, *target_shape), 1))
         else:
             self.static_data_normalized = None
-            self._static_channel_names = []
+            self._static_channels = []
 
         # Load target channel names
         self._output_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
@@ -188,7 +188,8 @@ class AnemoiDataset(DownscalingDataset):
         target_data = self.normalize_output(target_data)
 
         return torch.from_numpy(target_data),\
-                torch.from_numpy(input_data)
+                torch.from_numpy(input_data),\
+                date_str
     
     def get_static_data(self):
         return self.static_data_normalized
@@ -215,7 +216,7 @@ class AnemoiDataset(DownscalingDataset):
 
     def static_channels(self) -> List[ChannelMetadata]:
         """Metadata for the static channels. A list of ChannelMetadata, one for each channel"""
-        return self._static_channel_names
+        return self._static_channels
 
     def time(self) -> List:
         """Get time values from the dataset."""
@@ -240,10 +241,10 @@ class AnemoiDataset(DownscalingDataset):
 
     def denormalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from normalized data to physical units."""
-        x = x * self.input_std[(...,) + (None,) * (x.ndim - 1)] \
-                + self.input_mean[(...,) + (None,) * (x.ndim - 1)]
+        x = x * self.input_std[(None,) + (...,) + (None,) * (x.ndim - 2)] \
+                + self.input_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]
         for channel_idx, inverse_transform in self.input_inverse_transforms.items():
-            x[channel_idx,::] = inverse_transform(x[channel_idx,::])
+            x[:,channel_idx,::] = inverse_transform(x[:,channel_idx,::])
         return x
 
 
@@ -257,10 +258,10 @@ class AnemoiDataset(DownscalingDataset):
 
     def denormalize_output(self, x: np.ndarray) -> np.ndarray:
         """Convert output from normalized data to physical units."""
-        x = x * self.output_std[(...,) + (None,) * (x.ndim - 1)] \
-                + self.output_mean[(...,) + (None,) * (x.ndim - 1)]
+        x = x * self.output_std[(None,) + (...,) + (None,) * (x.ndim - 2)] \
+                + self.output_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]
         for channel_idx, inverse_transform in self.output_inverse_transforms.items():
-            x[channel_idx,::] = inverse_transform(x[channel_idx,::])
+            x[:,channel_idx,::] = inverse_transform(x[:,channel_idx,::])
         return x
 
     def box_cox_transform(self, channel_array: np.ndarray, lmbda: float) -> np.ndarray:
@@ -273,44 +274,71 @@ class AnemoiDataset(DownscalingDataset):
         channel_array = np.clip(channel_array, -1/lmbda, None)
         return np.power((lmbda * channel_array) + 1, 1 / lmbda)
 
-    def make_time_grids(self, hour, month):
+    def make_time_grids(self, dates: list[str], device: torch.device, dtype: torch.dtype = torch.float32) -> torch.Tensor:
         """
-        Create multi-frequency cyclic sin/cos feature grids for hour and month.
+        Create multi-frequency cyclic sin/cos feature grids for hour and month (batched).
 
         Parameters
         ----------
-        hour : int
-            Hour of day, 0-23
-        month : int
-            Month of year, 1-12
+        dates : Sequence[str]
+            Date strings in the format 'YYYYMMDD-HHMM', length = B
 
         Returns
         -------
-        grid : np.ndarray, shape (C, H, W)
-            Channels = [sin(k*hour), cos(k*hour), sin(k*month), cos(k*month) for each k frequency]
+        grid : torch.Tensor, shape (B, C, H, W)
+            Channels = [sin(k*hour), cos(k*hour), sin(k*month), cos(k*month) for each k]
         """
-        H, W = self.image_shape()
-        hour_freqs = np.arange(1, self._n_month_hour_channels//2 + 1)
-        month_freqs = np.arange(1, self._n_month_hour_channels//2 + 1)
 
-        channels = []
+        B = len(dates)
+
+        # --- parse month and hour ---
+        months = torch.tensor(
+            [int(d.split("-")[0][4:6]) for d in dates],
+            dtype=torch.float32,
+            device=device,
+        )
+        hours = torch.tensor(
+            [int(d.split("-")[1][0:2]) for d in dates],
+            dtype=torch.float32,
+            device=device,
+        )
+
+        # normalize cyclic components
+        hours = (hours % 24) / 24.0        # (B,)
+        months = ((months - 1) % 12) / 12.0  # (B,)
+
+        # frequencies
+        n_freq = self._n_month_hour_channels // 2
+        freqs = torch.arange(
+            1, n_freq + 1, dtype=torch.float32, device=device
+        )  # (K,)
+
+        # shape helpers
+        hours = hours[:, None]    # (B, 1)
+        months = months[:, None]  # (B, 1)
 
         # --- hour encodings ---
-        for k in hour_freqs:
-            angle = 2 * np.pi * k * (hour % 24) / 24.0
-            channels.append(np.sin(angle))
-            channels.append(np.cos(angle))
+        hour_angles = 2 * torch.pi * hours * freqs  # (B, K)
+        hour_feats = torch.stack(
+            [torch.sin(hour_angles), torch.cos(hour_angles)],
+            dim=2
+        )  # (B, K, 2)
 
         # --- month encodings ---
-        for k in month_freqs:
-            angle = 2 * np.pi * k * ((month - 1) % 12) / 12.0
-            channels.append(np.sin(angle))
-            channels.append(np.cos(angle))
+        month_angles = 2 * torch.pi * months * freqs
+        month_feats = torch.stack(
+            [torch.sin(month_angles), torch.cos(month_angles)],
+            dim=2
+        )  # (B, K, 2)
 
-        channels = np.array(channels, dtype=np.float32)
-        grid = np.tile(channels[:, None, None], (1, H, W))  # (C, H, W)
+        # concatenate and flatten channels
+        feats = torch.cat([hour_feats, month_feats], dim=1)  # (B, 2K, 2)
+        feats = feats.reshape(B, -1)  # (B, C)
 
-        return grid
+        # expand to spatial grid
+        # grid = feats[:, :, None, None].expand(B, feats.shape[1], H, W)
+
+        return feats
 
 ANEMOI_ERA5_REAL = AnemoiDataset
 ANEMOI_ERA5_COSMO = AnemoiDataset

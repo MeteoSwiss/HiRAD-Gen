@@ -41,6 +41,9 @@ def main(cfg: DictConfig) -> None:
     if dist.world_size > 1:
         torch.distributed.barrier()
 
+    use_apex_gn = cfg.generation.perf.get("use_apex_gn", False)
+    input_dtype = torch.float16 if cfg.generation.perf.get("force_fp16", False) and use_apex_gn else torch.float32
+
     # Parse the inference input times
     if cfg.generation.times_range and cfg.generation.times:
         raise ValueError("Either times_range or times must be provided, but not both")
@@ -164,6 +167,7 @@ def main(cfg: DictConfig) -> None:
                                       overlap_pix=cfg.generation.overlap_pix,
                                       )
     sampler_params = cfg.sampler.params if "params" in cfg.sampler else {}
+    sampler_params["use_apex_gn"] = use_apex_gn
     generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
     # generate images
@@ -214,8 +218,27 @@ def main(cfg: DictConfig) -> None:
 
                 start = end = DummyEvent()
 
+            dataset.interpolator.to_torch(device=dist.device)
+
+            static_channels = dataset.get_static_data()
+            if static_channels is not None:
+                static_channels = static_channels[None, ::]
+                if use_apex_gn:
+                    static_channels = static_channels.to(
+                        dist.device,
+                        dtype=input_dtype,
+                        non_blocking=True,
+                    ).to(memory_format=torch.channels_last)
+                else:
+                    static_channels = (
+                        static_channels.to(dist.device)
+                        .to(input_dtype)
+                        .contiguous()
+                    )
+            lead_time_label = None
+
             times = dataset.time()
-            for index, (image_tar, image_lr, *lead_time_label) in enumerate(
+            for index, (image_tar, image_lr, *date_str) in enumerate(
                 iter(data_loader)
             ):
                 time_index += 1
@@ -232,18 +255,24 @@ def main(cfg: DictConfig) -> None:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
                 else:
                     lead_time_label = None
+                image_lr = dataset.interpolator(image_lr.to(dist.device)).reshape(*image_lr.shape[:-1], *image_tar.shape[-2:]).flip(-2)
                 image_lr = (
                     image_lr.to(device=device)
-                    .to(torch.float32)
+                    .to(input_dtype)
                     .to(memory_format=torch.channels_last)
                 )
                 image_tar = image_tar.to(device=device).to(torch.float32)
                 # image_out, image_reg = generate_fn(image_lr,lead_time_label)
                 random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
                 # print(f"On rank {dist.rank} using base random seed: {random_seed} for time index {time_index}")
+                date_embedding = None
+                if dataset._n_month_hour_channels:
+                    date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
                 image_out, image_reg = generator.generate(
                                             image_lr,
-                                            lead_time_label,
+                                            static_channels=static_channels,
+                                            date_embedding=date_embedding,
+                                            lead_time_label=lead_time_label,
                                             randomize=cfg.generation.get("randomize", False),
                                             random_seed=random_seed
                                         )

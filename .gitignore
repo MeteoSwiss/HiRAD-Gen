@@ -176,6 +176,7 @@ pyrightconfig.json
 plots/*
 *.npz
 outputs/*
+logs/*
 
 # conda
 .conda/*
