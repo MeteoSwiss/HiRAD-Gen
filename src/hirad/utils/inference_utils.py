@@ -24,6 +24,7 @@ import torch
 import tqdm
 from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
+import earthkit.data as ekd
 
 from .function_utils import StackedRandomGenerator
 from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra, crps
@@ -218,6 +219,39 @@ def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr,
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+def save_results_as_grib(grib_input_template, padding_margin, output_fields,
+                         output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+    os.makedirs(output_path, exist_ok=True)
+    target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
+    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
+    baseline = np.flip(dataset.denormalize_input(image_lr)[0,::].squeeze(),1)
+    if mean_pred is not None:
+        mean_pred = pad_image(np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1), padding_margin, 0)
+    
+    ds=ekd.from_source("file", grib_input_template)
+    ds_channels = ds.metadata("shortName")
+    # Get the grib template and clone it
+    
+    # Target
+    for i in range(len(output_fields)):
+        channel_name = output_fields[i]
+        # raise ValueError if not found
+        idx = ds_channels.index(channel_name)
+        image_pred_field = ds[idx].clone(values=pad_image(target[i,::], padding_margin, 0))
+        
+
+    # Baseline
+
+    # Prediction - 1 file per ensemble?
+
+
+    pass
+
+def pad_image(image, padding_margin, fill_value):
+    new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
+    new_image[padding_margin:-padding_margin, padding_margin:-padding_margin] = image
+    return new_image
 
 @DeprecationWarning
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
