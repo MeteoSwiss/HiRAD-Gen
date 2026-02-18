@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results_as_torch
+from hirad.utils.inference_utils import save_results_as_torch, save_results_as_grib
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 
@@ -254,7 +254,7 @@ def main(cfg: DictConfig) -> None:
                     
                     writer_threads.append(
                         writer_executor.submit(
-                            save_results_as_torch,
+                            save_results_as_grib,
                             savedir,
                             times[sampler[time_index]],
                             dataset,

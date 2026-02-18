@@ -25,6 +25,7 @@ import tqdm
 from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
 import earthkit.data as ekd
+from earthkit.data import FieldList
 
 from .function_utils import StackedRandomGenerator
 from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra, crps
@@ -220,33 +221,56 @@ def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr,
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
 
-def save_results_as_grib(grib_input_template, padding_margin, output_fields,
+# Takes templates from EvalML
+def save_results_as_grib(grib_template_path, output_fields, padding_margin,
                          output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+    
     os.makedirs(output_path, exist_ok=True)
     target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
     prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
     baseline = np.flip(dataset.denormalize_input(image_lr)[0,::].squeeze(),1)
     if mean_pred is not None:
         mean_pred = pad_image(np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1), padding_margin, 0)
-    
-    ds=ekd.from_source("file", grib_input_template)
-    ds_channels = ds.metadata("shortName")
-    # Get the grib template and clone it
-    
+
     # Target
+    metadata = []
+    fields = []
     for i in range(len(output_fields)):
         channel_name = output_fields[i]
+
         # raise ValueError if not found
-        idx = ds_channels.index(channel_name)
-        image_pred_field = ds[idx].clone(values=pad_image(target[i,::], padding_margin, 0))
-        
+        ds = get_grib_template(grib_template_path, channel_name, grid="co2")
+        new_metadata = ds[0].metadata()
+        new_data_field = ds[0].clone(values=pad_image(target[i,::], padding_margin, 0))
+        metadata.append(new_metadata)
+        fields.append(new_data_field)
+    ds_new = FieldList.from_array(fields, metadata)
+    output_file = os.path.join(output_path, f'{time_step}.grib')
+    ds_new.to_target("file", output_file)
 
     # Baseline
 
+
     # Prediction - 1 file per ensemble?
 
+    return
 
-    pass
+# grid: co2 (COSMO-2), or co1e (COSMO-1E)
+def get_grib_template(grib_template_path, channel_name, grid="co2"):
+    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
+    if channel_name == 'tp':
+        return ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
+    elif channel_name in levtype_index_sfc.metadata("shortName"):
+        idx = levtype_index_sfc.metadata("shortName").index(channel_name)
+        levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
+        levelval = levtype_index_sfc[idx].metadata("level")
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        return ds[0].clone(level=levelval)
+    else:
+        raise ValueError(f'channel {channel_name} not found. pressure levels not yet supported')
+    #TODO: Get pressure level index as well
+    #levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
+
 
 def pad_image(image, padding_margin, fill_value):
     new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
