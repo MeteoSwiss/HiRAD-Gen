@@ -24,6 +24,8 @@ import torch
 import tqdm
 from matplotlib import pyplot as plt
 import cartopy.crs as ccrs
+import earthkit.data as ekd
+from earthkit.data import FieldList
 
 from .function_utils import StackedRandomGenerator
 from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra, crps
@@ -206,18 +208,95 @@ def diffusion_step(
 #                           Visualization Utilities                        #
 ############################################################################
 
-
-def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, output_format='torch'):
     os.makedirs(output_path, exist_ok=True)
     target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
     prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
     baseline = np.flip(dataset.denormalize_input(image_lr)[0,::].squeeze(),1)
     if mean_pred is not None:
         mean_pred = np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1)
+    if output_format == 'torch':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred=mean_pred)
+    elif output_format == 'grib':
+        # TODO: Do not hard code these.
+        grib_template_path = '~/evalml/'
+        output_fields = ['2t', '10u', '10v', 'tp']
+        grid = 'co2'
+        save_results_as_grib(grib_template_path, output_fields, grid,
+                             output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+    else:
+        raise ValueError(f'output format {output_format} not supported-- torch or grib supported')
+
+def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
+    if mean_pred is not None:
         torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+# Takes templates from EvalML
+def save_results_as_grib(grib_template_path, output_fields, grid,
+                         output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
+
+
+    # Target
+    output_file = os.path.join(output_path, f'target-{time_step}.grib')
+    save_as_grib(output_file, grib_template_path, output_fields, target, grid=grid)
+
+    # Baseline
+    output_file = os.path.join(output_path, f'baseline-{time_step}.grib')
+
+    # Prediction - 1 file per ensemble?
+
+    return
+
+
+def save_as_grib(output_filename, grib_template_path, output_fields, image, grid):
+    if grid == "co2":
+        padding_margin = 19
+    else:
+        raise ValueError("only co2 grid supported")
+    metadata = []
+    fields = []
+    for i in range(len(output_fields)):
+        channel_name = output_fields[i]
+
+        # raise ValueError if not found
+        ds = get_grib_template(grib_template_path, channel_name, grid)
+        print(ds.ls())
+        print(ds)
+        #new_metadata = ds.metadata()
+        #new_data_field = ds.clone(values=pad_image(image[i,::], padding_margin, 0))
+        metadata.append(ds.metadata())
+        
+        values = pad_image(image[i,::], padding_margin, np.nan)
+        fields.append(values)
+    ds_new = FieldList.from_array(fields, metadata)
+    #output_file = os.path.join(output_path, f'{time_step}.grib')
+    ds_new.to_target("file", output_filename)
+
+# grid: co2 (COSMO-2), or co1e (COSMO-1E)
+def get_grib_template(grib_template_path, channel_name, grid="co2"):
+    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
+    if channel_name == 'tp':
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
+        return ds[0]
+    elif channel_name in levtype_index_sfc.metadata("shortName"):
+        idx = levtype_index_sfc.metadata("shortName").index(channel_name)
+        levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
+        levelval = levtype_index_sfc[idx].metadata("level")
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        return ds[0].clone(level=levelval)
+    else:
+        raise ValueError(f'channel {channel_name} not found. pressure levels not yet supported')
+    #TODO: Get pressure level index as well
+    #levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
+
+
+def pad_image(image, padding_margin, fill_value):
+    new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
+    new_image[padding_margin:-padding_margin, padding_margin:-padding_margin] = image
+    return new_image
 
 @DeprecationWarning
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
