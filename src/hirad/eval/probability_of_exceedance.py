@@ -18,6 +18,7 @@ import xarray as xr
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask
+from hirad.eval.eval_utils import percentiles_from_histogram
 
 
 def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title, ylabel, out_path, percentiles_data=None):
@@ -135,7 +136,7 @@ def main(cfg: dict):
 
     # Initialize dataset
     dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.pop("type")
+    dataset_type = dataset_cfg.get("type")
     dataset = known_datasets[dataset_type](**dataset_cfg)
     logger.info("Dataset initialized")
 
@@ -152,17 +153,28 @@ def main(cfg: dict):
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
     # Define thresholds for exceedance calculation
-    thresholds = np.logspace(-2, 2.1, 200)  # From 0.01 to 100 mm/h
-    
+    thresholds = np.logspace(-2, 3.0, 200)  # From 0.01 to 1000 mm/h
+    n_thresholds = len(thresholds)
+
+    # Histogram bins for percentile estimation (fine-grained log-spaced)
+    hist_bins = np.concatenate([
+        np.array([0.0]),
+        np.logspace(-2, 3.2, 5000) # From 0.01 to ~1585 mm/h
+    ])
+    n_hist_bins = len(hist_bins) - 1
+
     # Storage for exceedance data and land values
-    exceedance_data = {}
-    all_land_values = {}
+    exceedance_counts = {}
+    totals = {}
+    hist_counts = {}  # For percentile estimation
     
     # -- Process target and baseline --
     for mode in ['target', 'baseline', 'regression-prediction']:
         logger.info(f"Processing mode: {mode}")
         
-        all_values = []
+        mode_exc_counts = np.zeros(n_thresholds, dtype=np.int64)
+        mode_total = 0
+        mode_hist = np.zeros(n_hist_bins, dtype=np.int64)
         
         try:
             for i, ts in enumerate(times):
@@ -172,27 +184,31 @@ def main(cfg: dict):
                 data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * cfg.get("conv_factor_hourly") * land_mask
                 
                 land_values = data.values[~np.isnan(data.values)]
-                all_values.extend(land_values)
+                n_vals = len(land_values)
+                mode_total += n_vals
+                # Update counts for exceedance calculation
+                mode_exc_counts += np.sum(
+                    land_values[:, None] > thresholds[None, :], axis=0
+                )
+                # Update histogram counts for percentile estimation
+                mode_hist += np.histogram(land_values, bins=hist_bins)[0]
         except:
             logger.warning(f"{mode} data not found, skipping")
             continue
 
         # Compute exceedance probabilities
-        all_values = np.array(all_values)
-        exceedance_probs = []
-        for threshold in thresholds:
-            prob_exceed = np.mean(all_values > threshold)
-            exceedance_probs.append(prob_exceed)
-        
-        exceedance_data[mode] = np.array(exceedance_probs)
-        all_land_values[mode] = all_values
-        logger.info(f"Processed {len(all_values)} land values for {mode}")
+        exceedance_counts[mode] = mode_exc_counts
+        totals[mode] = mode_total
+        hist_counts[mode] = mode_hist
+        logger.info(f"Processed {mode_total} land values for {mode}")
             
     # -- Process predictions: compute exceedance for each ensemble member --
     logger.info("Processing predictions")
     
     n_members = None
-    all_member_values = []
+    member_exc_counts = None
+    member_totals = None
+    member_hist = None
     
     for i, ts in enumerate(times):
         if i % cfg.get("log_interval") == 0:
@@ -202,22 +218,32 @@ def main(cfg: dict):
         
         if n_members is None:
             n_members = preds.shape[0]
-            all_member_values = [[] for _ in range(n_members)]
+            member_exc_counts = [np.zeros(n_thresholds, dtype=np.int64) for _ in range(n_members)]
+            member_totals = [0] * n_members
+            member_hist = [np.zeros(n_hist_bins, dtype=np.int64) for _ in range(n_members)]
         
         for member_idx in range(n_members):
             data = preds[member_idx, tp_out] * land_mask
             land_values = data.values[~np.isnan(data.values)]
-            all_member_values[member_idx].extend(land_values)
+            n_vals = len(land_values)
+            member_totals[member_idx] += n_vals
+            member_exc_counts[member_idx] += np.sum(
+                land_values[:, None] > thresholds[None, :], axis=0
+            )
+            member_hist[member_idx] += np.histogram(land_values, bins=hist_bins)[0]
     
-    # Compute exceedance probabilities for each ensemble member
+    # Compute exceedance probabilities
+    exceedance_data = {}
+    for mode in ['target', 'baseline', 'regression-prediction']:
+        if mode in exceedance_counts and totals[mode] > 0:
+            exceedance_data[mode] = exceedance_counts[mode] / totals[mode]
+
     member_exceedance_data = []
     for member_idx in range(n_members):
-        member_values = np.array(all_member_values[member_idx])
-        member_exceedance = []
-        for threshold in thresholds:
-            prob_exceed = np.mean(member_values > threshold)
-            member_exceedance.append(prob_exceed)
-        member_exceedance_data.append(np.array(member_exceedance))
+        if member_totals[member_idx] > 0:
+            member_exceedance_data.append(
+                member_exc_counts[member_idx] / member_totals[member_idx]
+            )
     
     exceedance_data['predictions'] = tuple(member_exceedance_data)
     
@@ -226,24 +252,20 @@ def main(cfg: dict):
     # Compute percentiles for all datasets
     percentiles_data = {}
     percentiles = {99: 0.99, 99.9: 0.999, 99.99: 0.9999}
-    
-    # Target and baseline percentiles
+
+    # Estimating percentiles from fine-grained histograms
     for mode in ['target', 'baseline', 'regression-prediction']:
-        if mode in all_land_values:
-            data_array = xr.DataArray(all_land_values[mode])
-            percentiles_data[mode] = {
-                key: data_array.quantile(p).item() 
-                for key, p in percentiles.items()
-            }
-    
-    # Ensemble member percentiles
+        if mode in hist_counts and totals[mode] > 0:
+            percentiles_data[mode] = percentiles_from_histogram(
+                hist_counts[mode], hist_bins, percentiles
+            )
+
     percentiles_data['predictions'] = {}
     for member_idx in range(n_members):
-        member_data_array = xr.DataArray(all_member_values[member_idx])
-        percentiles_data['predictions'][f'member_{member_idx}'] = {
-            key: member_data_array.quantile(p).item()
-            for key, p in percentiles.items()
-        }
+        if member_totals[member_idx] > 0:
+            percentiles_data['predictions'][f'member_{member_idx}'] = percentiles_from_histogram(
+                member_hist[member_idx], hist_bins, percentiles
+            )
     
     # Create exceedance plots
     labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data else ['Target', 'Input', 'CorrDiff Ensemble']
