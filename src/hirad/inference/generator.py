@@ -106,7 +106,7 @@ class Generator():
                         rank_batches=self.rank_batches,
                         img_lr=image_lr.expand(
                             self.batch_size, -1, -1, -1
-                        ).to(memory_format=torch.channels_last), #.to(memory_format=torch.channels_last),
+                        ).to(memory_format=torch.channels_last),
                         rank=self.dist.rank,
                         device=image_lr.device,
                         mean_hr=mean_hr,

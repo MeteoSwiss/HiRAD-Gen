@@ -245,15 +245,11 @@ def diffusion_step(
 
 def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
     os.makedirs(output_path, exist_ok=True)
-    target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
-    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
-    baseline = np.flip(dataset.denormalize_input(image_lr)[0,::].squeeze(),1)
     if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1)
         torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
-    torch.save(target, os.path.join(output_path, f'{time_step}-target'))
-    torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
-    torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+    torch.save(image_hr, os.path.join(output_path, f'{time_step}-target'))
+    torch.save(image_pred, os.path.join(output_path, f'{time_step}-predictions'))
+    torch.save(image_lr, os.path.join(output_path, f'{time_step}-baseline'))
 
 @DeprecationWarning
 def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   

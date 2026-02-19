@@ -45,12 +45,14 @@ def main(cfg: DictConfig) -> None:
     input_dtype = torch.float16 if cfg.generation.perf.get("force_fp16", False) and use_apex_gn else torch.float32
 
     # Parse the inference input times
-    if cfg.generation.times_range and cfg.generation.times:
+    if cfg.generation.get("times_range", None) and cfg.generation.get("times", None):
         raise ValueError("Either times_range or times must be provided, but not both")
-    if cfg.generation.times_range:
+    if cfg.generation.get("times_range", None):
         times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
-    else:
+    elif cfg.generation.get("times", None):
         times = cfg.generation.times
+    else:
+        raise ValueError("Either times_range or times must be provided")
 
     # Create dataset object
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
@@ -61,6 +63,7 @@ def main(cfg: DictConfig) -> None:
     dataset, sampler = get_dataset_and_sampler_inference(
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
+    dataset.stats_to_torch(device=dist.device, dtype=input_dtype)
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
 
@@ -222,7 +225,7 @@ def main(cfg: DictConfig) -> None:
 
             static_channels = dataset.get_static_data()
             if static_channels is not None:
-                static_channels = static_channels[None, ::]
+                static_channels = static_channels[None, ::].flip(-2)
                 if use_apex_gn:
                     static_channels = static_channels.to(
                         dist.device,
@@ -255,16 +258,10 @@ def main(cfg: DictConfig) -> None:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
                 else:
                     lead_time_label = None
-                image_lr = dataset.interpolator(image_lr.to(dist.device)).reshape(*image_lr.shape[:-1], *image_tar.shape[-2:]).flip(-2)
-                image_lr = (
-                    image_lr.to(device=device)
-                    .to(input_dtype)
-                    .to(memory_format=torch.channels_last)
-                )
-                image_tar = image_tar.to(device=device).to(torch.float32)
-                # image_out, image_reg = generate_fn(image_lr,lead_time_label)
+                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *image_tar.shape[-2:]).flip(-2)
+                image_lr = dataset.normalize_input(image_lr)
+                image_lr = image_lr.to(memory_format=torch.channels_last)
                 random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
-                # print(f"On rank {dist.rank} using base random seed: {random_seed} for time index {time_index}")
                 date_embedding = None
                 if dataset._n_month_hour_channels:
                     date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
@@ -280,17 +277,22 @@ def main(cfg: DictConfig) -> None:
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
-                    
+                    image_tar = image_tar[0].squeeze().flip(-2).cpu().numpy()
+                    prediction_ensemble = dataset.denormalize_output(image_out).squeeze().flip(-2).cpu().numpy()
+                    baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
+                    if image_reg is not None:
+                        mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
+
                     writer_threads.append(
                         writer_executor.submit(
                             save_results_as_torch,
                             savedir,
                             times[sampler[time_index]],
                             dataset,
-                            image_out.cpu().numpy(),
-                            image_tar.cpu().numpy(),
-                            image_lr.cpu().numpy(),
-                            image_reg.cpu().numpy() if image_reg is not None else None,
+                            prediction_ensemble,
+                            image_tar,
+                            baseline,
+                            mean_pred if image_reg is not None else None,
                         )
                     )
             end.record()

@@ -488,9 +488,13 @@ def main(cfg: DictConfig) -> None:
     elif fp16:
         input_dtype = torch.float16
 
+    # convert dataset stats to torch tensors on the correct device for later use in loss normalization and denormalization
+    dataset.stats_to_torch(device=dist.device, dtype=input_dtype)
+    normalization_stats = dataset.normalization_stats()
+
     # prepare static channels if there are any
     if static_channels is not None:
-        static_channels = static_channels[None, ::]
+        static_channels = static_channels[None, ::].flip(-2)
         if use_apex_gn:
             static_channels = static_channels.to(
                 dist.device,
@@ -537,7 +541,9 @@ def main(cfg: DictConfig) -> None:
                                     dataset_iterator
                                 )
                                 tick_read_time = time.time() - tick_read_start_time
-                                img_lr = dataset.interpolator(img_lr.to(dist.device)).reshape(*img_lr.shape[:-1], *img_shape).flip(-2)
+                                img_lr = dataset.interpolator(img_lr.to(dist.device, dtype=input_dtype)).reshape(*img_lr.shape[:-1], *img_shape).flip(-2)
+                                img_lr = dataset.normalize_input(img_lr)
+                                img_clean = dataset.normalize_output(img_clean.to(dist.device, dtype=input_dtype))
                                 date_embedding = None
                                 if n_month_hour_channels > 0:
                                     date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
@@ -714,6 +720,8 @@ def main(cfg: DictConfig) -> None:
                                         *date_str,
                                     ) = next(validation_dataset_iterator)
                                     img_lr_valid = dataset.interpolator(img_lr_valid.to(dist.device)).reshape(*img_lr_valid.shape[:-1], *img_shape).flip(-2)
+                                    img_lr_valid = dataset.normalize_input(img_lr_valid)
+                                    img_clean_valid = dataset.normalize_output(img_clean_valid.to(dist.device, dtype=input_dtype))
                                     date_embedding = None
                                     if n_month_hour_channels > 0:
                                         date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)

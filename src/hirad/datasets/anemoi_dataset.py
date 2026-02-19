@@ -46,14 +46,14 @@ class AnemoiDataset(DownscalingDataset):
 
         input_dataset = type.split('_')[1]
         target_dataset = type.split('_')[2]
-        real_target = target_dataset == 'real'
+        self.real_target = target_dataset == 'real'
 
         if input_dataset != 'era5':
             raise ValueError(f"Input dataset {input_dataset} not supported for AnemoiDataset. Only 'era5' is supported.")
         if target_dataset != 'cosmo' and target_dataset !='real':
             raise ValueError(f"Target dataset {target_dataset} not supported for AnemoiDataset. Only 'cosmo' and 'real' are supported.")
 
-        if real_target:
+        if self.real_target:
             # Map output channel names from real to era5
             output_channel_names_real = [ERA_TO_REAL_CHANNEL_MAP[name] for name in output_channel_names]
 
@@ -62,9 +62,9 @@ class AnemoiDataset(DownscalingDataset):
         self._n_month_hour_channels = n_month_hour_channels
         if start_date is not None and end_date is not None:
             assert start_date < end_date, "start_date must be before end_date"
-            self._output_dataset = open_dataset(target_anemoi_dataset_path, select=output_channel_names_real if real_target else output_channel_names, start=start_date, end=end_date, trim_edge=trim_edge)
+            self._output_dataset = open_dataset(target_anemoi_dataset_path, select=output_channel_names_real if self.real_target else output_channel_names, start=start_date, end=end_date, trim_edge=trim_edge)
         else:
-            self._output_dataset = open_dataset(target_anemoi_dataset_path, select=output_channel_names_real if real_target else output_channel_names, trim_edge=trim_edge)
+            self._output_dataset = open_dataset(target_anemoi_dataset_path, select=output_channel_names_real if self.real_target else output_channel_names, trim_edge=trim_edge)
         assert self._output_dataset.shape[1] == len(output_channel_names)
 
         # Load ERA dataset, trimming the area and limiting the dates to the target dataset
@@ -173,7 +173,7 @@ class AnemoiDataset(DownscalingDataset):
             tp_idx = self._input_channels.index(ChannelMetadata('tp'))
             corrected_tp_data = np.load(os.path.join(self._corrected_tp_path, f'{date_str}.npy'))
             input_data[tp_idx,::] = corrected_tp_data
-        input_data = self.normalize_input(input_data)
+        # input_data = self.normalize_input(input_data)
         
         # Pull target data
         # squeeze the ensemble dimesnsion
@@ -185,9 +185,9 @@ class AnemoiDataset(DownscalingDataset):
                 .squeeze() \
                 .reshape(-1,*target_shape),
             1)
-        target_data = self.normalize_output(target_data)
+        # target_data = self.normalize_output(target_data)
 
-        return torch.from_numpy(target_data),\
+        return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\
                 date_str
     
@@ -230,17 +230,46 @@ class AnemoiDataset(DownscalingDataset):
     def input_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the input data."""
         return self._input_dataset.field_shape
+
+    def normalization_stats(self):
+        """Get the mean and std stats for normalizing the input and output data."""
+        return {"input_mean": self.input_mean,
+                "input_std": self.input_std,
+                "output_mean": self.output_mean,
+                "output_std": self.output_std}
+
+    def stats_to_torch(self, device: torch.device, dtype: torch.dtype = torch.float32):
+        """Convert the mean and std stats to torch tensors on the specified device."""
+        self.input_mean = torch.from_numpy(self.input_mean).to(device=device, dtype=dtype)
+        self.input_std = torch.from_numpy(self.input_std).to(device=device, dtype=dtype)
+        self.output_mean = torch.from_numpy(self.output_mean).to(device=device, dtype=dtype)
+        self.output_std = torch.from_numpy(self.output_std).to(device=device, dtype=dtype)
+
+    def stats_to_numpy(self):
+        """Convert the mean and std stats to numpy arrays."""
+        self.input_mean = self.input_mean.cpu().numpy() if isinstance(self.input_mean, torch.Tensor) else self.input_mean
+        self.input_std = self.input_std.cpu().numpy() if isinstance(self.input_std, torch.Tensor) else self.input_std
+        self.output_mean = self.output_mean.cpu().numpy() if isinstance(self.output_mean, torch.Tensor) else self.output_mean
+        self.output_std = self.output_std.cpu().numpy() if isinstance(self.output_std, torch.Tensor) else self.output_std
     
-    def normalize_input(self, x: np.ndarray) -> np.ndarray:
+    def normalize_input(self, x: np.ndarray | torch.Tensor, mean: np.ndarray | torch.Tensor = None, std: np.ndarray | torch.Tensor = None) -> np.ndarray | torch.Tensor:
         """Convert input from physical units to normalized data."""
+        if mean is None:
+            mean = self.input_mean
+        if std is None:
+            std = self.input_std
         for channel_idx, transform in self.input_transforms.items():
-            x[channel_idx,::] = transform(x[channel_idx,::])
-        return (x - self.input_mean[(...,) + (None,) * (x.ndim - 1)]) \
-                / self.input_std[(...,) + (None,) * (x.ndim - 1)]
+            x[:,channel_idx,::] = transform(x[:,channel_idx,::])
+        return (x - self.input_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]) \
+                / self.input_std[(None,) + (...,) + (None,) * (x.ndim - 2)]
 
 
-    def denormalize_input(self, x: np.ndarray) -> np.ndarray:
+    def denormalize_input(self, x: np.ndarray | torch.Tensor, mean: np.ndarray | torch.Tensor = None, std: np.ndarray | torch.Tensor = None) -> np.ndarray | torch.Tensor:
         """Convert input from normalized data to physical units."""
+        if mean is None:
+            mean = self.input_mean
+        if std is None:
+            std = self.input_std
         x = x * self.input_std[(None,) + (...,) + (None,) * (x.ndim - 2)] \
                 + self.input_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]
         for channel_idx, inverse_transform in self.input_inverse_transforms.items():
@@ -248,29 +277,43 @@ class AnemoiDataset(DownscalingDataset):
         return x
 
 
-    def normalize_output(self, x: np.ndarray) -> np.ndarray:
+    def normalize_output(self, x: np.ndarray | torch.Tensor, mean: np.ndarray | torch.Tensor = None, std: np.ndarray | torch.Tensor = None) -> np.ndarray | torch.Tensor:
         """Convert output from physical units to normalized data."""
+        if mean is None:
+            mean = self.output_mean
+        if std is None:
+            std = self.output_std
         for channel_idx, transform in self.output_transforms.items():
-            x[channel_idx,::] = transform(x[channel_idx,::])
-        return (x - self.output_mean[(...,) + (None,) * (x.ndim - 1)]) \
-                / self.output_std[(...,) + (None,) * (x.ndim - 1)]
+            x[:,channel_idx,::] = transform(x[:,channel_idx,::])
+        return (x - self.output_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]) \
+                / self.output_std[(None,) + (...,) + (None,) * (x.ndim - 2)]
 
 
-    def denormalize_output(self, x: np.ndarray) -> np.ndarray:
+    def denormalize_output(self, x: np.ndarray | torch.Tensor, mean: np.ndarray | torch.Tensor = None, std: np.ndarray | torch.Tensor = None) -> np.ndarray | torch.Tensor:
         """Convert output from normalized data to physical units."""
+        if mean is None:
+            mean = self.output_mean
+        if std is None:
+            std = self.output_std
         x = x * self.output_std[(None,) + (...,) + (None,) * (x.ndim - 2)] \
                 + self.output_mean[(None,) + (...,) + (None,) * (x.ndim - 2)]
         for channel_idx, inverse_transform in self.output_inverse_transforms.items():
             x[:,channel_idx,::] = inverse_transform(x[:,channel_idx,::])
         return x
 
-    def box_cox_transform(self, channel_array: np.ndarray, lmbda: float) -> np.ndarray:
+    def box_cox_transform(self, channel_array: np.ndarray | torch.Tensor, lmbda: float) -> np.ndarray | torch.Tensor:
         """Apply Box-Cox transformation to the data."""
+        if isinstance(channel_array, torch.Tensor):
+            channel_array = torch.clamp(channel_array, min=0)
+            return (torch.pow(channel_array, lmbda) - 1) / lmbda
         channel_array = np.clip(channel_array, 0, None)
         return (np.power(channel_array, lmbda) - 1) / lmbda
 
-    def box_cox_inverse_transform(self, channel_array: np.ndarray, lmbda: float) -> np.ndarray:
+    def box_cox_inverse_transform(self, channel_array: np.ndarray | torch.Tensor, lmbda: float) -> np.ndarray | torch.Tensor:
         """Apply inverse Box-Cox transformation to the data."""
+        if isinstance(channel_array, torch.Tensor):
+            channel_array = torch.clamp(channel_array, min=-1/lmbda)
+            return torch.pow((lmbda * channel_array) + 1, 1 / lmbda)
         channel_array = np.clip(channel_array, -1/lmbda, None)
         return np.power((lmbda * channel_array) + 1, 1 / lmbda)
 
