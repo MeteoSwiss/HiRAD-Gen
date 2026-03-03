@@ -50,3 +50,7 @@ io:
   reg_ckpt_path: /path/to/regression/checkpoint
   # Checkpoint filename for the mean predictor model
   output_path: .
+  # Output format: 'torch', 'grib', or 'both'
+  output_format: 'torch'
+  # Grib templates are in EvalML repository
+  grib_template_path: '~/evalml/resources/inference/templates'
