@@ -1,9 +1,23 @@
-FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
+FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.11
     
 # setup
 RUN apt-get update && apt-get install python3-pip python3-venv -y
 RUN pip install --upgrade pip
-    
+
+
+# Install apt dependencies
+RUN apt-get install libgdal-dev libudunits2-dev -y
+
+RUN wget https://github.com/ecmwf/eccodes/archive/refs/tags/2.38.0.tar.gz &&\
+	tar -xzf 2.38.0.tar.gz &&\
+	mkdir eccodes-2.38.0/build
+WORKDIR eccodes-2.38.0/build
+RUN cmake ../../eccodes-2.38.0 -DENABLE_AEC=OFF &&\
+	make &&\
+	ctest &&\
+	make install
+WORKDIR ../../
+
 # Install the rest of dependencies.
 RUN pip install \
     anemoi.datasets \
@@ -11,4 +25,6 @@ RUN pip install \
     xskillscore \
     scoringrules \
     mlflow \
-    meteodata-lab 
+    meteodata-lab \
+    gdal==3.8.0 \
+    earthkit-data
