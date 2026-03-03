@@ -27,9 +27,9 @@ patching: False
 hr_mean_conditioning: True
 # sample_res: full
   # Sampling resolution
-times_range: ['20200601-0000','20200831-2300',1]
+times_range: null #['20200601-0000','20200601-0200',1]
   # Start date, end date and time interval (in hours) for the generation
-times: null
+times: ['20200601-0000']
 has_lead_time: False
 
 perf:
@@ -45,12 +45,10 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  res_ckpt_path: /path/to/diffusion/model/weights
+  res_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/checkpoint_diffusion_8_attention
   # Checkpoint filename for the residual predictor model
-  reg_ckpt_path: /oath/to/regression/model/weigths
+  reg_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/checkpoint_regression_8_attention
   # Checkpoint filename for the mean predictor model
   output_path: .
-  # Output format: 'torch', 'grib', or 'both'
-  output_format: 'torch'
-  # Grib templates are in EvalML repository
+  output_format: 'grib'
   grib_template_path: '~/evalml/resources/inference/templates'

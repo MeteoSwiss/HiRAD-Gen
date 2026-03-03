@@ -171,6 +171,7 @@ def main(cfg: DictConfig) -> None:
     output_format = getattr(cfg.generation.io, "output_format", "torch")
     if output_format not in ['torch', 'grib', 'both']:
         raise ValueError(f'Invalid output format {output_format}, must be \'torch\', \'grib\' or \'both\'')
+    grib_template_path=getattr(cfg.generation.io,"grib_template_path", "")
     logger0.info(f"Generating images, saving results to {output_path}...")
     batch_size = 1
     warmup_steps = min(len(times) - 1, 2)
@@ -266,6 +267,7 @@ def main(cfg: DictConfig) -> None:
                             image_lr.cpu().numpy(),
                             image_reg.cpu().numpy() if image_reg is not None else None,
                             output_format=output_format,
+                            grib_template_path=grib_template_path,
                         )
                     )
             end.record()
