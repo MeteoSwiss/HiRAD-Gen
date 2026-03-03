@@ -208,7 +208,7 @@ def diffusion_step(
 #                           Visualization Utilities                        #
 ############################################################################
 
-def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, output_format='torch'):
+def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, output_format='torch'):
     os.makedirs(output_path, exist_ok=True)
     target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
     prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
@@ -218,14 +218,12 @@ def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr,
     if output_format == 'torch':
         save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred=mean_pred)
     elif output_format == 'grib':
-        # TODO: Do not hard code these.
-        grib_template_path = '~/evalml/'
-        output_fields = ['2t', '10u', '10v', 'tp']
-        grid = 'co2'
-        save_results_as_grib(grib_template_path, output_fields, grid,
-                             output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred=mean_pred)
+    elif output_format == 'both':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred=mean_pred)
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred=mean_pred)
     else:
-        raise ValueError(f'output format {output_format} not supported-- torch or grib supported')
+        raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
 
 def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:
@@ -235,27 +233,42 @@ def save_results_as_torch(output_path, time_step, target, prediction_ensemble, b
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
 
 # Takes templates from EvalML
-def save_results_as_grib(grib_template_path, output_fields, grid,
-                         output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
+def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
+    dataset, grib_template_path):
+    # TODO: provide args
 
+    # Somewhat cheap way of getting the grid.
+    if target.shape[1] == 352:
+        grid='co2'
+    else:
+        grid='co1e'
+
+    input_fields = dataset.input_channels()
+    output_fields = dataset.output_channels()
 
     # Target
-    output_file = os.path.join(output_path, f'target-{time_step}.grib')
-    save_as_grib(output_file, grib_template_path, output_fields, target, grid=grid)
+    output_file = os.path.join(output_path, f'{time_step}-target.grib')
+    save_image_as_grib(output_file, grib_template_path, output_fields, target, grid=grid)
 
     # Baseline
-    output_file = os.path.join(output_path, f'baseline-{time_step}.grib')
+    output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
+    save_image_as_grib(output_file, grib_template_path, input_fields, baseline, grid=grid)
 
     # Prediction - 1 file per ensemble?
+    for i in range(prediction_ensemble.shape[0]):
+        output_file = os.path.join(output_path, f'{time_step}-pred{i:02}')
+        save_image_as_grib(output_file, grib_template_path, output_fields, prediction_ensemble[i,:], grid=grid)
 
     return
 
 
-def save_as_grib(output_filename, grib_template_path, output_fields, image, grid):
+def save_image_as_grib(output_filename, grib_template_path, output_fields, image, grid):
     if grid == "co2":
         padding_margin = 19
+    elif grid == "co1e":
+        padding_margin = 41
     else:
-        raise ValueError("only co2 grid supported")
+        raise ValueError("only co1e and co2 grid supported")
     metadata = []
     fields = []
     for i in range(len(output_fields)):
