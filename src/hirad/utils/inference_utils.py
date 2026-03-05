@@ -286,7 +286,9 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
     logging.info(f'ds_r is {ds_r.ls()}')
     # Metadata is not propagated, for some reason-- all channels have same metadata as ds[0] (2t).
     # However, values are preserved properly.
-    ekd.to_target("file", output_filename, data=ds_r)
+    with ekd.create_target("file",output_filename) as t:
+        for f in ds_r:
+            t.write(f)
 
 # grid: co2 (COSMO-2), or co1e (COSMO-1E)
 def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
