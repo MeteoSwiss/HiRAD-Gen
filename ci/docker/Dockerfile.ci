@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
+FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-alps4-dev
     
 # setup
 RUN apt-get update && apt-get install python3-pip python3-venv -y
