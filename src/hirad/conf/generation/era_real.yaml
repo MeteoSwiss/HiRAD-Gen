@@ -45,12 +45,12 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  res_ckpt_path: /path/to/diffusion/checkpoint
+  res_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/latest_diffusion_era_realch1
   # Checkpoint filename for the residual predictor model
-  reg_ckpt_path: /path/to/regression/checkpoint
+  reg_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/latest_regression_era_realch1
   # Checkpoint filename for the mean predictor model
   output_path: .
   # Output format: 'torch', 'grib', or 'both'
-  output_format: 'torch'
+  output_format: 'grib'
   # Grib templates are in EvalML repository
   grib_template_path: '~/evalml/resources/inference/templates'

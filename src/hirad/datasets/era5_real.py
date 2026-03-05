@@ -12,8 +12,7 @@ from hirad.utils.console import PythonLogger
 
 logger = PythonLogger(__name__)
 
-DATASET_ORIG_PATH = '/iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-realch1/v1.0-channel-subset'
-
+DATASET_ORIG_PATH = '/capstor/store/cscs/pasc/c38/old-input-data/basic-torch/era5-realch1/v1.0/era-copernicus-interpolated/'
 ERA5_TO_REAL_CHANNEL_MAP = {
     '2t': 'TD_2M',
     '10u': 'U_10M',
