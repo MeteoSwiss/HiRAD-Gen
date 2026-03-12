@@ -702,7 +702,7 @@ def main(cfg: DictConfig) -> None:
                                         )
                                         if dataset.trim_edge > 0:
                                             img_clean_valid = img_clean_valid[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
-                                        img_clean = img_clean.flip(-2)
+                                        img_clean_valid = img_clean_valid.flip(-2)
                                     else:
                                         img_clean_valid = img_clean_valid.to(dist.device, dtype=input_dtype)
                                     img_clean_valid = dataset.normalize_output(img_clean_valid)
