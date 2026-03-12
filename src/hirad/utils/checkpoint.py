@@ -175,11 +175,15 @@ def save_checkpoint(
 
     # == Saving model checkpoint ==
     if model is not None:
+        # Strip out optimization wrapper if exists before stripping DDP
+        if isinstance(model, torch._dynamo.eval_frame.OptimizedModule):
+            model = model._orig_mod
+
         if hasattr(model, "module"):
             # Strip out DDP layer
             model = model.module
 
-        # Strip out optimization wrapper if exists
+        # Strip out optimization wrapper if exists after stripping DDP
         if isinstance(model, torch._dynamo.eval_frame.OptimizedModule):
             model = model._orig_mod
         

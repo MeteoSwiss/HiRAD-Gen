@@ -104,6 +104,21 @@ def handle_and_clip_gradients(model, grad_clip_threshold=None):
         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_threshold)
 
 
+def check_model_health(model, step, logger):
+    for name, param in model.named_parameters():
+        # Check weights
+        if not torch.isfinite(param).all():
+            logger.warning(f"!!! Weights in {name} went NaN at step {step}")
+            return False
+        
+        # Check gradients
+        if param.grad is not None:
+            if not torch.isfinite(param.grad).all():
+                logger.warning(f"!!! Gradients in {name} went NaN at step {step}")
+                return False
+    return True
+
+
 def is_time_for_periodic_task(
     cur_nimg, freq, done, batch_size, rank, rank_0_only=False
 ):
@@ -116,15 +131,15 @@ def is_time_for_periodic_task(
         return cur_nimg % freq < batch_size
 
 
-def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
+def init_mlflow(cfg: DictConfig, dist: DistributedManager, write_dir: str=".") -> None:
     if dist.rank==0:
         print("Started activating initial mlflow run")
         if cfg.logging.uri is not None:
             mlflow.set_tracking_uri(cfg.logging.uri)
         mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
         run_id = None
-        if os.path.isfile('run_id.txt'):
-            with open('run_id.txt','r') as f:
+        if os.path.isfile(os.path.join(write_dir, 'run_id.txt')):
+            with open(os.path.join(write_dir, 'run_id.txt'),'r') as f:
                 run_id = f.read()
         if dist.world_size<=4:
             mlflow.system_metrics.set_system_metrics_node_id("node-0")
@@ -134,7 +149,7 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
             mlflow.start_run(run_name=cfg.logging.run_name, log_system_metrics=False if dist.world_size>4 else True)
         if run_id is None:
             run = mlflow.active_run()
-            with open("run_id.txt", 'w') as f:
+            with open(os.path.join(write_dir, "run_id.txt"), 'w') as f:
                 f.write(run.info.run_id)
             # log environment info if run is not continuing from previous checkpoint
             mlflow.log_params(flatten_dict(OmegaConf.to_object(cfg)))
@@ -155,6 +170,6 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager) -> None:
                                                          if dist.rank!=1
                                                          else "node-0")
         mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
-        with open("run_id.txt", 'r') as f:
+        with open(os.path.join(write_dir, "run_id.txt"), 'r') as f:
             run_id = f.read()
         mlflow.start_run(run_id=run_id, log_system_metrics=True)

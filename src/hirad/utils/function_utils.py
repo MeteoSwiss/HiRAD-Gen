@@ -163,7 +163,7 @@ class InfiniteSampler(torch.utils.data.Sampler[int]):  # pragma: no cover
         self.seed = seed
         self.window_size = window_size
         self.start_idx = start_idx
-
+        
     def __iter__(self) -> Iterator[int]:
         order = np.arange(len(self.dataset))
         rnd = None
@@ -173,12 +173,14 @@ class InfiniteSampler(torch.utils.data.Sampler[int]):  # pragma: no cover
             rnd.shuffle(order)
             window = int(np.rint(order.size * self.window_size))
 
-        idx = self.start_idx
+        idx = self.start_idx % order.size
         while True:
             i = idx % order.size
             if idx % self.num_replicas == self.rank:
                 yield order[i]
-            if window >= 2:
-                j = (i - rnd.randint(window)) % order.size
+            if window >= 2 and i>0:
+                window_size = min(i+1, window)
+                j = (i - rnd.randint(window_size)) % order.size
                 order[i], order[j] = order[j], order[i]
             idx += 1
+            idx = idx % order.size
