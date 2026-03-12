@@ -4,6 +4,48 @@ from scipy.spatial import Delaunay
 from typing import Optional
 
 
+def regrid_icon_to_rotlatlon(
+    data: torch.Tensor,
+    indices: torch.Tensor,
+    weights: torch.Tensor,
+    nx: int = 1170,
+    ny: int = 786,
+) -> torch.Tensor:
+    """Regrid ICON unstructured data to a rotated lat-lon grid.
+
+    Parameters
+    ----------
+    data : torch.Tensor
+        Input data with the last axis being the unstructured grid dimension.
+    indices : torch.LongTensor
+        Remap indices of shape (n_target, n_stencil).
+    weights : torch.Tensor
+        Remap weights of shape (n_target, n_stencil).
+    nx, ny : int
+        Output grid dimensions.
+
+    Returns
+    -------
+    torch.Tensor
+        Regridded data of shape (*(batch,channel), ny, nx).
+    """
+    out_shape = data.shape[:-1] + (ny, nx)
+
+    # Gather stencil values: (..., n_target, n_stencil)
+    # indices: (n_target, n_stencil) -> expand to match data batch dims
+    values = data[..., indices]                     # (..., n_target, n_stencil)
+
+    # Weighted sum: multiply then reduce over stencil dim
+    result = (values * weights).sum(dim=-1)         # (..., n_target)
+
+    # Clamp to stencil min/max to avoid extrapolation
+    vmin = values.amin(dim=-1)
+    vmax = values.amax(dim=-1)
+    result = result.clamp(min=vmin, max=vmax)
+
+    return result.reshape(out_shape)
+
+
 class GridData():
     """
     Performs interpolation from irregular points to target grid using Delaunay triangulation.

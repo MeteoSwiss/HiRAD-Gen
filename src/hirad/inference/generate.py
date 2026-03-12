@@ -16,6 +16,7 @@ from hirad.inference import Generator
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
+from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 
 from hirad.datasets import get_dataset_and_sampler_inference
 
@@ -64,6 +65,10 @@ def main(cfg: DictConfig) -> None:
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
     dataset.stats_to_torch(device=dist.device, dtype=input_dtype)
+    is_real_target = dataset_cfg.get("type").split("_")[-1] == "real"
+    if is_real_target:
+        dataset.regrid_indices_real = dataset.regrid_indices_real.to(dist.device)
+        dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)      
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
 
@@ -254,11 +259,19 @@ def main(cfg: DictConfig) -> None:
                 savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
                 os.makedirs(savedir,exist_ok=True)
                 # continue
+                if is_real_target:
+                    image_tar = regrid_icon_to_rotlatlon(
+                        image_tar.to(dist.device, dtype=input_dtype),
+                        dataset.regrid_indices_real,
+                        dataset.regrid_weights_real,
+                    )
+                    if dataset.trim_edge > 0:
+                        image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
                 if lead_time_label:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
                 else:
                     lead_time_label = None
-                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *image_tar.shape[-2:]).flip(-2)
+                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
                 image_lr = dataset.normalize_input(image_lr)
                 image_lr = image_lr.to(memory_format=torch.channels_last)
                 random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
@@ -282,13 +295,11 @@ def main(cfg: DictConfig) -> None:
                     baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
                     if image_reg is not None:
                         mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
-
                     writer_threads.append(
                         writer_executor.submit(
                             save_results_as_torch,
                             savedir,
                             times[sampler[time_index]],
-                            dataset,
                             prediction_ensemble,
                             image_tar,
                             baseline,

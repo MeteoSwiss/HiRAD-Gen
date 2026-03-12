@@ -24,11 +24,12 @@ logger = PythonLogger(__name__)
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 INPUT_MARGIN_DEGREES = 0.5
 
-class AnemoiDataset(DownscalingDataset):
+class AnemoiDatasetCopernicus(DownscalingDataset):
     def __init__(self,
                 type: str,
                 input_anemoi_dataset_path: str,
                 target_anemoi_dataset_path: str,
+                corrected_tp_path: str,
                 start_date: datetime.datetime = None,
                 end_date: datetime.datetime = None,
                 input_channel_names: List[str] = [], 
@@ -44,7 +45,7 @@ class AnemoiDataset(DownscalingDataset):
                 ):
         super().__init__()
 
-        input_dataset = type.split('_')[-2]
+        input_dataset = type.split('_')[1]
         target_dataset = type.split('_')[-1]
         self.real_target = target_dataset == 'real'
         self.trim_edge = trim_edge
@@ -61,6 +62,7 @@ class AnemoiDataset(DownscalingDataset):
             self.regrid_indices_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_indices.npy")).long()
             self.regrid_weights_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_weights.npy"))
 
+        self._corrected_tp_path = corrected_tp_path
         #TODO switch hanbdling paths to Path rather than pure strings
         self._n_month_hour_channels = n_month_hour_channels
         target_open_dataset_kwargs = {}
@@ -180,22 +182,27 @@ class AnemoiDataset(DownscalingDataset):
 
         # Pull input, replacing the corrected tp if applicable
         date_str = to_datetime(self._input_dataset.dates[idx]).strftime('%Y%m%d-%H%M')
-        
         # Don't reshape, but do squeeze ensemble dimension.
         input_data = self._input_dataset[idx].squeeze()
+        # TODO: Consider generalizing this to other channels, in case we have cp.
+        if ChannelMetadata('tp') in self._input_channels:
+            tp_idx = self._input_channels.index(ChannelMetadata('tp'))
+            corrected_tp_data = np.load(os.path.join(self._corrected_tp_path, f'{date_str}.npy'))
+            input_data[tp_idx,::] = corrected_tp_data
+        # input_data = self.normalize_input(input_data)
         
         # Pull target data
         # squeeze the ensemble dimesnsion
-        target_data = self._output_dataset[idx].squeeze()
-        
         # next two steps only if target is cosmo, real has to be regridded first (done in training loop on gpu-s for efficiency)
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
+        target_shape = self.image_shape()
+        target_data = self._output_dataset[idx].squeeze()
         if not self.real_target:
-            target_shape = self.image_shape()
             target_data = np.flip(target_data \
                     .reshape(-1,*target_shape),
                 1)
+        # target_data = self.normalize_output(target_data)
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\
@@ -399,5 +406,5 @@ class AnemoiDataset(DownscalingDataset):
 
         return feats
 
-ANEMOI_ERA5_REAL = AnemoiDataset
-ANEMOI_ERA5_COSMO = AnemoiDataset
+ANEMOI_ERA5COPERNICUSTP_REAL = AnemoiDatasetCopernicus
+ANEMOI_ERA5COPERNICUSTP_COSMO = AnemoiDatasetCopernicus
