@@ -224,11 +224,8 @@ class EDMPrecondSuperResolution(nn.Module):
         torch.Tensor
             Tensor representation of sigma values.
 
-        See Also
-        --------
-        EDMPrecond.round_sigma
         """
-        return EDMPrecond.round_sigma(sigma)
+        return torch.as_tensor(sigma)
 
     @property
     def amp_mode(self):
