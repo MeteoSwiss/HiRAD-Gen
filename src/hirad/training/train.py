@@ -29,7 +29,7 @@ from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.models import UNet, EDMPrecondSuperResolution
-from hirad.losses import ResidualLoss, RegressionLoss, RegressionLossCE
+from hirad.losses import ResidualLoss, RegressionLoss
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
 from hirad.inference import Generator
 
@@ -393,8 +393,6 @@ def main(cfg: DictConfig) -> None:
         )
     elif cfg.model.name == "regression":
         loss_fn = RegressionLoss()
-    elif cfg.model.name == "lt_aware_ce_regression":
-        loss_fn = RegressionLossCE(prob_channels=prob_channels)
 
     # Instantiate the optimizer
     optimizer = torch.optim.Adam(

@@ -290,7 +290,7 @@ def main(cfg: DictConfig) -> None:
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
-                    image_tar = image_tar[0].squeeze().flip(-2).cpu().numpy()
+                    image_tar = image_tar[0].squeeze().cpu().numpy()
                     prediction_ensemble = dataset.denormalize_output(image_out).squeeze().flip(-2).cpu().numpy()
                     baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
                     if image_reg is not None:

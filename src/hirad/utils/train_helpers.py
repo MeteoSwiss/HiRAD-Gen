@@ -130,7 +130,11 @@ def is_time_for_periodic_task(
     else:
         return cur_nimg % freq < batch_size
 
-
+#TODO: When mlflow is working locally on a multi-node job, it runs into issue with writing
+# to the same SQLite file. The current workaround is to only log system metrics from the
+# main process. Find a workaround to log system metrics from all processes without causing 
+# conflicts in the SQLite file, such as using separate files for each process or using 
+# a different backend for mlflow tracking.
 def init_mlflow(cfg: DictConfig, dist: DistributedManager, write_dir: str=".") -> None:
     if dist.rank==0:
         print("Started activating initial mlflow run")
@@ -141,7 +145,7 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager, write_dir: str=".") -
         if os.path.isfile(os.path.join(write_dir, 'run_id.txt')):
             with open(os.path.join(write_dir, 'run_id.txt'),'r') as f:
                 run_id = f.read()
-        if dist.world_size<=4:
+        if dist.world_size<=4 or cfg.logging.uri is None:
             mlflow.system_metrics.set_system_metrics_node_id("node-0")
         if run_id:
             mlflow.start_run(run_id=run_id, log_system_metrics=False if dist.world_size>4 else True)
@@ -162,14 +166,15 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager, write_dir: str=".") -
     if dist.world_size > 4:
         torch.distributed.barrier()
 
-    if (dist.rank!=0 and dist._local_rank==0) or (dist.rank==1 and dist.world_size>4):
-        print("Started actvating sub mlflow run.")
-        if cfg.logging.uri is not None:
+    if cfg.logging.uri is not None:
+        if (dist.rank!=0 and dist._local_rank==0) or (dist.rank==1 and dist.world_size>4):
+            print("Started actvating sub mlflow run.")
+            
             mlflow.set_tracking_uri(cfg.logging.uri)
-        mlflow.system_metrics.set_system_metrics_node_id(f"node-{(dist.rank//4)}" 
-                                                         if dist.rank!=1
-                                                         else "node-0")
-        mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
-        with open(os.path.join(write_dir, "run_id.txt"), 'r') as f:
-            run_id = f.read()
-        mlflow.start_run(run_id=run_id, log_system_metrics=True)
+            mlflow.system_metrics.set_system_metrics_node_id(f"node-{(dist.rank//4)}" 
+                                                            if dist.rank!=1
+                                                            else "node-0")
+            mlflow.set_experiment(experiment_name=cfg.logging.experiment_name)
+            with open(os.path.join(write_dir, "run_id.txt"), 'r') as f:
+                run_id = f.read()
+            mlflow.start_run(run_id=run_id, log_system_metrics=True)
