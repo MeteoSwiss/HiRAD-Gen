@@ -13,7 +13,7 @@ from hirad.utils.console import PythonLogger
 logger = PythonLogger(__name__)
 
 # DATASET_ORIG_PATH = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full'
-DATASET_ORIG_PATH = "/iopsstor/scratch/cscs/mmcgloho/basic-numpy/era5-cosmo-1h-all-channels/train/"
+DATASET_ORIG_PATH = "/capstor/store/cscs/pasc/c38/basic-numpy/basic-numpy/era5-cosmo-1h-all-channels/train"
 
 class ERA5_COSMO(DownscalingDataset):
     def __init__(self, 
@@ -31,6 +31,8 @@ class ERA5_COSMO(DownscalingDataset):
         #TODO switch hanbdling paths to Path rather than pure strings
         self._n_month_hour_channels = n_month_hour_channels
         self._dataset_path = dataset_path
+        print(f"Loading ERA5-COSMO dataset from path: {dataset_path}")
+        print(f"Input dir name: {input_dir_name}, output dir name: {output_dir_name}")
         self._era5_path = os.path.join(dataset_path, input_dir_name)
         self._cosmo_path = os.path.join(dataset_path, output_dir_name)
         self._info_path = os.path.join(DATASET_ORIG_PATH, 'info')
