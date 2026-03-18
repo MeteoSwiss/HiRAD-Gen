@@ -2,11 +2,9 @@ FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-al
 
 WORKDIR /sourcecode
 
-setup
+# setup
 RUN pip install --upgrade \
         pip
-
-WORKDIR ../../
 
 # install dependencies
 RUN pip install mlflow
