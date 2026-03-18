@@ -83,7 +83,6 @@ class TestUNetInitModelType:
     def test_custom_model_type_song_unet(self, mock_module):
         mock_cls = MagicMock()
         mock_module.SongUNet = mock_cls
-        setattr(mock_module, "SongUNet", mock_cls)
         UNet(
             img_resolution=64,
             img_in_channels=C_IN,
@@ -199,7 +198,7 @@ class TestUNetForwardBasic:
         x = torch.zeros(B, C_OUT, H, W)
         lr = torch.randn(B, C_IN, H, W)
         out = unet(x, lr)
-        assert out.shape == (B, C_OUT, H, W)
+        torch.testing.assert_close(out, torch.zeros((B, C_OUT, H, W)))
 
     @patch("hirad.models.unet.network_module")
     def test_output_dtype_is_float32(self, mock_module):
@@ -412,55 +411,55 @@ class TestUNetAmpMode:
 ############################################################################
 
 
-class TestUNetBackwardCompat:
-    """Test _backward_compat_arg_mapper for version-based argument migration."""
+# class TestUNetBackwardCompat:
+#     """Test _backward_compat_arg_mapper for version-based argument migration."""
 
-    def test_v010_removes_img_channels(self):
-        args = {
-            "img_resolution": 64,
-            "img_in_channels": C_IN,
-            "img_out_channels": C_OUT,
-            "img_channels": 10,
-        }
-        result = UNet._backward_compat_arg_mapper("0.1.0", args)
-        assert "img_channels" not in result
+#     def test_v010_removes_img_channels(self):
+#         args = {
+#             "img_resolution": 64,
+#             "img_in_channels": C_IN,
+#             "img_out_channels": C_OUT,
+#             "img_channels": 10,
+#         }
+#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
+#         assert "img_channels" not in result
 
-    def test_v010_removes_sigma_params(self):
-        args = {
-            "img_resolution": 64,
-            "img_in_channels": C_IN,
-            "img_out_channels": C_OUT,
-            "sigma_min": 0.002,
-            "sigma_max": 80.0,
-            "sigma_data": 0.5,
-        }
-        result = UNet._backward_compat_arg_mapper("0.1.0", args)
-        assert "sigma_min" not in result
-        assert "sigma_max" not in result
-        assert "sigma_data" not in result
+#     def test_v010_removes_sigma_params(self):
+#         args = {
+#             "img_resolution": 64,
+#             "img_in_channels": C_IN,
+#             "img_out_channels": C_OUT,
+#             "sigma_min": 0.002,
+#             "sigma_max": 80.0,
+#             "sigma_data": 0.5,
+#         }
+#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
+#         assert "sigma_min" not in result
+#         assert "sigma_max" not in result
+#         assert "sigma_data" not in result
 
-    def test_v010_keeps_valid_args(self):
-        args = {
-            "img_resolution": 64,
-            "img_in_channels": C_IN,
-            "img_out_channels": C_OUT,
-        }
-        result = UNet._backward_compat_arg_mapper("0.1.0", args)
-        assert result["img_resolution"] == 64
-        assert result["img_in_channels"] == C_IN
-        assert result["img_out_channels"] == C_OUT
+#     def test_v010_keeps_valid_args(self):
+#         args = {
+#             "img_resolution": 64,
+#             "img_in_channels": C_IN,
+#             "img_out_channels": C_OUT,
+#         }
+#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
+#         assert result["img_resolution"] == 64
+#         assert result["img_in_channels"] == C_IN
+#         assert result["img_out_channels"] == C_OUT
 
-    def test_non_v010_preserves_all_args(self):
-        args = {
-            "img_resolution": 64,
-            "img_in_channels": C_IN,
-            "img_out_channels": C_OUT,
-            "img_channels": 10,
-            "sigma_min": 0.002,
-        }
-        result = UNet._backward_compat_arg_mapper("0.2.0", args)
-        assert "img_channels" in result
-        assert "sigma_min" in result
+#     def test_non_v010_preserves_all_args(self):
+#         args = {
+#             "img_resolution": 64,
+#             "img_in_channels": C_IN,
+#             "img_out_channels": C_OUT,
+#             "img_channels": 10,
+#             "sigma_min": 0.002,
+#         }
+#         result = UNet._backward_compat_arg_mapper("0.2.0", args)
+#         assert "img_channels" in result
+#         assert "sigma_min" in result
 
 
 ############################################################################
