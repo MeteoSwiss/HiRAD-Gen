@@ -8,5 +8,3 @@ pip
 RUN pip install mlflow
 
 RUN pip install -e /sourcecode --no-dependencies
-
-WORKDIR /sourcecode

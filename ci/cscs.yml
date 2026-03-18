@@ -19,7 +19,7 @@ test_job:
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-     - pytest tests/ -v
+     - pytest sourcecode/tests/ -v
   variables:
     USE_MPI: NO
     SLURM_MPI_TYPE: pmix
@@ -27,5 +27,3 @@ test_job:
     PMIX_MCA_psec: native
     SLURM_JOB_NUM_NODES: 1
     SLURM_NTASKS: 1
-    #SLURM_ACCOUNT: a161
-    #SBATCH_ACCOUNT: a161
