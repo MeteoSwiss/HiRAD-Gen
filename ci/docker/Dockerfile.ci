@@ -4,6 +4,8 @@ RUN pwd
 
 RUN ls
 
+RUN ls /sourcecode
+
 # setup
 # RUN pip install --upgrade \
 #         pip
