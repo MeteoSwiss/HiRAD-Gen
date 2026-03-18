@@ -2,10 +2,59 @@
 
 HiRAD-Gen is short for high-resolution atmospheric downscaling using generative models. This repository contains the code and configuration required to train and use the model.
 
-[Inference - clariden/santis](#running-inference-on-alps)  
+[Showcase](#Showcase)  
 [Setup - clariden/santis](#setup-claridensantis)   
+[Inference - clariden/santis](#running-inference-on-alps)  
 [Regression training - clariden/santis](#run-regression-model-training-alps)  
 [Diffusion training - clariden/santis](#run-diffusion-model-training-alps)  
+
+## Showcase
+
+<table>
+  <tr>
+    <th width="5%"></th>
+    <th width="31%">Input ERA5</th>
+    <th width="31%">Prediction</th>
+    <th width="31%">Target REAL-CH1</th>
+  </tr>
+  <tr>
+    <td><b>2t</b></td>
+    <td><img src="docs/images/showcase/2t-input.png" width="100%"></td>
+    <td><img src="docs/images/showcase/2t-pred.png" width="100%"></td>
+    <td><img src="docs/images/showcase/2t-target.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><b>10u</b></td>
+    <td><img src="docs/images/showcase/10-input.png" width="100%"></td>
+    <td><img src="docs/images/showcase/10u-pred.png" width="100%"></td>
+    <td><img src="docs/images/showcase/10-target.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><b>10v</b></td>
+    <td><img src="docs/images/showcase/10v-input.png" width="100%"></td>
+    <td><img src="docs/images/showcase/10v-pred.png" width="100%"></td>
+    <td><img src="docs/images/showcase/10v-target.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><b>tp</b></td>
+    <td><img src="docs/images/showcase/tp-input.png" width="100%"></td>
+    <td><img src="docs/images/showcase/tp-pred1.png" width="100%"></td>
+    <td><img src="docs/images/showcase/tp-target.png" width="100%"></td>
+  </tr>
+</table>
+
+### Ensemble Total Preceipitatin 1h
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/showcase/tp-pred1.png" width="100%"></td>
+    <td width="50%"><img src="docs/images/showcase/tp-pred2.png" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/showcase/tp-pred3.png" width="100%"></td>
+    <td><img src="docs/images/showcase/tp-pred4.png" width="100%"></td>
+  </tr>
+</table>
 
 ## Setup clariden/santis container environment
 Container environment setup needed to run training and inference experiments on clariden/santis is contained in this repository under `ci/edf/modulus_env.toml`. Image squash is on clariden/alps under `/capstor/scratch/cscs/pstamenk/corr_diff.sqsh`. All the jobs can be run using this environment without additional installations and setup.
