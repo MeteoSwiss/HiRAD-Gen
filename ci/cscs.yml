@@ -21,8 +21,8 @@ test_job:
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-    - echo 'hello world'
-    #  - pytest sourcecode/tests/ -v
+    # - echo 'hello world'
+    - pytest sourcecode/tests/ -v
   variables:
     USE_MPI: NO
     SLURM_MPI_TYPE: pmix
