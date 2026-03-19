@@ -200,3 +200,4 @@ out
 core
 *.png
 *.nc
+*.err
