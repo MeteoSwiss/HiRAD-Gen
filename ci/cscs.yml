@@ -23,7 +23,7 @@ test_job:
   script:
     # - echo 'hello world'
     - ls /opt
-    - pytest /opt/sourcecode/tests -v
+    - pytest /opt/hirad-gen/tests -v
   variables:
     USE_MPI: NO
     SLURM_MPI_TYPE: pmix

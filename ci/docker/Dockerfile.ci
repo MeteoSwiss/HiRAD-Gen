@@ -1,4 +1,4 @@
-FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-alps4-dev
+FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-alps4-dev as builder
 
 # setup
 RUN pip install --upgrade pip
@@ -6,6 +6,8 @@ RUN pip install --upgrade pip
 # install dependencies
 RUN pip install mlflow
 
-COPY /sourcecode /opt/sourcecode
+COPY . /opt/hirad-gen
 
-RUN pip install /opt/sourcecode --no-dependencies
+WORKDIR /opt/hirad-gen
+
+RUN pip install /opt/hirad-gen --no-dependencies
