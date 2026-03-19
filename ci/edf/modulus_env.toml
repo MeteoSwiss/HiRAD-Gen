@@ -1,10 +1,11 @@
-image = "/capstor/scratch/cscs/pstamenk/hirad.sqsh"
+image = "/capstor/scratch/cscs/pstamenk/corr_diff.sqsh"
 
 mounts = ["/capstor", "/iopsstor", "/users"]
 
 # The initial directory in the container. 
 workdir = "${PWD}"
 
+[env]
+PMIX_MCA_psec = "native" 
 [annotations]
-com.hooks.aws_ofi_nccl.enabled = "true"
-com.hooks.aws_ofi_nccl.variant = "cuda12"
+com.hooks.cxi.enabled = "false"

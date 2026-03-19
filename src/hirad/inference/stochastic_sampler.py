@@ -32,6 +32,8 @@ def stochastic_sampler(
     patching: Optional[GridPatching2D] = None,
     mean_hr: Optional[torch.Tensor] = None,
     lead_time_label: Optional[torch.Tensor] = None,
+    static_channels: Optional[torch.Tensor] = None,
+    date_embedding: Optional[torch.Tensor] = None,
     num_steps: int = 18,
     sigma_min: float = 0.002,
     sigma_max: float = 800,
@@ -40,6 +42,7 @@ def stochastic_sampler(
     S_min: float = 0,
     S_max: float = float("inf"),
     S_noise: float = 1,
+    use_apex_gn: bool = False,
 ) -> torch.Tensor:
     """
     Proposed EDM sampler (Algorithm 2) with minor changes to enable
@@ -97,6 +100,10 @@ def stochastic_sampler(
         of `img_lr`. By default None.
     lead_time_label : Optional[Tensor], optional
         Optional lead time labels. By default None.
+    static_channels : Optional[Tensor], optional
+        Optional static channels input of shape (1, C_static, H, W). By default None.
+    date_embedding : Optional[Tensor], optional
+        Optional date embedding input of shape (B, C_date). By default None.
     num_steps : int
         Number of time steps for the sampler. By default 18.
     sigma_min : float
@@ -114,6 +121,8 @@ def stochastic_sampler(
         Maximum time step for applying churn. By default float("inf").
     S_noise : float
         Noise scaling factor applied during the churn step. By default 1.
+    use_apex_gn : bool
+        Whether Apex's fused group normalization is used.
 
     Returns
     -------
@@ -178,10 +187,33 @@ def stochastic_sampler(
             )
         x_lr = torch.cat((mean_hr.expand(x_lr.shape[0], -1, -1, -1), x_lr), dim=1)
 
+    if static_channels is not None:
+        # Expand static channels to batch size
+        if static_channels.shape[-2:] != img_lr.shape[-2:]:
+            raise ValueError(
+                f"mean_hr and img_lr must have the same height and width, "
+                f"but found {mean_hr.shape[-2:]} vs {img_lr.shape[-2:]}."
+            )
+        static_expanded = static_channels.expand(batch_size, -1, -1, -1)
+        x_lr = torch.cat((x_lr, static_expanded), dim=1)
+
     # input and position padding + patching
     if patching:
         # print(f"Input for generator beofre patching {x_lr.shape}")
         # Patched conditioning [x_lr, mean_hr]
+        if static_channels is not None:
+            img_lr = torch.cat(
+                (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+        # print(f"Shape of img_lr after static channels diffusion patching: img_lr {img_lr.shape}")
+        if date_embedding is not None:
+            date_embedding = date_embedding[:, :, None, None].expand(img_lr.shape[0], date_embedding.shape[1], *img_lr.shape[2:])
+            if use_apex_gn:
+                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+            else:
+                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+            img_lr = torch.cat((img_lr, date_embedding), dim=1)
         # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
         x_lr = patching.apply(input=x_lr, additional_input=img_lr)
         # print(f"Input for generator after patching {x_lr.shape}")
@@ -192,6 +224,14 @@ def stochastic_sampler(
             return patching.apply(emb[None].expand(batch_size, -1, -1, -1))
 
     else:
+        if date_embedding is not None:
+            date_embedding = date_embedding[:, :, None, None].expand(x_lr.shape[0], date_embedding.shape[1], *x_lr.shape[2:])
+            if use_apex_gn:
+                date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+            else:
+                date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).contiguous() 
+            x_lr = torch.cat((x_lr, date_embedding), dim=1)
+
         patch_embedding_selector = None
 
     # Main sampling loop.

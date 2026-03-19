@@ -176,6 +176,7 @@ pyrightconfig.json
 plots/*
 *.npz
 outputs/*
+logs/*
 
 # conda
 .conda/*
@@ -198,5 +199,4 @@ mlruns/
 .secrets.env
 out
 core
-*.png
 *.nc

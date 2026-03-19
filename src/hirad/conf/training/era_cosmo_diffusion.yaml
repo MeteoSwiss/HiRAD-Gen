@@ -4,7 +4,7 @@ hp:
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size
-    batch_size_per_gpu: 6
+    batch_size_per_gpu: 20
     # Batch size per GPU
     lr: 0.0002
     # Learning rate
@@ -14,7 +14,7 @@ hp:
     # LR decay rate
     lr_rampup: 1e6
     # Rampup for learning rate, in number of samples
-    lr_decay_rate: 2e6
+    lr_decay_rate: 1e6
     # Learning rate decay threshold in number of samples, applied every lr_decay_rate samples.
 
 # Performance
@@ -22,7 +22,7 @@ perf:
     fp_optimizations: amp-bf16
     # Floating point mode, one of ["fp32", "fp16", "amp-fp16", "amp-bf16"]
     # "amp-{fp16,bf16}" activates Automatic Mixed Precision (AMP) with {float16,bfloat16}
-    dataloader_workers: 8
+    dataloader_workers: 30
     # DataLoader worker processes
     songunet_checkpoint_level: 0 # 0 means no checkpointing
     # Gradient checkpointing level, value is number of layers to checkpoint
@@ -38,8 +38,6 @@ io:
     # How often to print progress
     save_checkpoint_freq: 200000
     # How often to save the checkpoints, measured in number of processed samples
-    visualization_freq: 250000
-    # how often to visualize network outputs
     validation_freq: 50000
     # how often to record the validation loss, measured in number of processed samples
     validation_steps: 90

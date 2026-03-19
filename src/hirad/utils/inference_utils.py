@@ -22,11 +22,8 @@ import nvtx
 import numpy as np
 import torch
 import tqdm
-from matplotlib import pyplot as plt
-import cartopy.crs as ccrs
 
 from .function_utils import StackedRandomGenerator
-from hirad.eval import compute_mae, average_power_spectrum, plot_error_projection, plot_power_spectra, crps
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #
@@ -38,6 +35,9 @@ def regression_step(
     img_lr: torch.Tensor,
     latents_shape: torch.Size,
     lead_time_label: Optional[torch.Tensor] = None,
+    static_channels: Optional[torch.Tensor] = None,
+    date_embedding: Optional[torch.Tensor] = None,
+    use_apex_gn: bool = False,
 ) -> torch.Tensor:
     """
     Perform a regression step to produce ensemble mean prediction.
@@ -59,6 +59,11 @@ def regression_step(
     lead_time_label : Optional[torch.Tensor], optional
         Lead time label tensor for lead time conditioning,
         with shape (1, lead_time_dims). Default is None.
+    static_channels : torch.Tensor, optional
+        Static channels input of shape (C_static, H, W).
+
+    date_embedding : torch.Tensor, optional
+        Date embedding input of shape (B, C_date).
 
     Returns
     -------
@@ -79,6 +84,20 @@ def regression_step(
             f"Expected img_lr to have a batch size of 1, "
             f"but found {img_lr.shape[0]}."
         )
+
+    if static_channels is not None:
+        img_lr = torch.cat(
+            (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
+            dim=1,
+        )
+
+    if date_embedding is not None:
+        date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *img_lr.shape[2:])
+        if use_apex_gn:
+            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+        else:
+            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+        img_lr = torch.cat((img_lr, date_embedding), dim=1)    
 
     # Perform regression on a single batch element
     with torch.inference_mode():
@@ -105,6 +124,9 @@ def diffusion_step(
     device: torch.device,
     mean_hr: torch.Tensor = None,
     lead_time_label: torch.Tensor = None,
+    static_channels: Optional[torch.Tensor] = None,
+    date_embedding: Optional[torch.Tensor] = None,
+    use_apex_gn: bool = False,
 ) -> torch.Tensor:
 
     """
@@ -142,6 +164,12 @@ def diffusion_step(
     lead_time_label : torch.Tensor, optional
         Lead time label tensor for temporal conditioning,
         with shape (batch_size, lead_time_dims). Default is None.
+    static_channels : torch.Tensor, optional
+        Static channels input of shape (C_static, H, W).
+    date_embedding : torch.Tensor, optional
+        Date embedding input of shape (B, C_date).
+    use_apex_gn : bool, optional
+        Whether Apex's fused group normalization is used. Default is False.
 
     Returns
     -------
@@ -151,21 +179,24 @@ def diffusion_step(
     """
 
     # Check img_lr dimensions match expected shape
-    if img_lr.shape[2:] != img_shape:
+    if img_lr.shape[-2:] != img_shape:
         raise ValueError(
-            f"img_lr shape {img_lr.shape[2:]} does not match expected shape img_shape {img_shape}"
+            f"img_lr shape {img_lr.shape[-2:]} does not match expected shape img_shape {img_shape}"
         )
 
     # Check mean_hr dimensions if provided
     if mean_hr is not None:
-        if mean_hr.shape[2:] != img_shape:
+        if mean_hr.shape[-2:] != img_shape:
             raise ValueError(
                 f"mean_hr shape {mean_hr.shape[2:]} does not match expected shape img_shape {img_shape}"
             )
         if mean_hr.shape[0] != 1:
             raise ValueError(f"mean_hr must have batch size 1, got {mean_hr.shape[0]}")
 
-    img_lr = img_lr.to(memory_format=torch.channels_last)
+    if len(rank_batches) == 0:
+        raise ValueError("rank_batches is empty, at least one batch of seeds is required")
+
+    # img_lr = img_lr.to(memory_format=torch.channels_last)
 
     # Handling of the high-res mean
     additional_args = {}
@@ -173,6 +204,11 @@ def diffusion_step(
         additional_args["mean_hr"] = mean_hr
     if lead_time_label is not None:
         additional_args["lead_time_label"] = lead_time_label
+    if static_channels is not None:
+        additional_args["static_channels"] = static_channels
+    if date_embedding is not None:
+        additional_args["date_embedding"] = date_embedding
+    additional_args["use_apex_gn"] = use_apex_gn
 
     # Loop over batches
     all_images = []
@@ -181,6 +217,10 @@ def diffusion_step(
             batch_size = len(batch_seeds)
             if batch_size == 0:
                 continue
+            if batch_size != img_lr.shape[0]:
+                raise ValueError(
+                    f"Batch size {batch_size} does not match img_lr batch size {img_lr.shape[0]}"
+                )
 
             # Initialize random generator, and generate latents
             rnd = StackedRandomGenerator(device, batch_seeds)
@@ -203,148 +243,24 @@ def diffusion_step(
 
 
 ############################################################################
-#                           Visualization Utilities                        #
+#                           Saving and Visualization Utilities                        #
 ############################################################################
 
 
-def save_results_as_torch(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):
+def save_results_as_torch(output_path, time_step, image_pred, image_hr, image_lr, mean_pred):
     os.makedirs(output_path, exist_ok=True)
-    target = np.flip(dataset.denormalize_output(image_hr)[0,::].squeeze(),1)
-    prediction_ensemble = np.flip(dataset.denormalize_output(image_pred).squeeze(),-2)
-    baseline = np.flip(dataset.denormalize_input(image_lr)[0,::].squeeze(),1)
     if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1)
         torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
-    torch.save(target, os.path.join(output_path, f'{time_step}-target'))
-    torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
-    torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+    torch.save(image_hr, os.path.join(output_path, f'{time_step}-target'))
+    torch.save(image_pred, os.path.join(output_path, f'{time_step}-predictions'))
+    torch.save(image_lr, os.path.join(output_path, f'{time_step}-baseline'))
 
-@DeprecationWarning
-def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
-
-    os.makedirs(output_path, exist_ok=True)
-
-    longitudes = dataset.longitude()
-    latitudes = dataset.latitude()
-    input_channels = dataset.input_channels()
-    output_channels = dataset.output_channels()
-
-    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-    prediction = np.flip(dataset.denormalize_output(image_pred),-2) #.reshape(len(output_channels),-1)
-    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
-    if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
-
-    #  Plot power spectra
-    freqs = {}
-    power = {}
-    for idx, channel in enumerate(output_channels):
-        channel_dir = channel.name + "_" + channel.level if channel.level else channel.name
-        output_path_channel = os.path.join(output_path, channel_dir)
-        if not os.path.exists(output_path_channel):
-            os.makedirs(output_path_channel)
-        input_channel_idx = input_channels.index(channel)
-
-        if channel.name=="tp":
-            target[idx,::] = transform_channel(target[idx,:,:])
-            prediction[:,idx,::] = transform_channel(prediction[:,idx,:,:])
-            baseline[input_channel_idx,:,:] = transform_channel(baseline[input_channel_idx,::])
-            if mean_pred is not None:
-                mean_pred[idx,::] = transform_channel(mean_pred[idx,::])
-        
-        if mean_pred is not None:
-            vmin, vmax = calculate_bounds(target[idx,:,:],
-                                            prediction[:,idx,:,:],
-                                            baseline[input_channel_idx,:,:],
-                                            mean_pred[idx,:,:])
-        else:
-            vmin, vmax = calculate_bounds(target[idx,:,:],
-                                            prediction[:,idx,:,:],
-                                            baseline[input_channel_idx,:,:])      
-        _plot_projection(longitudes, latitudes, target[idx,:,:],
-                          os.path.join(output_path_channel, f'{time_step}-{channel.name}-target.jpg'), 
-                          vmin=vmin, vmax=vmax)
-        if prediction.shape[0] > 1:
-            for member_idx in range(prediction.shape[0]):
-                _plot_projection(longitudes, latitudes, prediction[member_idx,idx,:,:],
-                                  os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}.jpg'), 
-                                  vmin=vmin, vmax=vmax)
-        else:
-            _plot_projection(longitudes, latitudes, 
-                             prediction[0,idx,:,:], os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction.jpg'), 
-                             vmin=vmin, vmax=vmax)
-        _plot_projection(longitudes, latitudes, baseline[input_channel_idx,:,:], 
-                         os.path.join(output_path_channel, f'{time_step}-{channel.name}-input.jpg'), 
-                         vmin=vmin, vmax=vmax)
-        if mean_pred is not None:
-            _plot_projection(longitudes, latitudes, mean_pred[idx,:,:], 
-                             os.path.join(output_path_channel, f'{time_step}-{channel.name}-mean_prediction.jpg'), 
-                             vmin=vmin, vmax=vmax)
-
-        _, baseline_errors = compute_mae(baseline[input_channel_idx,:,:], target[idx,:,:])
-        plot_error_projection(baseline_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-baseline-error.jpg'))
-        if prediction.shape[0] > 1:
-            for member_idx in range(prediction.shape[0]):
-                _, prediction_errors = compute_mae(prediction[member_idx,idx,:,:], target[idx,:,:])
-                plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction_{member_idx}-error.jpg'))
-        else:
-            _, prediction_errors = compute_mae(prediction[0,idx,:,:], target[idx,:,:])
-            plot_error_projection(prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-prediction-error.jpg'))            
-        if mean_pred is not None:
-            _, mean_prediction_errors = compute_mae(mean_pred[idx,:,:], target[idx,:,:])
-            plot_error_projection(mean_prediction_errors.reshape(-1), latitudes, longitudes, os.path.join(output_path_channel, f'{time_step}-{channel.name}-mean-prediction-error.jpg'))
-
-        b_freq, b_power = average_power_spectrum(baseline[input_channel_idx,:,:].squeeze(), 2.0)
-        freqs['baseline'] = b_freq
-        power['baseline'] = b_power
-        #plotting.plot_power_spectrum(b_freq, b_power, target_channels[t_c], os.path.join('plots/spectra/baseline2dt',  target_channels[t_c] + '-all_dates'))
-        t_freq, t_power = average_power_spectrum(target[idx,:,:].squeeze(), 2.0)
-        freqs['target'] = t_freq
-        power['target'] = t_power
-        p_freq, p_power = average_power_spectrum(prediction[-1,idx,:,:].squeeze(), 2.0)
-        freqs['prediction'] = p_freq
-        power['prediction'] = p_power
-        if mean_pred is not None:
-            mp_freq, mp_power = average_power_spectrum(mean_pred[idx,:,:].squeeze(), 2.0)
-            freqs['mean_prediction'] = mp_freq
-            power['mean_prediction'] = mp_power
-        plot_power_spectra(freqs, power, channel.name, os.path.join(output_path_channel, f'{time_step}-{channel.name}-spectra.jpg'))
-
-def transform_channel(channel_array, channel_name="tp"):
-    # precip_array = np.clip(precip_array, 0, None)
-    # precip_array = np.where(precip_array == 0, 1e-6, precip_array)
-    # epsilon = 1e-2
-    # precip_array = precip_array + epsilon
-    # precip_array = np.log10(precip_array)
-    # log_min, log_max = precip_array.min(), precip_array.max()
-    # precip_array = (precip_array-log_min)/(log_max-log_min)
-    if channel_name == "tp":
-        channel_array = np.clip(channel_array, 0, None)
-        channel_array = (np.power(channel_array,0.25)-1)/0.25
-    elif channel_name == "2t":
-        channel_array = channel_array - 273.15
-    # precip_array = np.sqrt(precip_array)
-    return channel_array
-
-@DeprecationWarning
-def _plot_projection(longitudes: np.array, latitudes: np.array, values: np.array, filename: str, cmap=None, vmin = None, vmax = None):
-
-    """Plot observed or interpolated data in a scatter plot."""
-    # TODO: Refactor this somehow, it's not really generalizing well across variables.
-    fig = plt.figure()
-    fig, ax = plt.subplots(subplot_kw={"projection": ccrs.PlateCarree()})
-    p = ax.scatter(x=longitudes, y=latitudes, c=values, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.coastlines()
-    ax.gridlines(draw_labels=True)
-    plt.colorbar(p, orientation="horizontal")
-    plt.savefig(filename)
-    plt.close('all')
 
 def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
     """Calculate consistent bounds across all arrays"""
     valid_arrays = [arr for arr in arrays if arr is not None]
     if not valid_arrays:
-        return 0, 1
+        return None, None
     
     # hanndle if there are masked arrays with invalid values (e.g. NaNs)
     all_values = []
@@ -359,7 +275,7 @@ def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
             all_values.append(arr)
     
     if not all_values:
-        return 0, 1
+        return None, None
     
     vmin = min(all_values)
     vmax = max(all_values)
