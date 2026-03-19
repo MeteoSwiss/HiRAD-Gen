@@ -77,13 +77,12 @@ def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
 
 def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
     """Helper to concatenate DataArrays and compute diurnal statistics."""
-    da = xr.concat(list_of_da, dim="time").groupby("time.hour")
+    da = xr.concat(list_of_da, dim="time")
     if is_member:
-        timmean = da.mean(dim='time') * scale
-        mean = timmean.mean(dim='member')
-        std = da.std(dim='member').mean(dim='time') * scale
+        mean = da.groupby("time.hour").mean(dim="time").mean(dim="member") * scale
+        std = da.std(dim="member").groupby("time.hour").mean(dim="time") * scale
     else:
-        mean = da.mean(dim='time') * scale
+        mean = da.groupby("time.hour").mean(dim="time") * scale
         std = None
     return mean, std
 

@@ -54,7 +54,7 @@ def main(cfg: dict):
 
     # Dataset
     dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.pop("type")
+    dataset_type = dataset_cfg.get("type")
     dataset = known_datasets[dataset_type](**dataset_cfg)
     logger.info("Dataset initialized")
 

@@ -152,7 +152,7 @@ def main(cfg: dict) -> None:
     input_channels = get_channels_from_strings(dataset_cfg.get("input_channel_names", []))
     output_channels = get_channels_from_strings(dataset_cfg.get("output_channels_names", []))
     if not input_channels or not output_channels:
-        dataset_type = dataset_cfg.pop("type")
+        dataset_type = dataset_cfg.get("type")
         dataset = known_datasets[dataset_type](**dataset_cfg)
         input_channels = dataset.input_channels()
         output_channels = dataset.output_channels()

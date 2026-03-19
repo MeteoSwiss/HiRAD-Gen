@@ -53,7 +53,7 @@ class Generator():
                 **sampler_args
             )
         elif sampler_type == "stochastic":
-            self.sampler = partial(stochastic_sampler, patching=self.patching)
+            self.sampler = partial(stochastic_sampler, patching=self.patching, **sampler_args)
         else:
             raise ValueError(f"Unknown sampling method {sampler_type}")
 
@@ -65,7 +65,7 @@ class Generator():
             overlap_pix=overlap_pix,
         )
 
-    def generate(self, image_lr, lead_time_label=None, randomize=False, random_seed=None):
+    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=False):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
@@ -82,6 +82,9 @@ class Generator():
                             img_shape[1],
                         ), # (batch_size, C, H, W)
                         lead_time_label=lead_time_label,
+                        static_channels=static_channels,
+                        date_embedding=date_embedding,
+                        use_apex_gn=use_apex_gn,
                     )
             if self.net_res:
                 if self.hr_mean_conditioning:
@@ -103,11 +106,14 @@ class Generator():
                         rank_batches=self.rank_batches,
                         img_lr=image_lr.expand(
                             self.batch_size, -1, -1, -1
-                        ).to(memory_format=torch.channels_last), #.to(memory_format=torch.channels_last),
+                        ).to(memory_format=torch.channels_last),
                         rank=self.dist.rank,
                         device=image_lr.device,
                         mean_hr=mean_hr,
                         lead_time_label=lead_time_label,
+                        static_channels=static_channels,
+                        date_embedding=date_embedding,
+                        use_apex_gn=use_apex_gn,
                     )
             if self.inference_mode == "regression":
                 image_out = image_reg[0:1,::]

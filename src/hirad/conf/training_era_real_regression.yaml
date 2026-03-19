@@ -11,7 +11,7 @@ defaults:
   - _self_
 
   # Dataset
-  - dataset/era_real
+  - dataset/anemoi_era_real
 
   # Model
   - model/era_real_regression

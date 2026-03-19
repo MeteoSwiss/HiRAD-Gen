@@ -1,1 +1,1 @@
-from .loss import ResidualLoss, RegressionLoss, RegressionLossCE
+from .loss import ResidualLoss, RegressionLoss
