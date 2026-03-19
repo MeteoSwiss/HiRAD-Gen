@@ -244,15 +244,21 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
 
     input_fields = dataset.input_channels()
     output_fields = dataset.output_channels()
+    static_fields = dataset.static_channels()
 
     # Target
     output_file = os.path.join(output_path, f'{time_step}-target.grib')
-    save_image_as_grib(output_file, time_step, grib_template_path, output_fields, target, grid=grid)
+    save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
 
     # Prediction - 1 file per ensemble?
-    for i in range(prediction_ensemble.shape[0]):
-        output_file = os.path.join(output_path, f'{time_step}-pred{i:02}.grib')
-        save_image_as_grib(output_file, time_step, grib_template_path, output_fields, prediction_ensemble[i,:], grid=grid)
+    if len(prediction_ensemble.shape) == 4:
+        for i in range(prediction_ensemble.shape[0]):
+            output_file = os.path.join(output_path, f'{time_step}-pred{i:02}.grib')
+            save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble[i,:], grid=grid)
+    else:
+        # no ensemble dimension
+        output_file = os.path.join(output_path, f'{time_step}-pred.grib')
+        save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
 
     # Baseline
     output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
@@ -276,14 +282,13 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
         # raise ValueError if not found
         ds = get_grib_template(grib_template_path, channel, time_step, grid)
         if ds:
-            logging.info(f'extracted row {ds.ls()}')
             md_new = ds.metadata()
             values = pad_image(image[i,::], padding_margin, np.nan)
             ds_new = ekd.FieldList.from_array(values, md_new)
             ds_r += ds_new
     #output_file = os.path.join(output_path, f'{time_step}.grib')
     # Metadata is shown (correctly) as different channels here.
-    logging.info(f'ds_r is {ds_r.ls()}')
+    logging.debug(f'ds_r is {ds_r.ls()}')
     # Metadata is not propagated, for some reason-- all channels have same metadata as ds[0] (2t).
     # However, values are preserved properly.
     with ekd.create_target("file",output_filename) as t:
