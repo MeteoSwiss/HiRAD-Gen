@@ -6,6 +6,6 @@ RUN pip install --upgrade pip
 # install dependencies
 RUN pip install mlflow
 
-RUN cp -r /sourcecode /tmp/sourcecode
+COPY /sourcecode /opt/sourcecode
 
-RUN pip install /tmp/sourcecode --no-dependencies
+RUN pip install /opt/sourcecode --no-dependencies

@@ -22,9 +22,8 @@ test_job:
   image: $PERSIST_IMAGE_NAME
   script:
     # - echo 'hello world'
-    - pwd
-    - ls
-    - pytest ./tests -v
+    - ls /opt
+    - pytest /opt/sourcecode/tests -v
   variables:
     USE_MPI: NO
     SLURM_MPI_TYPE: pmix
