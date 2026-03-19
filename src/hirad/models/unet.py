@@ -63,42 +63,6 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
     arXiv preprint arXiv:2309.15214.
     """
 
-    @classmethod
-    def _backward_compat_arg_mapper(
-        cls, version: str, args: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Map arguments from older versions to current version format.
-
-        Parameters
-        ----------
-        version : str
-            Version of the checkpoint being loaded
-        args : Dict[str, Any]
-            Arguments dictionary from the checkpoint
-
-        Returns
-        -------
-        Dict[str, Any]
-            Updated arguments dictionary compatible with current version
-        """
-        # Call parent class method first
-        args = super()._backward_compat_arg_mapper(version, args)
-
-        if version == "0.1.0":
-            # In version 0.1.0, img_channels was unused
-            if "img_channels" in args:
-                _ = args.pop("img_channels")
-
-            # Sigma parameters are also unused
-            if "sigma_min" in args:
-                _ = args.pop("sigma_min")
-            if "sigma_max" in args:
-                _ = args.pop("sigma_max")
-            if "sigma_data" in args:
-                _ = args.pop("sigma_data")
-
-        return args
-
     def __init__(
         self,
         img_resolution: Union[int, Tuple[int, int]],
@@ -217,8 +181,8 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
         )
 
         F_x = self.model(
-            x.to(dtype),  # (c_in * x).to(dtype),
-            torch.zeros(x.shape[0], dtype=dtype, device=x.device),  # c_noise.flatten()
+            x.to(dtype),
+            torch.zeros(x.shape[0], dtype=dtype, device=x.device),
             class_labels=None,
             **model_kwargs,
         )
@@ -228,7 +192,6 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
                 f"Expected the dtype to be {dtype}, " f"but got {F_x.dtype} instead."
             )
 
-        # skip connection
         D_x = F_x.to(torch.float32)
         return D_x
 
