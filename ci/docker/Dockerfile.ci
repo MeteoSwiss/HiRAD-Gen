@@ -7,4 +7,4 @@ pip
 # install dependencies
 RUN pip install mlflow
 
-RUN pip install -e /sourcecode --no-dependencies
+RUN pip install /sourcecode --no-dependencies
