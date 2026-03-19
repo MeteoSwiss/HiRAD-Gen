@@ -1,0 +1,130 @@
+# (C) Copyright 2024 Anemoi contributors.
+#
+# This software is licensed under the terms of the Apache Licence Version 2.0
+# which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation
+# nor does it submit to any jurisdiction.
+
+from dataclasses import asdict
+from dataclasses import dataclass
+from dataclasses import field
+
+import pytest
+import torch
+from torch_geometric.data import HeteroData
+
+from anemoi.models.layers.block import GraphTransformerProcessorBlock
+from anemoi.models.layers.graph import TrainableTensor
+from anemoi.models.layers.graph_provider import create_graph_provider
+from anemoi.models.layers.processor import GraphTransformerProcessor
+from anemoi.models.layers.utils import load_layer_kernels
+from anemoi.utils.config import DotDict
+
+
+@dataclass
+class GraphTransformerProcessorConfig:
+    num_layers: int = 2
+    num_channels: int = 128
+    num_chunks: int = 2
+    num_heads: int = 16
+    mlp_hidden_ratio: int = 4
+    qk_norm: bool = True
+    cpu_offload: bool = False
+    layer_kernels: field(default_factory=DotDict) = None
+    graph_attention_backend: str = "pyg"
+    edge_dim: int = None  # Will be set from graph_provider
+    edge_pre_mlp: bool = False
+
+    def __post_init__(self):
+        self.layer_kernels = load_layer_kernels(instance=False)
+
+
+class TestGraphTransformerProcessor:
+    """Test the GraphTransformerProcessor class."""
+
+    NUM_NODES: int = 100
+    NUM_EDGES: int = 200
+
+    @pytest.fixture(scope="module")
+    def fake_graph(self, device) -> tuple[HeteroData, int]:
+        graph = HeteroData()
+        graph["nodes"].x = torch.rand((self.NUM_NODES, 2), device=device)
+        graph[("nodes", "to", "nodes")].edge_index = torch.randint(
+            0, self.NUM_NODES, (2, self.NUM_EDGES), device=device
+        )
+        graph[("nodes", "to", "nodes")].edge_attr1 = torch.rand((self.NUM_EDGES, 3), device=device)
+        graph[("nodes", "to", "nodes")].edge_attr2 = torch.rand((self.NUM_EDGES, 4), device=device)
+        return graph
+
+    @pytest.fixture
+    def graphtransformer_init(self):
+        return GraphTransformerProcessorConfig()
+
+    @pytest.fixture
+    def graph_provider(self, fake_graph, device):
+        provider = create_graph_provider(
+            graph=fake_graph[("nodes", "to", "nodes")],
+            edge_attributes=["edge_attr1", "edge_attr2"],
+            src_size=self.NUM_NODES,
+            dst_size=self.NUM_NODES,
+            trainable_size=6,
+        )
+        return provider.to(device)
+
+    @pytest.fixture
+    def graphtransformer_processor(self, graphtransformer_init, graph_provider, device):
+        config = asdict(graphtransformer_init)
+        config["edge_dim"] = graph_provider.edge_dim
+        return GraphTransformerProcessor(**config).to(device)
+
+    def test_graphtransformer_processor_init(self, graphtransformer_processor, graphtransformer_init, graph_provider):
+        assert graphtransformer_processor.num_chunks == graphtransformer_init.num_chunks
+        assert graphtransformer_processor.num_channels == graphtransformer_init.num_channels
+        assert (
+            graphtransformer_processor.chunk_size
+            == graphtransformer_init.num_layers // graphtransformer_init.num_chunks
+        )
+        assert isinstance(graph_provider.trainable, TrainableTensor)
+
+    def test_all_blocks(self, graphtransformer_processor):
+        assert all(isinstance(block, GraphTransformerProcessorBlock) for block in graphtransformer_processor.proc)
+
+    def test_forward(self, graphtransformer_processor, graphtransformer_init, graph_provider):
+        batch_size = 1
+
+        x = torch.rand(
+            (self.NUM_NODES, graphtransformer_init.num_channels),
+            device=next(graphtransformer_processor.parameters()).device,
+        )
+        shard_shapes = [list(x.shape)]
+
+        # Run forward pass of processor
+        edge_attr, edge_index, _ = graph_provider.get_edges(batch_size=batch_size)
+        output = graphtransformer_processor.forward(x, batch_size, shard_shapes, edge_attr, edge_index)
+        assert output.shape == (self.NUM_NODES, graphtransformer_init.num_channels)
+
+        # Generate dummy target and loss function
+        loss_fn = torch.nn.MSELoss()
+        target = torch.rand((self.NUM_NODES, graphtransformer_init.num_channels), device=output.device)
+        loss = loss_fn(output, target)
+
+        # Check loss
+        assert loss.item() >= 0
+
+        # Backward pass
+        loss.backward()
+
+        # Check gradients of trainable tensor
+        assert graph_provider.trainable.trainable.grad.shape == (
+            self.NUM_EDGES,
+            6,
+        )
+
+        # Check gradients of processor
+        for param in graphtransformer_processor.parameters():
+            assert param.grad is not None, f"param.grad is None for {param}"
+            assert (
+                param.grad.shape == param.shape
+            ), f"param.grad.shape ({param.grad.shape}) != param.shape ({param.shape}) for {param}"
