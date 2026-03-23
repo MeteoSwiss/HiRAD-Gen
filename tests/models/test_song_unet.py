@@ -1399,7 +1399,7 @@ class TestPositionalEmbeddingIndexing:
         idx_x = torch.arange(IMG_RES//2).view(1, 1, 1, IMG_RES//2).expand(P, 1, IMG_RES//2, IMG_RES//2)
         global_index = torch.cat([idx_y, idx_x], dim=1)
         result = model.positional_embedding_indexing(x, global_index=global_index)
-        assert result.shape == (B * P, N_GRID, IMG_RES//2, IMG_RES//2)
+        assert result.shape == (B * P, 2, IMG_RES//2, IMG_RES//2)
         assert torch.allclose(result, model.pos_embd[None, :, :IMG_RES//2, :IMG_RES//2].expand(B*P, -1, -1, -1))
 
     def test_global_index_selects_correctly_with_lead_time(self, small_pos_unet):
@@ -1420,12 +1420,29 @@ class TestPositionalEmbeddingIndexing:
         idx_y = torch.arange(IMG_RES//2).view(1, 1, IMG_RES//2, 1).expand(P, 1, IMG_RES//2, IMG_RES//2)
         idx_x = torch.arange(IMG_RES//2).view(1, 1, 1, IMG_RES//2).expand(P, 1, IMG_RES//2, IMG_RES//2)
         global_index = torch.cat([idx_y, idx_x], dim=1)
-        result = model.positional_embedding_indexing(x, global_index=global_index)
-        assert result.shape == (B * P, N_GRID + 2, IMG_RES//2, IMG_RES//2)
+        result = model.positional_embedding_indexing(x, global_index=global_index, lead_time_label=torch.zeros(B, dtype=torch.long))
+        assert result.shape == (B * P, 2 + 2, IMG_RES//2, IMG_RES//2)
         expected_pos_embd = model.pos_embd[None, :, :IMG_RES//2, :IMG_RES//2].expand(B*P, -1, -1, -1)
-        expected_lt_embd = model.lt_embd[0:1].expand(B*P, -1, -1, -1)  # Assuming lead_time_label=0 for this test
+        expected_lt_embd = model.lt_embd[0:1,:,:IMG_RES//2, :IMG_RES//2].expand(B*P, -1, -1, -1)  # Assuming lead_time_label=0 for this test
         expected_combined = torch.cat([expected_pos_embd, expected_lt_embd], dim=1)
         assert torch.allclose(result, expected_combined)
+
+    def test_global_index_stacks_per_batch_elements(self, small_pos_unet):
+        P = 2
+        x = torch.randn(B * P, IN_CH, IMG_RES//2, IMG_RES//2)
+        idx_y_1 = torch.arange(IMG_RES//2).view(1, 1, IMG_RES//2, 1).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_x_1 = torch.arange(IMG_RES//2).view(1, 1, 1, IMG_RES//2).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_y_2 = torch.arange(IMG_RES//2, IMG_RES).view(1, 1, IMG_RES//2, 1).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_x_2 = torch.arange(IMG_RES//2, IMG_RES).view(1, 1, 1, IMG_RES//2).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_1 = torch.cat([idx_y_1, idx_x_1], dim=1)
+        idx_2 = torch.cat([idx_y_2, idx_x_2], dim=1)
+        global_index = torch.cat([idx_1, idx_2], dim=0)
+        result = small_pos_unet.positional_embedding_indexing(x, global_index=global_index)
+        assert result.shape == (B * P, N_GRID, IMG_RES//2, IMG_RES//2)
+        # Check that the same positional embedding is repeated for each batch element in the group of P
+        for i in range(B):
+            assert torch.allclose(result[i*P], small_pos_unet.pos_embd[:, :IMG_RES//2, :IMG_RES//2])
+            assert torch.allclose(result[i*P + 1], small_pos_unet.pos_embd[:, IMG_RES//2:, IMG_RES//2:])
 
     def test_dtype_conversion(self, small_pos_unet):
         """Embedding dtype should match input dtype."""
