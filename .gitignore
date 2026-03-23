@@ -176,8 +176,8 @@ pyrightconfig.json
 plots/*
 *.npz
 outputs/*
-anemoi-core-multi-ds/outputs/*
-anemoi-core-ds-collab/outputs/*
+src/anemoi-core-multi-ds/outputs/*
+src/anemoi-core-ds-collab/outputs/*
 
 # conda
 .conda/*
