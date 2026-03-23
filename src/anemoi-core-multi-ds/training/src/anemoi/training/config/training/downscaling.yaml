@@ -18,6 +18,7 @@ precision: 16-mixed
 # 1 = single step scheme, X(t) used to predict Y(t), (if GraphDownscaler)
 # k > 1: multistep scheme, uses [X(t-k+1), ... X(t-1), X(t)] to predict Y(t)
 multistep_input: 1
+multistep_output: 1
 
 # gradient accumulation across K batches, K >= 1 (if K == 1 then no accumulation)
 # the effective batch size becomes num-devices * batch_size * k
@@ -119,11 +120,20 @@ training_loss:
       _target_: anemoi.training.losses.MSELoss
       scalers: ['pressure_level', 'general_variable', 'nan_mask_weights', 'node_weights']
       ignore_nans: false
+    cosmo:
+      _target_: anemoi.training.losses.MSELoss
+      scalers: ['pressure_level', 'general_variable', 'nan_mask_weights', 'node_weights']
+      ignore_nans: false
 
 validation_metrics:
   datasets:
     era5: null
     cerra:
+      mse:
+        _target_: anemoi.training.losses.MSELoss
+        scalers: ['node_weights']
+        ignore_nans: true
+    cosmo:
       mse:
         _target_: anemoi.training.losses.MSELoss
         scalers: ['node_weights']
@@ -139,6 +149,10 @@ variable_groups:
         param: [q, t, u, v, w] #, z] TODO: # CERRA has vorticity and divergence
       sfc:
         param: [tp, cp, 10u, 10v, 2d]  # CERRA surface variables
+    cosmo:
+      default: sfc
+      sfc:
+        param: [tp, 10u, 10v, 2d]  # CERRA surface variables
 
 # Same metrics as ERA5
 metrics:
@@ -149,3 +163,4 @@ metrics:
     - z_1000
     - t_500
     - u_850
+    cosmo: []

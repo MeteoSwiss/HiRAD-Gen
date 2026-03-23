@@ -45,6 +45,9 @@ grid_indices:
     cerra:
       _target_: anemoi.training.data.grid_indices.FullGrid  # Could be different
       nodes_name: ${graph.data}
+    cosmo:
+      _target_: anemoi.training.data.grid_indices.FullGrid  # Could be different
+      nodes_name: ${graph.data}
 
 # ============
 # Multi-Dataset Configuration

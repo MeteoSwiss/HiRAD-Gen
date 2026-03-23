@@ -1,7 +1,7 @@
 ---
 defaults:
-  - plot: no_plots
-  - callbacks: placeholder
+  - plot:
+  - callbacks: []
   - benchmark_profiler: detailed
 
 # another alternative if you don't have any callbacks is to remove it from the
