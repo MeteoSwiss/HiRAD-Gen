@@ -1444,6 +1444,37 @@ class TestPositionalEmbeddingIndexing:
             assert torch.allclose(result[i*P], small_pos_unet.pos_embd[:, :IMG_RES//2, :IMG_RES//2])
             assert torch.allclose(result[i*P + 1], small_pos_unet.pos_embd[:, IMG_RES//2:, IMG_RES//2:])
 
+    def test_global_index_stacks_per_batch_elements_with_lead_time(self, small_pos_unet):
+        model = SongUNetPosEmbd(
+            img_resolution=IMG_RES,
+            in_channels=PE_IN_CH + 2,
+            out_channels=OUT_CH,
+            gridtype="linear",
+            N_grid_channels=2,
+            lead_time_mode=True,
+            lead_time_channels=2,
+            lead_time_steps=5,
+            prob_channels=[],
+            **PE_SMALL_CFG,
+        )
+        P = 2
+        x = torch.randn(B * P, IN_CH, IMG_RES//2, IMG_RES//2)
+        idx_y_1 = torch.arange(IMG_RES//2).view(1, 1, IMG_RES//2, 1).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_x_1 = torch.arange(IMG_RES//2).view(1, 1, 1, IMG_RES//2).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_y_2 = torch.arange(IMG_RES//2, IMG_RES).view(1, 1, IMG_RES//2, 1).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_x_2 = torch.arange(IMG_RES//2, IMG_RES).view(1, 1, 1, IMG_RES//2).expand(1, 1, IMG_RES//2, IMG_RES//2)
+        idx_1 = torch.cat([idx_y_1, idx_x_1], dim=1)
+        idx_2 = torch.cat([idx_y_2, idx_x_2], dim=1)
+        global_index = torch.cat([idx_1, idx_2], dim=0)
+        result = model.positional_embedding_indexing(x, global_index=global_index, lead_time_label=torch.zeros(B, dtype=torch.long))
+        assert result.shape == (B * P, 4, IMG_RES//2, IMG_RES//2)  # Assuming pos_embd has 2 channels and lt_embd has 2 channels
+        expected_pos_embd = model.pos_embd[None,::]
+        expected_lt_embd = model.lt_embd[0:1] # Assuming lead_time_label=0 for this test
+        expected_combined = torch.cat([expected_pos_embd, expected_lt_embd], dim=1)
+        for i in range(B):
+            assert torch.allclose(result[i*P], expected_combined[0, :, :IMG_RES//2, :IMG_RES//2])
+            assert torch.allclose(result[i*P + 1], expected_combined[0, :, IMG_RES//2:, IMG_RES//2:])
+
     def test_dtype_conversion(self, small_pos_unet):
         """Embedding dtype should match input dtype."""
         x = torch.randn(B, IN_CH, IMG_RES, IMG_RES, dtype=torch.float64)
