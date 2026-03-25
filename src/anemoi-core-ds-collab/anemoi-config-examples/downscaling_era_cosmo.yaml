@@ -300,6 +300,7 @@ hardware:
     data: /capstor/store/cscs/pasc/c38/anemoi-datasets
     output: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/outputs
     grids: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/grids
+    truncation: null
     #truncation: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/truncation
     residual_statistics: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/residuals
     logs:
