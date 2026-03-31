@@ -344,7 +344,7 @@ class AnemoiDataset(DownscalingDataset):
 
         Returns
         -------
-        grid : torch.Tensor, shape (B, C, H, W)
+        grid : torch.Tensor, shape (B, C)
             Channels = [sin(k*hour), cos(k*hour), sin(k*month), cos(k*month) for each k]
         """
 
