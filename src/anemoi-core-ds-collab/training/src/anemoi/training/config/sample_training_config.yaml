@@ -1,6 +1,6 @@
 name: example_era5_to_cerra_downscaling_diffusion_training
 description: |
-  Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core. 
+  Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core.
 
 config_validation: False
 
@@ -9,8 +9,8 @@ config_validation: False
 # ===================
 variables:
   in_lres_variables: [2t, sp]
-  out_hres_variables: [2t, sp] 
-  residual_variables: [sp] 
+  out_hres_variables: [2t, sp]
+  residual_variables: [sp]
   direct_prediction_fields: [2t]
   hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
 
@@ -37,15 +37,15 @@ data:
     - "sin_julian_day"
     - "sin_local_time"
     - "insolation"
-    - "lsm"     
+    - "lsm"
     max: [tp]
- 
+
   processors:
     normalizer:
       _target_: anemoi.models.preprocessing.multi_dataset_normalizer.TopNormalizer
       _convert_: all
       config: ${data.normalizer}
-      
+
 
 # ===================
 # Dataloader config
@@ -90,7 +90,7 @@ dataloader:
     validation: 1
     test: 1
     predict: 1
-    
+
   training:
     start: 2019-01-01:00:00
     end: 2020-01-01:00:00
@@ -106,7 +106,7 @@ dataloader:
     end: 2022-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
-  
+
   hres_grid_indices:
     _target_: anemoi.training.data.grid_indices.FullGrid
     nodes_name: ${graph.data}
@@ -151,8 +151,8 @@ diagnostics:
   log:
     interval: 500
     mlflow:
-      project_name: 'my_mlflow_project'
-      experiment_name: 'my_mlflow_project'
+      project_name: 'mmcglohon_mlflow_project'
+      experiment_name: 'mmcglohon_mlflow_project'
       run_name: ${name}
       enabled: True
       offline: False
@@ -170,7 +170,7 @@ diagnostics:
       enabled: False
       offline: False
       log_model: False
-      project: 'my_wandb_project'
+      project: 'mmcglohon_wandb_project'
       entity: False
       gradients: False
       parameters: False
@@ -191,29 +191,29 @@ hardware:
   num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
   num_gpus_per_model: 1 # sharding
   paths:
-    inputs: ... /path/to/dataset/dir
-    output: ... /path/to/output/dir
+    inputs: ... /hpcperm/che8066/downscaling-data
+    output: ... /hpcperm/che8066/downscaling-run/output
     grids: ... /path/to/data/grids/dir
     truncation: ... /path/to/interpolation/matrices/dir
-    residual_statistics: ... /path/to/residual/statistics/dir
-    graph: ... /path/to/graph/dir
-    checkpoints: ... /path/to/save/checkpoints/dir
-    plots: ... /path/to/callback/plots/dir
-    profiler: ... /path/to/profiler/logs/dir
+    residual_statistics: ... /hpcperm/che8066/downscaling-data
+    graph: ... /hpcperm/che8066/downscaling-data
+    checkpoints: ... /hpcperm/che8066/downscaling-run/checkpoints
+    plots: ... /hpcperm/che8066/downscaling-run/plots
+    profiler: ... /hpcperm/che8066/downscaling-run/profiler
     logs:
-      wandb: ... /path/to/wandb/logs/dir
-      mlflow: ... /path/to/mlflow/logs/dir/
-      tensorboard: ... /path/to/tensorboard/logs/dir/
+      wandb: ... /hpcperm/che8066/downscaling-run/logs/wandb
+      mlflow: ... /hpcperm/che8066/downscaling-run/logs/mlflow
+      tensorboard: ... /hpcperm/che8066/downscaling-run/logs/tensorboard
 
   files:
-    dataset_x: input_dataset_name
-    dataset_y: output_dataset_name
-    dataset_y_forcings: hres_forcings_dataset_name #can be the same as output_dataset
+    dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-1991-2023-3h-v0.zarr
+    dataset_y: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr
+    dataset_y_forcings: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr #can be the same as output_dataset
     warm_start: null
     graph: ${graph.name}.pt
-    residual_statistics: residual_statistics_file_name
-    truncation: lres_to_hres_interpolation_matrix_file.npz # lres to hres !
-    truncation_inv: hres_to_lres_interpolation_matrix_file.npz # hres to lres
+    residual_statistics: cerra_residuals_2t_10u_10v_100u_100v_sp_2d_msl_tcc_ssrd_strd_tp_1990_2019.npy
+    truncation: era5crop2cerra_to_cerra_interpolation_linear.npz # lres to hres !
+    truncation_inv: cerra_to_era5crop2cerra_interpolation_linear.npz # hres to lres
     checkpoint:
       every_n_epochs: anemoi-by_epoch-epoch_{epoch:03d}-step_{step:06d}
       every_n_train_steps: anemoi-by_step-epoch_{epoch:03d}-step_{step:06d}
@@ -242,11 +242,11 @@ graph:
         _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
         dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
       attributes: ${graph.attributes.nodes}
-    # Hidden nodes 
+    # Hidden nodes
     hidden:
       node_builder:
         _target_: anemoi.graphs.nodes.LimitedAreaTriNodes
-        resolution: 8 
+        resolution: 8
         margin_radius_km: 11
         reference_node_name: data
       attributes: ${graph.attributes.nodes}
@@ -263,7 +263,7 @@ graph:
 
   # Processor configuration
   - source_name: hidden
-    target_name: hidden    
+    target_name: hidden
     edge_builder:
       _target_: anemoi.graphs.edges.MultiScaleEdges
       x_hops: 1
@@ -272,7 +272,7 @@ graph:
   # Decoder configuration
   - source_name: hidden
     target_name: data
-    edge_builder: 
+    edge_builder:
       _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
       num_nearest_neighbours: 3 # only for knn method
     attributes: ${graph.attributes.edges}
@@ -415,7 +415,7 @@ model:
 training:
   max_epochs: 100
   max_steps: 100000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
-  
+
   # run in deterministic mode ; slows down
   # run_alias: null
   deterministic: False
@@ -425,7 +425,7 @@ training:
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
   loss_gradient_scaling: False
-  run_id: null 
+  run_id: null
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.
@@ -454,15 +454,15 @@ training:
     read_group_size: ${dataloader.read_group_size}
 
   lr:
-    warmup: 500 
+    warmup: 500
     rate: 3e-5
-    iterations: ${training.max_steps} 
+    iterations: ${training.max_steps}
     min: 1e-7
 
   rollout:
     start: 1
     epoch_increment: 0  # increase rollout every n epochs
-    max: 1  
+    max: 1
 
   scalers:
     general_variable:
@@ -507,4 +507,3 @@ training:
       weight_decay: 0.1
       betas: [0.9, 0.95]
       eps: 1e-7
-
