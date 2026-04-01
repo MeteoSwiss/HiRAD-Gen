@@ -256,7 +256,7 @@ graph:
   # Encoder in_hres-hidden configuration
   - source_name: data
     target_name: hidden
-    edge_builder:
+    edge_builders:
       _target_: anemoi.graphs.edges.CutOffEdges
       cutoff_factor: 0.7 # only for cutoff method
     attributes: ${graph.attributes.edges}
@@ -264,7 +264,7 @@ graph:
   # Processor configuration
   - source_name: hidden
     target_name: hidden
-    edge_builder:
+    edge_builders:
       _target_: anemoi.graphs.edges.MultiScaleEdges
       x_hops: 1
       scale_resolutions: [5, 6, 7, 8]
@@ -272,7 +272,7 @@ graph:
   # Decoder configuration
   - source_name: hidden
     target_name: data
-    edge_builder:
+    edge_builders:
       _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
       num_nearest_neighbours: 3 # only for knn method
     attributes: ${graph.attributes.edges}
