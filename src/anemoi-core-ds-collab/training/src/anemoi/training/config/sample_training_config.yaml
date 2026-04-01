@@ -257,24 +257,24 @@ graph:
   - source_name: data
     target_name: hidden
     edge_builders:
-      _target_: anemoi.graphs.edges.CutOffEdges
-      cutoff_factor: 0.7 # only for cutoff method
+      - _target_: anemoi.graphs.edges.CutOffEdges
+        cutoff_factor: 0.7 # only for cutoff method
     attributes: ${graph.attributes.edges}
 
   # Processor configuration
   - source_name: hidden
     target_name: hidden
     edge_builders:
-      _target_: anemoi.graphs.edges.MultiScaleEdges
-      x_hops: 1
-      scale_resolutions: [5, 6, 7, 8]
+      - _target_: anemoi.graphs.edges.MultiScaleEdges
+        x_hops: 1
+        scale_resolutions: [5, 6, 7, 8]
     attributes: ${graph.attributes.edges}
   # Decoder configuration
   - source_name: hidden
     target_name: data
     edge_builders:
-      _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
-      num_nearest_neighbours: 3 # only for knn method
+      - _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
+        num_nearest_neighbours: 3 # only for knn method
     attributes: ${graph.attributes.edges}
 
 
