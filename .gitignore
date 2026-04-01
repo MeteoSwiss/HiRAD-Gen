@@ -178,6 +178,7 @@ plots/*
 outputs/*
 src/anemoi-core-multi-ds/outputs/*
 src/anemoi-core-ds-collab/outputs/*
+src/anemoi-core-ds-collab/training/outputs/*
 
 # conda
 .conda/*
@@ -188,7 +189,7 @@ temp.*
 # local script
 cosmo-grid.npz
 *.out
-.conda/* 
+.conda/*
 plots/*
 src/input_data/interpolate_basic.log
 temp.zarr/*
@@ -202,3 +203,8 @@ out
 core
 *.png
 *.nc
+
+# anemoi version files
+src/anemoi-core-ds-collab/graphs/src/anemoi/graphs/_version.py
+src/anemoi-core-ds-collab/models/src/anemoi/models/_version.py
+src/anemoi-core-ds-collab/training/src/anemoi/training/_version.py

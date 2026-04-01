@@ -61,13 +61,13 @@ dataloader:
 
   dataset:
     zip:
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_x}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
         name: lres
         select: ${dataloader.select_in}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
         name: hres
         select: ${dataloader.select_in_hres}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
         name: out
         select: ${dataloader.select_out}
     adjust: dates
@@ -187,23 +187,23 @@ diagnostics:
 # ===================
 hardware:
   accelerator: auto
-  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE}}
-  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES}}
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE, 1}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES, 1}}
   num_gpus_per_model: 1 # sharding
   paths:
-    inputs: ... /hpcperm/che8066/downscaling-data
-    output: ... /hpcperm/che8066/downscaling-run/output
-    grids: ... /path/to/data/grids/dir
-    truncation: ... /path/to/interpolation/matrices/dir
-    residual_statistics: ... /hpcperm/che8066/downscaling-data
-    graph: ... /hpcperm/che8066/downscaling-data
-    checkpoints: ... /hpcperm/che8066/downscaling-run/checkpoints
-    plots: ... /hpcperm/che8066/downscaling-run/plots
-    profiler: ... /hpcperm/che8066/downscaling-run/profiler
+    inputs: /hpcperm/che8066/downscaling-data
+    output: /hpcperm/che8066/downscaling-run/output
+    grids: /path/to/data/grids/dir
+    truncation: /path/to/interpolation/matrices/dir
+    residual_statistics: /hpcperm/che8066/downscaling-data
+    graph: /hpcperm/che8066/downscaling-data
+    checkpoints: /hpcperm/che8066/downscaling-run/checkpoints
+    plots: /hpcperm/che8066/downscaling-run/plots
+    profiler: /hpcperm/che8066/downscaling-run/profiler
     logs:
-      wandb: ... /hpcperm/che8066/downscaling-run/logs/wandb
-      mlflow: ... /hpcperm/che8066/downscaling-run/logs/mlflow
-      tensorboard: ... /hpcperm/che8066/downscaling-run/logs/tensorboard
+      wandb: /hpcperm/che8066/downscaling-run/logs/wandb
+      mlflow: /hpcperm/che8066/downscaling-run/logs/mlflow
+      tensorboard: /hpcperm/che8066/downscaling-run/logs/tensorboard
 
   files:
     dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-1991-2023-3h-v0.zarr
@@ -234,13 +234,13 @@ graph:
     lres:
       node_builder:
         _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
-        dataset: ${hardware.paths.data}/${hardware.files.dataset_x}
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
       attributes: ${graph.attributes.nodes}
     # in_hres nodes
     data:
       node_builder:
         _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
-        dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
       attributes: ${graph.attributes.nodes}
     # Hidden nodes
     hidden:
