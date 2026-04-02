@@ -206,7 +206,7 @@ hardware:
       tensorboard: /hpcperm/che8066/downscaling-run/logs/tensorboard
 
   files:
-    dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-1991-2023-3h-v0.zarr
+    dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-2020-2023-3h-v0.zarr
     dataset_y: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr
     dataset_y_forcings: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr #can be the same as output_dataset
     warm_start: null
