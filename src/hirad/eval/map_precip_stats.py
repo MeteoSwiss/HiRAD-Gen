@@ -11,6 +11,7 @@ import numba
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.eval_utils import resolve_times
 from hirad.eval.plotting import (
     plot_map_precipitation, plot_map, get_channel_indices, GridConfig
 )
@@ -166,16 +167,9 @@ def main(cfg: dict):
         gen_cfg = yaml.safe_load(f)
 
     logger.info("Starting precipitation statistics generation")
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
+    times = resolve_times(cfg, gen_cfg)
+    if times is None:
+        logger.error("No times, times_range, or times_ranges specified in config or generation config.")
         return
     logger.info(f"Processing {len(times)} timesteps")
 

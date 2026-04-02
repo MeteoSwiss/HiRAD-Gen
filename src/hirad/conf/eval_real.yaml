@@ -25,7 +25,11 @@ width: 1088
 # If you don't want to evaluate all generated samples, you can specify a range of time steps to evaluate. 
 # This is useful for debugging or if you only want to evaluate a subset of the generated data.
 # Make sure that generated samples are available for the specified time steps.
-# times_range: ['20230601-0000','20230831-2300',1]
+# Use times_ranges to combine multiple seasons/years into a single evaluation run.
+times_ranges:
+  - ['20210601-0000', '20210831-2300', 1]
+  - ['20220601-0000', '20220831-2300', 1]
+  - ['20230601-0000', '20230831-2300', 1]
 
 # List of channels to evaluate/plot - comment out if all channels are to be used
 # plot_channels:  ['2t', '10u', '10v', 'tp', 't_700', 'u_700', 'v_700', 'z_700', 'q_700', 'w_700']

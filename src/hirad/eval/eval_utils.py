@@ -1,4 +1,33 @@
 import numpy as np
+from typing import Optional
+
+from hirad.utils.function_utils import get_time_from_range
+
+
+def resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -> Optional[list]:
+    """Resolve the list of timestep strings from eval or generation config.
+
+    Priority order (both in eval cfg and generation cfg fallback):
+      1. ``times_ranges`` – list of [start, end, step] ranges, concatenated.
+      2. ``times_range``  – single [start, end, step] range.
+      3. ``times``        – explicit list of strings.
+
+    Returns ``None`` when no time specification is found in either config.
+    """
+    def _from_cfg(source: dict) -> Optional[list]:
+        if source.get("times_ranges"):
+            times = []
+            for tr in source["times_ranges"]:
+                times.extend(get_time_from_range(tr, time_format=time_format))
+            return times
+        if source.get("times_range"):
+            return get_time_from_range(source["times_range"], time_format=time_format)
+        if source.get("times"):
+            return source["times"]
+        return None
+
+    return _from_cfg(cfg) or _from_cfg(gen_cfg.get("generation", {}))
+
 
 def percentiles_from_histogram(hist_counts, bin_edges, percentiles_dict):
     """

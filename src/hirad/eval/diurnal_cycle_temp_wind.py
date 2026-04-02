@@ -12,6 +12,7 @@ import xarray as xr
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.eval_utils import resolve_times
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
 
 def main(cfg: dict):
@@ -38,16 +39,9 @@ def main(cfg: dict):
 
     # Load times
     logger.info("Starting computation for diurnal cycles of 2m temperature and windspeed")
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
+    times = resolve_times(cfg, gen_cfg)
+    if times is None:
+        logger.error("No times, times_range, or times_ranges specified in config or generation config.")
         return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
