@@ -267,6 +267,8 @@ def main(cfg: DictConfig) -> None:
                     )
                     if dataset.trim_edge > 0:
                         image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
+                else:
+                    image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())
                 if lead_time_label:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
                 else:

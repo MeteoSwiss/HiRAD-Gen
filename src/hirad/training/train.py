@@ -437,7 +437,7 @@ def main(cfg: DictConfig) -> None:
                                     ):
                                         loss = loss_fn(**loss_fn_kwargs)
 
-                                loss = loss.sum() / batch_size_per_gpu
+                                loss = loss.sum() / batch_size_per_gpu / patch_num_per_iter
                                 loss_accum += (
                                     loss
                                     / num_accumulation_rounds

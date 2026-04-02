@@ -95,6 +95,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             img_clean = img_clean.flip(-2)
         else:
             img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
+            img_clean = img_clean.reshape(*img_clean.shape[:-1], *self.img_shape).flip(-2)
         img_clean = self.dataset.normalize_output(img_clean)
 
         # Date embedding
@@ -272,7 +273,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                         loss_valid_kwargs["patching"] = patching
                     with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
                         loss_valid = loss_fn(**loss_valid_kwargs)
-                    loss_valid = (loss_valid.sum() / batch_size_per_gpu).cpu().item()
+                    loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
                     valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
 
         valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
