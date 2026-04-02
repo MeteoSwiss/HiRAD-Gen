@@ -92,18 +92,21 @@ dataloader:
     predict: 1
 
   training:
-    start: 2020-01-01:00:00
-    end: 2022-01-01:00:00
+    start: 2020-01-01T00:00:00
+    end: 2020-01-03T00:00:00
+    #end: 2022-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   validation:
     start: 2022-01-01T00:00:00
-    end: 2023-01-01T00:00:00
+    end: 2022-01-03T00:00:00
+    #end: 2023-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   test:
     start: 2023-01-01T00:00:00
-    end: 2023-12-31T00:00:00
+    end: 2023-01-03T00:00:00
+    #end: 2023-12-31T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
 
@@ -193,8 +196,8 @@ hardware:
   paths:
     inputs: /hpcperm/che8066/downscaling-data
     output: /hpcperm/che8066/downscaling-run/output
-    grids: /path/to/data/grids/dir
-    truncation: /path/to/interpolation/matrices/dir
+    grids: /hpcperm/che8066/downscaling-data
+    truncation: /hpcperm/che8066/downscaling-data
     residual_statistics: /hpcperm/che8066/downscaling-data
     graph: /hpcperm/che8066/downscaling-data
     checkpoints: /hpcperm/che8066/downscaling-run/checkpoints

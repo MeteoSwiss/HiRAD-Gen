@@ -5,7 +5,7 @@ source /hpcperm/che8066/envs/anemoi-downscaling/bin/activate
 #SBATCH --qos=ng
 #SBATCH --gpus=1
 
-
+ANEMOI_BASE_SEED=1
 SLURM_GPUS_PER_NODE=1
 SLURM_NNODES=1
 
