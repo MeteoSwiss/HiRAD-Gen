@@ -36,7 +36,7 @@ perf:
   force_fp16: False
     # Whether to force fp16 precision for the model. If false, it'll use the precision
     # specified upon training.
-  use_torch_compile: False
+  use_torch_compile: True
     # whether to use torch.compile on the diffusion model
     # this will make the first time stamp generation very slow due to compilation overheads
     # but will significantly speed up subsequent inference runs
