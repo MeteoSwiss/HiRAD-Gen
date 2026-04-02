@@ -40,6 +40,6 @@ input:
                     - lsm
                     - z
         - regrid:
-            # anemoi-transform make-regrid-file global-on-lam-mask --global-grid global.[npz,grib,nc] --lam-grid local.[npz,grib,nc]
-            # --output output.npz --distance <N_km>
+            # anemoi-transform make-regrid-file global-on-lam-mask --global-grid era_grid.npz --lam-grid cosmo_grid.npz
+            # --output era2cosmo_mask_100km.npz --distance 100
             mask: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data/era2cosmo_mask_100km.npz
