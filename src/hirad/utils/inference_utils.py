@@ -243,7 +243,7 @@ def diffusion_step(
 
 
 ############################################################################
-#                           Saving and Visualization Utilities                        #
+#                     Saving and Visualization Utilities                   #
 ############################################################################
 
 
