@@ -178,6 +178,8 @@ plots/*
 outputs/*
 src/anemoi-core-multi-ds/outputs/*
 src/anemoi-core-ds-collab/outputs/*
+src/anemoi-core-ds-collab/anemoi-config-examples/outputs/*
+src/anemoi-core-ds-collab/training/outputs/*
 
 # conda
 .conda/*
@@ -202,3 +204,6 @@ out
 core
 *.png
 *.nc
+src/anemoi-core-ds-collab/training/src/anemoi/training/_version.py
+src/anemoi-core-ds-collab/graphs/src/anemoi/graphs/_version.py
+src/anemoi-core-ds-collab/models/src/anemoi/models/_version.py

@@ -62,11 +62,13 @@ class AnemoiTrainer:
         # Resolve the config to avoid shenanigans with lazy loading
 
         if config.config_validation:
+            LOGGER.info(OmegaConf.to_yaml(config)) 
             OmegaConf.resolve(config)
             self.config = BaseSchema(**config)
 
             LOGGER.info("Config validated.")
         else:
+            LOGGER.info(OmegaConf.to_yaml(config)) 
             config = OmegaConf.to_object(config)
             self.config = UnvalidatedBaseSchema(**DictConfig(config))
             # self.config = config
