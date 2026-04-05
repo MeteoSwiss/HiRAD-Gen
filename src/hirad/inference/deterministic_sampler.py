@@ -20,7 +20,7 @@ import numpy as np
 import nvtx
 import torch
 
-from hirad.models import EDMPrecond
+from hirad.models import EDMPrecondSuperResolution as EDMPrecond
 
 # ruff: noqa: E731
 

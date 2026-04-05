@@ -18,6 +18,7 @@ import xarray as xr
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask
+from hirad.eval.eval_utils import percentiles_from_histogram
 
 
 def save_distribution_plot(hist_data_dict, bin_edges, labels, colors, title, ylabel, out_path, percentiles_data=None):
@@ -138,7 +139,7 @@ def main(cfg: dict):
 
     # Initialize dataset
     dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.pop("type")
+    dataset_type = dataset_cfg.get("type")
     dataset = known_datasets[dataset_type](**dataset_cfg)
     logger.info("Dataset and sampler initialized")
 
@@ -155,11 +156,13 @@ def main(cfg: dict):
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
     # Define histogram bins
-    bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
-    
+    # bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
+    log_bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
+    bins = np.concatenate([[0], log_bins])  # Prepend 0 to capture all sub-0.1 values
+
     # Storage for histogram data and land values
     hist_data = {}
-    all_land_values = {}
+    raw_hist_counts = {}  # Store raw counts for percentile estimation
     
     # -- Process target and baseline --
     for mode in ['target', 'baseline', 'regression-prediction']:
@@ -167,7 +170,6 @@ def main(cfg: dict):
         
         hist_counts = np.zeros(len(bins) - 1)
         total_samples = 0
-        all_values = []
         
         try:
             for i, ts in enumerate(times):
@@ -176,23 +178,19 @@ def main(cfg: dict):
                 
                 data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * cfg.get("conv_factor_hourly") * land_mask
                 
-                # Apply scaling factor for baseline
-                # if mode == 'baseline':
-                #     data = data / 6.0
-                
                 land_values = data.values[~np.isnan(data.values)]
-                all_values.extend(land_values)
                 
                 counts, _ = np.histogram(land_values, bins=bins)
                 hist_counts += counts
                 total_samples += len(land_values)
         except:
             logger.warning(f"{mode} not available, skipping")
-            continue        
+            continue
+        # Store raw counts for percentile estimation
+        raw_hist_counts[mode] = hist_counts.copy()
         # Normalize to probability density
         bin_widths = np.diff(bins)
-        hist_data[mode] = hist_counts / (total_samples * bin_widths)
-        all_land_values[mode] = np.array(all_values)
+        hist_data[mode] = hist_counts[1:] / (total_samples * bin_widths[1:])
         logger.info(f"Processed {total_samples} land values for {mode}")
             
     # -- Process predictions: compute histogram for each ensemble member --
@@ -200,7 +198,6 @@ def main(cfg: dict):
     
     n_members = None
     member_hist_data = []
-    all_member_values = []
     
     for i, ts in enumerate(times):
         if i % cfg.get("log_interval") == 0:
@@ -212,12 +209,10 @@ def main(cfg: dict):
             n_members = preds.shape[0]
             member_hist_data = [np.zeros(len(bins) - 1) for _ in range(n_members)]
             member_sample_counts = [0 for _ in range(n_members)]
-            all_member_values = [[] for _ in range(n_members)]
         
         for member_idx in range(n_members):
             data = preds[member_idx, tp_out] * land_mask
             land_values = data.values[~np.isnan(data.values)]
-            all_member_values[member_idx].extend(land_values)
             
             counts, _ = np.histogram(land_values, bins=bins)
             member_hist_data[member_idx] += counts
@@ -227,7 +222,7 @@ def main(cfg: dict):
     bin_widths = np.diff(bins)
     normalized_member_hists = []
     for member_idx in range(n_members):
-        normalized_hist = member_hist_data[member_idx] / (member_sample_counts[member_idx] * bin_widths)
+        normalized_hist = member_hist_data[member_idx][1:] / (member_sample_counts[member_idx] * bin_widths[1:])
         normalized_member_hists.append(normalized_hist)
     
     hist_data['predictions'] = tuple(normalized_member_hists)
@@ -240,21 +235,23 @@ def main(cfg: dict):
     
     # Target and baseline percentiles
     for mode in ['target', 'baseline', 'regression-prediction']:
-        if mode in all_land_values:
-            data_array = xr.DataArray(all_land_values[mode])
-            percentiles_data[mode] = {
-                key: data_array.quantile(p).item() 
-                for key, p in percentiles.items()
-            }
+        if mode in raw_hist_counts:
+            cumulative = np.cumsum(raw_hist_counts[mode])
+            total = cumulative[-1]         
+            cdf = cumulative / total  # CDF at upper bin edges
+            percentiles_data[mode] = percentiles_from_histogram(
+                raw_hist_counts[mode], bins, percentiles
+            )
     
     # Ensemble member percentiles
     percentiles_data['predictions'] = {}
     for member_idx in range(n_members):
-        member_data_array = xr.DataArray(all_member_values[member_idx])
-        percentiles_data['predictions'][f'member_{member_idx}'] = {
-            key: member_data_array.quantile(p).item()
-            for key, p in percentiles.items()
-        }
+        cumulative = np.cumsum(member_hist_data[member_idx])
+        total = cumulative[-1]
+        cdf = cumulative / total  # CDF at upper bin edges
+        percentiles_data['predictions'][f'member_{member_idx}'] = percentiles_from_histogram(
+            member_hist_data[member_idx], bins, percentiles
+        )
     
     # Create distribution plots
     labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in hist_data else ['Target', 'Input', 'CorrDiff Ensemble']
@@ -264,8 +261,8 @@ def main(cfg: dict):
     output_path.mkdir(parents=True, exist_ok=True)
     fn = output_path / 'precipitation_distribution_over_land.png'
     save_distribution_plot(
-        hist_data,
-        bins,
+        hist_data,  # Skip the first bin (0 to 0.1) for plotting
+        bins[1:],
         labels,
         colors,
         'Domain-Mean Precip. Over Land (Pooled Data)',

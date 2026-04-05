@@ -755,5 +755,11 @@ def image_fuse(
         ..., pad[2] : pad[2] + img_shape_y, pad[0] : pad[0] + img_shape_x
     ]
 
+    x_no_padding = x_no_padding / overlap_count_no_padding
+
+    #TODO: do we want to introduce this and will it break existing checkpoints
+    # if input.dtype in [torch.int32, torch.int64]:
+    #     x_no_padding = x_no_padding.round().view(input.dtype)
+
     # Normalize by overlap count
-    return x_no_padding / overlap_count_no_padding
+    return x_no_padding

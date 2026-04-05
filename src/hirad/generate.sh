@@ -32,7 +32,7 @@ echo "Master port: $MASTER_PORT"
 
 export OMP_NUM_THREADS=1
 
-srun --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e . --no-dependencies
-    python src/hirad/inference/generate.py --config-name=generate_era_cosmo.yaml
+srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
+    pip install -e .
+    python src/hirad/inference/generate.py --config-name=generate_era_real.yaml
 "

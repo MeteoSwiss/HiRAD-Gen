@@ -18,7 +18,7 @@
 ### ENVIRONMENT ####
 #SBATCH -A a161
 
-srun --environment=./ci/edf/modulus_env.toml bash -c "
-    source ../hirad_env/hirad/bin/activate
+srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
+    pip install -e .
     python src/hirad/eval/snapshots.py --config-name=src/hirad/conf/eval_real.yaml
 "

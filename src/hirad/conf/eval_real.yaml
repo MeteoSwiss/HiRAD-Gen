@@ -8,7 +8,7 @@ conv_factor_hourly: 1000  # Convert precip of ERA5 from meters to mm/h
 conv_factor: 24000 # Convert the precip of ERA5 from meters/h to mm/day
 wet_threshold: 0.1 # Threshold for wet-hour in mm/h
 log_interval: 24 # Log progress every N timesteps
-land_sea_mask_path: '/path/to/land_sea_mask.npy' # Path to land-sea mask numpy file
+land_sea_mask_path: '/capstor/store/cscs/pasc/c38/real_grid_info/lsm_real.npy' # Path to land-sea mask numpy file
 
 # Constants describing the grid for plotting
 lat_start: -4.42
@@ -17,9 +17,15 @@ lat_step: 0.01
 lon_start: -6.82
 lon_end: 4.80
 lon_step: 0.01
-relax_zone: 19
+relax_zone: 41
 height: 704
 width: 1088
+
+# If data was generated in several steps, you HAVE TO SPECIFY TIME STEPS BELOW
+# If you don't want to evaluate all generated samples, you can specify a range of time steps to evaluate. 
+# This is useful for debugging or if you only want to evaluate a subset of the generated data.
+# Make sure that generated samples are available for the specified time steps.
+# times_range: ['20230601-0000','20230831-2300',1]
 
 # List of channels to evaluate/plot - comment out if all channels are to be used
 # plot_channels:  ['2t', '10u', '10v', 'tp', 't_700', 'u_700', 'v_700', 'z_700', 'q_700', 'w_700']

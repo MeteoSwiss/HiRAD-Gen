@@ -16,6 +16,8 @@ from scipy.interpolate import griddata
 import torch
 import multiprocessing
 
+from hirad.utils.dataset_utils import GridData
+
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 ERA_MARGIN_DEGREES = 1.0
 
@@ -89,6 +91,16 @@ def regrid(input_values_for_time: np.ndarray, input_grid: np.ndarray, output_gri
     for j in range(input_values_for_time.shape[0]):
         values = np.array(input_values_for_time[j,:]) # get era grid values on the given date-time and channel
         regrid = griddata(input_grid, values, output_grid, method='linear') # interpolate era5 to cosmo grid using scipy griddata linear
+        interpolated_data[j,:] = regrid
+    return interpolated_data
+
+def regrid_with_interpolator(input_values_for_time: np.ndarray, interpolator: GridData):
+    assert(len(input_values_for_time.shape) == 2)
+    interpolated_data = np.empty([input_values_for_time.shape[0], interpolator.longitudes_target.shape[0]])
+    for j in range(input_values_for_time.shape[0]):
+        values = np.array(input_values_for_time[j,:]) # get input grid values on the given date-time and channel
+        values = values.reshape(1, values.shape[0])
+        regrid = interpolator.interpolate(values) # interpolate input to output grid using GridData method
         interpolated_data[j,:] = regrid
     return interpolated_data
 
@@ -400,13 +412,20 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
     grid_size = curr_nc[variables[0]][variables[0]][:].shape[1:]
     input_grid = extract_netcdf_input_grid_025(curr_nc[variables[0]])
 
-    # Output grid as torch file
+    # Output grids as torch files
     torch.save(np.column_stack((input_grid[:,1], input_grid[:,0])), os.path.join(output_path, 'info', f'{ds_name}-lat-lon'))
+    
+    torch.save(np.column_stack((output_grid[:,1], output_grid[:,0])), os.path.join(output_path, 'info', f'target-lat-lon'))
 
     # TODO consider outputting stats, but this would require additional calculations
     
     # Copy the .yaml file over for recording purposes
     shutil.copy(infile_nc, os.path.join(output_path, f'info/{ds_name}.yaml'))
+
+    
+
+    # Set up the interpolator
+    interpolator = GridData(input_grid[:,0], input_grid[:,1], output_grid[:,0], output_grid[:,1])
     
     # Iterate through each date
     t = start_date
@@ -428,7 +447,7 @@ def interpolate_netcdf_to_grid(infile_nc: str, ds_name: str, output_grid: np.nda
         save_datetime_file(input_values, t, os.path.join(output_path, ds_name), format=format)
 
         # Regrid
-        interpolated_data = regrid(input_values, input_grid, output_grid)
+        interpolated_data = regrid_with_interpolator(input_values, interpolator)
         save_datetime_file(interpolated_data, t, os.path.join(output_path, f'{ds_name}-interpolated'), format=format)
         
         # Plot
