@@ -4,7 +4,8 @@ FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-al
 RUN pip install --upgrade pip
 
 # install dependencies
-RUN pip install mlflow
+RUN pip install mlflow \
+                anemoi-datasets 
 
 COPY . /opt/hirad-gen
 

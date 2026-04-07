@@ -191,11 +191,11 @@ class AnemoiDataset(DownscalingDataset):
         # next two steps only if target is cosmo, real has to be regridded first (done in training loop on gpu-s for efficiency)
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
-        if not self.real_target:
-            target_shape = self.image_shape()
-            target_data = np.flip(target_data \
-                    .reshape(-1,*target_shape),
-                1)
+        # if not self.real_target:
+        #     target_shape = self.image_shape()
+        #     target_data = np.flip(target_data \
+        #             .reshape(-1,*target_shape),
+        #         1)
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\
@@ -344,7 +344,7 @@ class AnemoiDataset(DownscalingDataset):
 
         Returns
         -------
-        grid : torch.Tensor, shape (B, C, H, W)
+        grid : torch.Tensor, shape (B, C)
             Channels = [sin(k*hour), cos(k*hour), sin(k*month), cos(k*month) for each k]
         """
 

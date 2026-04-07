@@ -185,7 +185,7 @@ class SongUNet(nn.Module):
             emb_channels=emb_channels,
             num_heads=1,
             dropout=dropout,
-            skip_scale=np.sqrt(0.5),
+            skip_scale=0.7071067811865476, # 1 / sqrt(2)
             eps=1e-6,
             resample_filter=resample_filter,
             resample_proj=True,
@@ -659,10 +659,13 @@ class SongUNetPosEmbd(SongUNet):
 
         self.gridtype = gridtype
         self.N_grid_channels = N_grid_channels
-        if self.gridtype == "learnable":
-            self.pos_embd = self._get_positional_embedding()
+        if self.N_grid_channels:
+            if self.gridtype == "learnable":
+                self.pos_embd = self._get_positional_embedding()
+            else:
+                self.register_buffer("pos_embd", self._get_positional_embedding().float())
         else:
-            self.register_buffer("pos_embd", self._get_positional_embedding().float())
+            self.pos_embd = None
         self.lead_time_mode = lead_time_mode
         if self.lead_time_mode:
             self.lead_time_channels = lead_time_channels
@@ -693,7 +696,13 @@ class SongUNetPosEmbd(SongUNet):
                     "embedding_selector is the preferred approach for better efficiency."
                 )
 
-            if x.dtype != self.pos_embd.dtype:
+            if self.lead_time_mode and embedding_selector is not None:
+                raise ValueError(
+                    "Embedding selector is not supported in lead time mode. "
+                    "Please use global_index to select positional embeddings when lead_time_mode is True."
+                )
+
+            if self.pos_embd is not None and x.dtype != self.pos_embd.dtype:
                 self.pos_embd = self.pos_embd.to(x.dtype)
 
             # Append positional embedding to input conditioning
@@ -780,7 +789,7 @@ class SongUNetPosEmbd(SongUNet):
         Example
         -------
         >>> # Create global indices using patching utility:
-        >>> from physicsnemo.utils.patching import GridPatching2D
+        >>> from hirad.utils.patching import GridPatching2D
         >>> patching = GridPatching2D(img_shape=(16, 16), patch_shape=(8, 8))
         >>> global_index = patching.global_index(batch_size=3)
         >>> print(global_index.shape)
@@ -788,9 +797,9 @@ class SongUNetPosEmbd(SongUNet):
 
         See Also
         --------
-        :meth:`physicsnemo.utils.patching.RandomPatching2D.global_index`
+        :meth:`hirad.utils.patching.RandomPatching2D.global_index`
             For generating random patch indices.
-        :meth:`physicsnemo.utils.patching.GridPatching2D.global_index`
+        :meth:`hirad.utils.patching.GridPatching2D.global_index`
             For generating deterministic grid-based patch indices.
             See these methods for possible ways to generate the global_index parameter.
         """
@@ -900,7 +909,7 @@ class SongUNetPosEmbd(SongUNet):
             Each selected embedding should correspond to the positional
             information of each batch element in x.
             For patch-based processing, typically this should be based on
-            :meth:`physicsnemo.utils.patching.BasePatching2D.apply` method to
+            :meth:`hirad.utils.patching.BasePatching2D.apply` method to
             maintain consistency with patch extraction.
         embeds : Optional[torch.Tensor]
             Optional tensor for combined positional and lead time embeddings tensor
@@ -969,6 +978,10 @@ class SongUNetPosEmbd(SongUNet):
                 raise ValueError("N_grid_channels must be a factor of 4")
             num_freq = self.N_grid_channels // 4
             freq_bands = 2.0 ** np.linspace(0.0, num_freq, num=num_freq)
+            #TODO: When more than 4 channels are used for sinusoidal, the frequencies should be multiples of the base frequency (2). 
+            # freq_bands = 2.0 ** np.linspace(0.0, num_freq, num=num_freq) is currently in code which gives
+            # freqs = [1,4] instead of [1,2] for N_grid_channels=8. This seems to be a bug if we want the base 2.
+            # Leaving it like this for now since we have checkpoints with 8 sinusoidal channels that use these frequencies,
             grid_list = []
             grid_x, grid_y = np.meshgrid(
                 np.linspace(0, 2 * np.pi, self.img_shape_x),
