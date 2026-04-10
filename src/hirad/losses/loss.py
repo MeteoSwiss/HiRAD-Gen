@@ -537,3 +537,174 @@ class ResidualLoss:
         loss = weight * ((D_yn - y) ** 2)
 
         return loss
+
+
+class DiffusionLoss:
+    """
+    Diffusion loss function for training diffusion models.
+
+    This class implements the standard loss function used for training
+    diffusion models, which is based on denoising score matching. It computes
+    the loss by adding noise to the input and comparing the model's predictions
+    to the original clean input.
+
+    Attributes
+    ----------
+    P_mean : float
+        Mean value for noise level computation.
+    P_std : float
+        Standard deviation for noise level computation.
+    sigma_data : float
+        Standard deviation for data weighting.
+    """
+
+    def __init__(
+        self,
+        P_mean: float = 0.0,
+        P_std: float = 1.2,
+        sigma_data: float = 0.5,
+    ):
+        """
+        Arguments
+        ----------
+        P_mean : float, optional
+            Mean value for noise level computation, by default 0.0.
+
+        P_std : float, optional
+            Standard deviation for noise level computation, by default 1.2.
+
+        sigma_data : float, optional
+            Standard deviation for data weighting, by default 0.5.
+        """
+        self.P_mean = P_mean
+        self.P_std = P_std
+        self.sigma_data = sigma_data
+
+    def get_noise_params(self, y: torch.Tensor) -> torch.Tensor:
+        """
+        Compute the noise parameters to apply denoising score matching.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            Latent state of shape :math:`(B, *)`. Only used to determine the shape of
+            the noise and create tensors on the same device.
+
+        Returns
+        -------
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+            - Noise ``n`` of shape :math:`(B, *)` to be added to the latent state.
+            - Noise level ``sigma`` of shape :math:`(B, 1, 1, 1)`.
+            - Weight ``weight`` of shape :math:`(B, 1, 1, 1)` to multiply the loss.
+        """
+        # Sample noise level
+        rnd_normal = torch.randn([y.shape[0], 1, 1, 1], device=y.device)
+        sigma = (rnd_normal * self.P_std + self.P_mean).exp()
+        # Loss weight
+        weight = (sigma**2 + self.sigma_data**2) / (sigma * self.sigma_data) ** 2
+        # Sample noise
+        n = torch.randn_like(y) * sigma
+        return n, sigma, weight
+
+
+    def __call__(
+        self,
+        net: torch.nn.Module,
+        img_clean: torch.Tensor,
+        img_lr: torch.Tensor,
+        static_channels: Optional[torch.Tensor] = None,
+        date_embedding: Optional[torch.Tensor] = None,
+        lead_time_label: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """
+        Calculate and return the loss for denoising score matching.
+
+        Note: this loss function does not apply any reduction.
+
+        Parameters
+        ----------
+        net : torch.nn.Module
+            The neural network model for the diffusion process.
+            Expected signature: `net(latent, y_lr, sigma, condition)`, where:
+                latent (torch.Tensor): Noisy input of shape (B, C_hr, H, W)
+                y_lr (torch.Tensor): Conditioning of shape (B, C_lr, H, W)
+                sigma (torch.Tensor): Noise level of shape (B, 1, 1, 1)
+                condition(torch.Tensor): Additional conditioning information, such as date-time embeddings,
+                                         lead time embeddings (B, C_cond).
+            Returns:
+                torch.Tensor: Predictions of shape (B, C_hr, H, W).
+        img_clean : torch.Tensor
+            High-resolution input images of shape (B, C_hr, H, W).
+            Used for ground truth.
+
+        img_lr : torch.Tensor
+            Low-resolution input images of shape (B, C_lr, H, W).
+            Used as input to the regression network and conditioning for the
+            diffusion process.
+
+        static_channels : Optional[torch.Tensor], optional
+            Static channels input of shape (1, C_static, H, W), by default None.
+
+        date_embedding : Optional[torch.Tensor], optional
+            Date embedding input of shape (B, C_date), by default None
+
+        lead_time_label : Optional[torch.Tensor], optional
+            Labels for lead-time aware predictions, by default None.
+            Shape can vary based on model requirements, typically (B,) or scalar.
+
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of shape (B, C_hr, H, W) representing the per-sample loss.
+
+        Raises
+        ------
+        ValueError
+            If shapes of img_clean and img_lr are incompatible.
+        """
+
+        # Safety check: enforce shapes
+        if (
+            img_clean.shape[0] != img_lr.shape[0]
+            or img_clean.shape[2:] != img_lr.shape[2:]
+        ):
+            raise ValueError(
+                f"Shape mismatch between img_clean {img_clean.shape} and "
+                f"img_lr {img_lr.shape}. "
+                f"Batch size, height and width must match."
+            )
+
+        y = img_clean
+        y_lr = img_lr
+
+        if static_channels is not None:
+            y_lr = torch.cat(
+                (y_lr, static_channels.expand(y_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+
+        # create condition vector from date embedding and lead time label
+        condition = None
+        if date_embedding is not None:
+            condition = date_embedding
+        if lead_time_label is not None:
+            if condition is not None:
+                condition = torch.cat((condition, lead_time_label), dim=1)
+            else:
+                condition = lead_time_label
+
+        # Add noise to the latent state
+        n, sigma, weight = self.get_noise_params(y)
+
+        D_yn = net(
+            y + n,
+            y_lr,
+            sigma,
+            condition=condition,
+        )
+
+        loss = weight * ((D_yn - y) ** 2)
+
+        return loss

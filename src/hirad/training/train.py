@@ -29,11 +29,11 @@ from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
-from hirad.models import UNet, EDMPrecondSuperResolution
-from hirad.losses import ResidualLoss, RegressionLoss
+from hirad.models import UNet
+from hirad.losses import ResidualLoss, RegressionLoss, DiffusionLoss
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
 from hirad.inference import Generator
-from hirad.training.training_manager import TrainingManagerCorrDiff
+from hirad.training.training_manager import TrainingManagerCorrDiff, TrainingManagerDiT
 
 
 
@@ -200,24 +200,31 @@ def main(cfg: DictConfig) -> None:
     # Instantiate the training manager which handles model creation,
     # data loading and transformation, 
     # and validation
-    training_manager = TrainingManagerCorrDiff(
-                                            dist, 
-                                            logger0, 
-                                            dataset,
-                                            input_dtype,
-                                            img_shape,
-                                            n_month_hour_channels, 
-                                            fp16, 
-                                            profile_mode, 
-                                            enable_amp,
-                                            amp_dtype,
-                                            use_apex_gn,
-                                            is_real_target,
-                                            songunet_checkpoint_level,
-                                            use_patching,
-                                            cfg.model.get("hr_mean_conditioning", False),
-                                            cfg.logging.get("method", None)
+    training_manager_args = {
+        "dist": dist,
+        "logger": logger0,
+        "dataset": dataset,
+        "input_dtype": input_dtype,
+        "img_shape": img_shape,
+        "n_month_hour_channels": n_month_hour_channels,
+        "fp16": fp16,
+        "enable_amp": enable_amp,
+        "amp_dtype": amp_dtype,
+        "is_real_target": is_real_target,
+        "logging_method": cfg.logging.get("method", None),
+    }
+    if cfg.model.name in {"diffusion_transformer"}:
+        training_manager = TrainingManagerDiT(**training_manager_args)
+    else:
+        training_manager = TrainingManagerCorrDiff(
+                                            **training_manager_args,
+                                            profile_mode=profile_mode, 
+                                            use_apex_gn=use_apex_gn,
+                                            songunet_checkpoint_level=songunet_checkpoint_level,
+                                            use_patching=use_patching,
+                                            hr_mean_conditioning=cfg.model.get("hr_mean_conditioning", False),
                                             )
+    
 
     # Create the model and move it to the appropriate device and memory format based on the optimization configuration
     model, model_args = training_manager.create_model(cfg.model.name, cfg.model.get("model_args", None))
@@ -307,6 +314,8 @@ def main(cfg: DictConfig) -> None:
         )
     elif cfg.model.name == "regression":
         loss_fn = RegressionLoss()
+    elif cfg.model.name == "diffusion_transformer":
+        loss_fn = DiffusionLoss()
 
     # Instantiate the optimizer
     optimizer = torch.optim.Adam(
@@ -407,7 +416,6 @@ def main(cfg: DictConfig) -> None:
                                 "img_lr": img_lr,
                                 "static_channels": static_channels,
                                 "date_embedding": date_embedding,
-                                "augment_pipe": None,
                                 "use_apex_gn": use_apex_gn,
                             }
                             if use_patch_grad_acc is not None:

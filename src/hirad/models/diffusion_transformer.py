@@ -118,7 +118,7 @@ class DiT(nn.Module):
 
     def __init__(
         self,
-        input_size: Union[int, Tuple[int]],
+        img_resolution: Union[int, Tuple[int]],
         in_channels: int,
         patch_size: Union[int, Tuple[int]] = (8, 8),
         tokenizer: Union[
@@ -148,9 +148,9 @@ class DiT(nn.Module):
     ):
         super().__init__(meta=MetaData())
         self.input_size = (
-            input_size
-            if isinstance(input_size, (tuple, list))
-            else (input_size, input_size)
+            img_resolution
+            if isinstance(img_resolution, (tuple, list))
+            else (img_resolution, img_resolution)
         )
         self.in_channels = in_channels
         if out_channels:

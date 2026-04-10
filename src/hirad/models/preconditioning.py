@@ -31,6 +31,7 @@ import torch.nn as nn
 network_module = importlib.import_module("hirad.models")
 
 
+
 class EDMPrecondSuperResolution(nn.Module):
     """
     Improved preconditioning proposed in the paper "Elucidating the Design Space of
@@ -85,7 +86,7 @@ class EDMPrecondSuperResolution(nn.Module):
         img_out_channels: int,
         use_fp16: bool = False,
         model_type: Literal[
-            "SongUNetPosEmbd", "SongUNet"
+            "SongUNetPosEmbd", "SongUNet", "DiT"
         ] = "SongUNetPosEmbd",
         sigma_data: float = 0.5,
         sigma_min=0.0,
@@ -197,7 +198,6 @@ class EDMPrecondSuperResolution(nn.Module):
         F_x = self.model(
             arg,
             c_noise.flatten(),
-            class_labels=None,
             **model_kwargs,
         )
 
