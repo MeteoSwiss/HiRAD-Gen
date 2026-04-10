@@ -7,6 +7,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from hirad.utils.train_helpers import (
+    calculate_patch_per_iter,
     check_model_health,
     compute_num_accumulation_rounds,
     handle_and_clip_gradients,
@@ -14,6 +15,7 @@ from hirad.utils.train_helpers import (
     is_time_for_periodic_task,
     set_patch_shape,
     set_seed,
+    update_learning_rate,
 )
 
 
@@ -683,4 +685,270 @@ class TestInitMlflow:
         mock_mlflow["mlflow"].set_experiment.assert_called_with(
             experiment_name="test_experiment"
         )
+
+
+############################################################################
+#                        update_learning_rate                              #
+############################################################################
+
+
+class TestUpdateLearningRate:
+    """Tests for update_learning_rate."""
+
+    @staticmethod
+    def _make_optimizer(lr, num_groups=1):
+        """Create a simple SGD optimizer with `num_groups` param groups."""
+        params = [torch.nn.Parameter(torch.zeros(1)) for _ in range(num_groups)]
+        optimizer = torch.optim.SGD(
+            [{"params": [p], "lr": lr} for p in params]
+        )
+        return optimizer
+
+    # ------------------------------------------------------------------
+    # Rampup phase  (cur_nimg < lr_rampup)
+    # ------------------------------------------------------------------
+    def test_rampup_halfway(self):
+        """At half the rampup period the LR should be lr * 0.5."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=1.0, lr_decay_rate=1, cur_nimg=500)
+        assert result == pytest.approx(0.01 * 0.5)
+
+    def test_rampup_quarter(self):
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.02, lr_rampup=2000,
+                                      lr_decay=1.0, lr_decay_rate=1, cur_nimg=500)
+        assert result == pytest.approx(0.02 * 0.25)
+
+    def test_rampup_at_zero(self):
+        """At cur_nimg=0 the LR should be 0 during rampup."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=1.0, lr_decay_rate=1, cur_nimg=0)
+        assert result == pytest.approx(0.0)
+
+    # ------------------------------------------------------------------
+    # Rampup boundary  (cur_nimg == lr_rampup)
+    # ------------------------------------------------------------------
+    def test_rampup_exact_boundary(self):
+        """At the exact rampup boundary LR should equal base lr (no decay yet)."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=0.5, lr_decay_rate=500, cur_nimg=1000)
+        # rampup factor = min(1000/1000, 1) = 1  →  lr = 0.01
+        # decay exponent = (1000 - 1000) // 500 = 0  →  0.5^0 = 1
+        assert result == pytest.approx(0.01)
+
+    # ------------------------------------------------------------------
+    # Post-rampup with decay
+    # ------------------------------------------------------------------
+    def test_decay_one_step(self):
+        """One decay step after rampup."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=0.5, lr_decay_rate=500, cur_nimg=1500)
+        # rampup clamped at 1, decay = 0.5 ^ ((1500-1000)//500) = 0.5^1
+        assert result == pytest.approx(0.01 * 0.5)
+
+    def test_decay_two_steps(self):
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=0.5, lr_decay_rate=500, cur_nimg=2000)
+        # decay = 0.5 ^ ((2000-1000)//500) = 0.5^2 = 0.25
+        assert result == pytest.approx(0.01 * 0.25)
+
+    def test_decay_partial_step_floors(self):
+        """Decay uses integer division, so partial steps are floored."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=0.5, lr_decay_rate=500, cur_nimg=1499)
+        # (1499-1000)//500 = 0  →  no decay yet
+        assert result == pytest.approx(0.01)
+
+    # ------------------------------------------------------------------
+    # No rampup  (lr_rampup == 0)
+    # ------------------------------------------------------------------
+    def test_no_rampup_applies_decay_to_existing_lr(self):
+        """When lr_rampup=0 the base lr is NOT overwritten;
+        decay is applied to the optimizer's current lr."""
+        opt = self._make_optimizer(lr=0.04)
+        result = update_learning_rate(opt, lr=999,  # ignored for the set step
+                                      lr_rampup=0, lr_decay=0.5,
+                                      lr_decay_rate=100, cur_nimg=100)
+        # g["lr"] stays 0.04 (rampup branch skipped), then *= 0.5^(100//100) = 0.5
+        assert result == pytest.approx(0.04 * 0.5)
+
+    def test_no_rampup_no_decay(self):
+        """lr_rampup=0, lr_decay=1.0 → LR unchanged."""
+        opt = self._make_optimizer(lr=0.03)
+        result = update_learning_rate(opt, lr=999, lr_rampup=0,
+                                      lr_decay=1.0, lr_decay_rate=100, cur_nimg=500)
+        assert result == pytest.approx(0.03)
+
+    # ------------------------------------------------------------------
+    # No decay  (lr_decay == 1.0)
+    # ------------------------------------------------------------------
+    def test_rampup_without_decay(self):
+        """Rampup works independently of decay when decay=1.0."""
+        opt = self._make_optimizer(lr=0.1)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=1.0, lr_decay_rate=500, cur_nimg=2000)
+        assert result == pytest.approx(0.01)
+
+    # ------------------------------------------------------------------
+    # Multiple param groups
+    # ------------------------------------------------------------------
+    def test_multiple_param_groups(self):
+        """All param groups are updated; return value is the last group's LR."""
+        opt = self._make_optimizer(lr=0.1, num_groups=3)
+        result = update_learning_rate(opt, lr=0.01, lr_rampup=1000,
+                                      lr_decay=1.0, lr_decay_rate=1, cur_nimg=500)
+        expected = 0.01 * 0.5
+        for g in opt.param_groups:
+            assert g["lr"] == pytest.approx(expected)
+        assert result == pytest.approx(expected)
+
+    # ------------------------------------------------------------------
+    # Successive calls (simulating a training loop)
+    # ------------------------------------------------------------------
+    def test_successive_calls_during_rampup(self):
+        """LR should grow linearly across successive rampup calls."""
+        opt = self._make_optimizer(lr=0.1)
+        lr, rampup = 0.01, 1000
+        lrs = []
+        for step in range(0, 1001, 200):
+            lrs.append(
+                update_learning_rate(opt, lr=lr, lr_rampup=rampup,
+                                     lr_decay=1.0, lr_decay_rate=1, cur_nimg=step)
+            )
+        expected = [lr * min(s / rampup, 1) for s in range(0, 1001, 200)]
+        for got, exp in zip(lrs, expected):
+            assert got == pytest.approx(exp)
+
+    def test_successive_calls_with_decay(self):
+        """LR should decrease in staircase fashion after rampup."""
+        opt = self._make_optimizer(lr=0.1)
+        lr, rampup, decay, rate = 0.01, 0, 0.9, 100
+        prev_lr = None
+        for step in [0, 50, 100, 150, 200]:
+            # reset optimizer lr before each call since no rampup means
+            # the function mutates the existing lr multiplicatively
+            for g in opt.param_groups:
+                g["lr"] = lr
+            cur = update_learning_rate(opt, lr=lr, lr_rampup=rampup,
+                                       lr_decay=decay, lr_decay_rate=rate,
+                                       cur_nimg=step)
+            expected = lr * decay ** (step // rate)
+            assert cur == pytest.approx(expected)
+
+
+############################################################################
+#                       calculate_patch_per_iter                           #
+############################################################################
+
+
+class TestCalculatePatchPerIter:
+    """Tests for calculate_patch_per_iter."""
+
+    # ------------------------------------------------------------------
+    # max_patch_per_gpu is None / falsy  →  single iteration
+    # ------------------------------------------------------------------
+    def test_no_max_returns_single_element(self):
+        """When max_patch_per_gpu is None, return [patch_num]."""
+        assert calculate_patch_per_iter(4, None, 1) == [4]
+
+    def test_no_max_zero_returns_single_element(self):
+        """When max_patch_per_gpu is 0 (falsy), return [patch_num]."""
+        assert calculate_patch_per_iter(8, 0, 2) == [8]
+
+    def test_no_max_patch_num_one(self):
+        assert calculate_patch_per_iter(1, None, 1) == [1]
+
+    # ------------------------------------------------------------------
+    # max_patch_per_gpu provided – fits in a single iteration
+    # ------------------------------------------------------------------
+    def test_single_iter_exact_fit(self):
+        """patch_num fits exactly within max_patch_per_gpu."""
+        # max_patch_num_per_iter = min(4, 8//2) = 4 → 1 iteration
+        assert calculate_patch_per_iter(4, 8, 2) == [4]
+
+    def test_single_iter_max_exceeds_patch_num(self):
+        """max allows more patches than needed; still one iteration."""
+        # max_patch_num_per_iter = min(2, 16//1) = 2 → 1 iteration
+        assert calculate_patch_per_iter(2, 16, 1) == [2]
+
+    # ------------------------------------------------------------------
+    # max_patch_per_gpu provided – requires multiple iterations
+    # ------------------------------------------------------------------
+    def test_even_split(self):
+        """patch_num divides evenly into iterations."""
+        # max_patch_num_per_iter = min(8, 4//1) = 4 → 2 iterations of 4
+        assert calculate_patch_per_iter(8, 4, 1) == [4, 4]
+
+    def test_uneven_split(self):
+        """Last iteration gets fewer patches."""
+        # max_patch_num_per_iter = min(7, 4//1) = 4
+        # iterations = ceil(7/4) = 2 → [4, 3]
+        assert calculate_patch_per_iter(7, 4, 1) == [4, 3]
+
+    def test_three_iterations(self):
+        """Requires three iterations with a remainder."""
+        # max_patch_num_per_iter = min(10, 4//1) = 4
+        # iterations = ceil(10/4) = 3 → [4, 4, 2]
+        assert calculate_patch_per_iter(10, 4, 1) == [4, 4, 2]
+
+    def test_patch_num_one_less_than_max(self):
+        # max_patch_num_per_iter = min(3, 4//1) = 3 → single iteration
+        assert calculate_patch_per_iter(3, 4, 1) == [3]
+
+    def test_patch_num_one_more_than_max(self):
+        # max_patch_num_per_iter = min(5, 4//1) = 4
+        # iterations = ceil(5/4) = 2 → [4, 1]
+        assert calculate_patch_per_iter(5, 4, 1) == [4, 1]
+
+    # ------------------------------------------------------------------
+    # batch_size_per_gpu interaction
+    # ------------------------------------------------------------------
+    def test_batch_size_reduces_max_per_iter(self):
+        """Larger batch size reduces the effective max patches per iter."""
+        # max_patch_num_per_iter = min(6, 8//4) = 2
+        # iterations = ceil(6/2) = 3 → [2, 2, 2]
+        assert calculate_patch_per_iter(6, 8, 4) == [2, 2, 2]
+
+    def test_batch_size_equals_max(self):
+        """batch_size_per_gpu == max_patch_per_gpu → 1 patch per iter."""
+        # max_patch_num_per_iter = min(3, 4//4) = 1
+        # iterations = ceil(3/1) = 3 → [1, 1, 1]
+        assert calculate_patch_per_iter(3, 4, 4) == [1, 1, 1]
+
+    # ------------------------------------------------------------------
+    # Validation / edge cases
+    # ------------------------------------------------------------------
+    def test_max_less_than_batch_raises(self):
+        """max_patch_per_gpu < batch_size_per_gpu should raise."""
+        with pytest.raises(ValueError, match="max_patch_per_gpu"):
+            calculate_patch_per_iter(4, 2, 4)
+
+    def test_sum_equals_patch_num(self):
+        """Sum of returned list must always equal patch_num."""
+        for patch_num in range(1, 20):
+            for batch in [1, 2, 4]:
+                for max_ppg in [batch, batch * 2, batch * 3, batch * 5]:
+                    result = calculate_patch_per_iter(patch_num, max_ppg, batch)
+                    assert sum(result) == patch_num, (
+                        f"patch_num={patch_num}, max_ppg={max_ppg}, batch={batch}: "
+                        f"sum({result}) = {sum(result)} != {patch_num}"
+                    )
+
+    def test_no_element_exceeds_max(self):
+        """No single iteration should exceed max_patch_num_per_iter."""
+        for patch_num in range(1, 20):
+            for batch in [1, 2, 4]:
+                for max_ppg in [batch, batch * 2, batch * 3]:
+                    max_per_iter = min(patch_num, max_ppg // batch)
+                    result = calculate_patch_per_iter(patch_num, max_ppg, batch)
+                    assert all(r <= max_per_iter for r in result), (
+                        f"patch_num={patch_num}, max_ppg={max_ppg}, batch={batch}: "
+                        f"{result} has element > {max_per_iter}"
+                    )
 

@@ -125,7 +125,7 @@ class Conv2d(torch.nn.Module):
     """
     A custom 2D convolutional layer implementation with support for up-sampling,
     down-sampling, and custom weight and bias initializations. The layer's weights
-    and biases canbe initialized using custom initialization strategies like
+    and biases can be initialized using custom initialization strategies like
     "kaiming_normal", and can be further scaled by factors `init_weight` and
     `init_bias`.
 
@@ -414,7 +414,7 @@ class GroupNorm(torch.nn.Module):
             x = rearrange(x, "b (g c) h w -> b g c h w", g=self.num_groups)
 
             mean = x.mean(dim=[2, 3, 4], keepdim=True)
-            var = x.var(dim=[2, 3, 4], keepdim=True)
+            var = x.var(dim=[2, 3, 4], keepdim=True, unbiased=False)
 
             x = (x - mean) * (var + self.eps).rsqrt()
             x = rearrange(x, "b g c h w -> b (g c) h w")

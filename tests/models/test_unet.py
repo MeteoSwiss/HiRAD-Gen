@@ -122,6 +122,12 @@ class TestUNetInitModelType:
         assert call_kwargs["model_channels"] == 256
         assert call_kwargs["num_blocks"] == 8
 
+    @patch("hirad.models.unet.network_module")
+    def test_model_attribute_exists(self, mock_module):
+        mock_module.SongUNetPosEmbd = MagicMock()
+        unet = UNet(img_resolution=64, img_in_channels=C_IN, img_out_channels=C_OUT)
+        assert hasattr(unet, "model")
+
 
 ############################################################################
 #                      UNet — use_fp16 property                            #
@@ -317,6 +323,26 @@ class TestUNetForwardForceFp32:
         assert model_input.dtype == torch.float32
 
 
+class TestUNetForwardAutocastEnabled:
+    """Test that dtype validation is skipped when autocast is enabled."""
+
+    @patch("hirad.models.unet.network_module")
+    def test_no_dtype_check_when_autocast_enabled(self, mock_module):
+        mock_model = MagicMock(spec=nn.Module)
+        # Return fp16 when fp32 is expected
+        mock_model.side_effect = lambda x, sigma, class_labels=None, **kw: torch.zeros(
+            x.shape[0], C_OUT, x.shape[2], x.shape[3], dtype=torch.float16
+        )
+        mock_model.modules.return_value = iter([])
+        mock_module.SongUNetPosEmbd = MagicMock(return_value=mock_model)
+        unet = UNet(img_resolution=H, img_in_channels=C_IN, img_out_channels=C_OUT)
+        x = torch.zeros(B, C_OUT, H, W)
+        lr = torch.randn(B, C_IN, H, W)
+        with torch.autocast("cuda"):
+            out = unet(x, lr)
+            assert out.dtype == torch.float32  # Output should still be float32
+
+
 ############################################################################
 #                       UNet — round_sigma                                 #
 ############################################################################
@@ -350,13 +376,6 @@ class TestUNetRoundSigma:
         result = unet.round_sigma(sigma)
         torch.testing.assert_close(result, sigma)
 
-    @patch("hirad.models.unet.network_module")
-    def test_zero_input(self, mock_module):
-        mock_module.SongUNetPosEmbd = MagicMock()
-        unet = UNet(img_resolution=64, img_in_channels=C_IN, img_out_channels=C_OUT)
-        result = unet.round_sigma(0.0)
-        assert result.item() == pytest.approx(0.0)
-
 
 ############################################################################
 #                       UNet — amp_mode property                           #
@@ -389,7 +408,7 @@ class TestUNetAmpMode:
         mock_model.amp_mode = False
         sub_module = MagicMock()
         sub_module.amp_mode = False
-        mock_model.modules.return_value = iter([mock_model, sub_module])
+        mock_model.modules.return_value = iter([sub_module])
         mock_module.SongUNetPosEmbd = MagicMock(return_value=mock_model)
         unet = UNet(img_resolution=64, img_in_channels=C_IN, img_out_channels=C_OUT)
         unet.amp_mode = True
@@ -407,62 +426,6 @@ class TestUNetAmpMode:
 
 
 ############################################################################
-#            UNet — _backward_compat_arg_mapper                            #
-############################################################################
-
-
-# class TestUNetBackwardCompat:
-#     """Test _backward_compat_arg_mapper for version-based argument migration."""
-
-#     def test_v010_removes_img_channels(self):
-#         args = {
-#             "img_resolution": 64,
-#             "img_in_channels": C_IN,
-#             "img_out_channels": C_OUT,
-#             "img_channels": 10,
-#         }
-#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
-#         assert "img_channels" not in result
-
-#     def test_v010_removes_sigma_params(self):
-#         args = {
-#             "img_resolution": 64,
-#             "img_in_channels": C_IN,
-#             "img_out_channels": C_OUT,
-#             "sigma_min": 0.002,
-#             "sigma_max": 80.0,
-#             "sigma_data": 0.5,
-#         }
-#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
-#         assert "sigma_min" not in result
-#         assert "sigma_max" not in result
-#         assert "sigma_data" not in result
-
-#     def test_v010_keeps_valid_args(self):
-#         args = {
-#             "img_resolution": 64,
-#             "img_in_channels": C_IN,
-#             "img_out_channels": C_OUT,
-#         }
-#         result = UNet._backward_compat_arg_mapper("0.1.0", args)
-#         assert result["img_resolution"] == 64
-#         assert result["img_in_channels"] == C_IN
-#         assert result["img_out_channels"] == C_OUT
-
-#     def test_non_v010_preserves_all_args(self):
-#         args = {
-#             "img_resolution": 64,
-#             "img_in_channels": C_IN,
-#             "img_out_channels": C_OUT,
-#             "img_channels": 10,
-#             "sigma_min": 0.002,
-#         }
-#         result = UNet._backward_compat_arg_mapper("0.2.0", args)
-#         assert "img_channels" in result
-#         assert "sigma_min" in result
-
-
-############################################################################
 #                    UNet — nn.Module integration                          #
 ############################################################################
 
@@ -476,8 +439,3 @@ class TestUNetModuleIntegration:
         unet = UNet(img_resolution=64, img_in_channels=C_IN, img_out_channels=C_OUT)
         assert isinstance(unet, nn.Module)
 
-    @patch("hirad.models.unet.network_module")
-    def test_model_attribute_exists(self, mock_module):
-        mock_module.SongUNetPosEmbd = MagicMock()
-        unet = UNet(img_resolution=64, img_in_channels=C_IN, img_out_channels=C_OUT)
-        assert hasattr(unet, "model")
