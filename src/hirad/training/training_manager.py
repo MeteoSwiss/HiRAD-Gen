@@ -285,3 +285,148 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             mlflow.log_metric("validation_loss", average_valid_loss, cur_nimg)
 
         return average_valid_loss
+
+
+class TrainingManagerDiT(TrainingManagerBase):
+    def __init__(
+                self, 
+                dist: DistributedManager, 
+                logger: PythonLogger, 
+                dataset: DownscalingDataset, 
+                input_dtype: torch.dtype, 
+                img_shape: tuple[int, int], 
+                n_month_hour_channels: int, 
+                fp16: bool,
+                enable_amp: bool,
+                amp_dtype: torch.dtype,
+                is_real_target: bool, 
+                logging_method: str,
+                ):
+        super().__init__(dist, logger)
+        self.dataset = dataset
+        self.input_dtype = input_dtype
+        self.img_shape = img_shape
+        self.is_real_target = is_real_target
+        self.n_month_hour_channels = n_month_hour_channels
+        self.fp16 = fp16
+        self.enable_amp = enable_amp
+        self.amp_dtype = amp_dtype
+        self.logging_method = logging_method
+
+
+    def load_and_preprocess_batch(self, dataset_iterator):
+        """Load a batch from the iterator and preprocess it (interpolate, normalize, move to device)."""
+        img_clean, img_lr, *date_str = next(dataset_iterator)
+
+        # Interpolate and normalize low-res input
+        img_lr = self.dataset.interpolator(
+            img_lr.to(self.dist.device, dtype=self.input_dtype)
+        ).reshape(*img_lr.shape[:-1], *self.img_shape).flip(-2)
+        img_lr = self.dataset.normalize_input(img_lr)
+
+        # Process high-res target
+        if self.is_real_target:
+            img_clean = regrid_icon_to_rotlatlon(
+                img_clean.to(self.dist.device, dtype=self.input_dtype),
+                self.dataset.regrid_indices_real,
+                self.dataset.regrid_weights_real,
+            )
+            if self.dataset.trim_edge > 0:
+                img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,
+                                            self.dataset.trim_edge:-self.dataset.trim_edge]
+            img_clean = img_clean.flip(-2)
+        else:
+            img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
+            img_clean = img_clean.reshape(*img_clean.shape[:-1], *self.img_shape).flip(-2)
+        img_clean = self.dataset.normalize_output(img_clean)
+
+        # Date embedding
+        date_embedding = None
+        if self.n_month_hour_channels > 0:
+            date_embedding = self.dataset.make_time_grids(*date_str, self.dist.device, dtype=self.input_dtype)
+
+        # Memory format
+        img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
+            memory_format=torch.channels_last
+        )
+        img_lr = img_lr.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
+            memory_format=torch.channels_last
+        )
+
+        return img_clean, img_lr, date_embedding
+
+    def get_static_data(self):
+        """Get static data from the dataset, preprocess it and move to device."""
+        static_channels = self.dataset.get_static_data()
+        if static_channels is not None:
+            if isinstance(static_channels, np.ndarray):
+                static_channels = torch.from_numpy(static_channels)
+
+            static_channels = static_channels[None, ::].flip(-2)
+            static_channels = static_channels.to(
+                self.dist.device,
+                dtype=self.input_dtype,
+                non_blocking=True,
+            ).to(memory_format=torch.channels_last)
+
+        return static_channels
+
+
+    def create_model(self, cfg_model_name: str, cfg_model_args: dict):
+        """Instantiate the model."""
+        n_input_channels = len(self.dataset.input_channels())
+        n_static_channels = len(self.dataset.static_channels())
+        n_output_channels = len(self.dataset.output_channels())
+
+        img_in_channels = n_input_channels + n_static_channels
+        img_out_channels = n_output_channels
+
+        self.logger.info(f"Creating model {cfg_model_name} with {img_in_channels} input channels and {img_out_channels} output channels.")
+
+        model_args = {  # default parameters for all networks
+            "model_type": "DiT",
+            "img_in_channels": img_in_channels,
+            "img_out_channels": img_out_channels,
+            "img_resolution": list(self.img_shape),
+            "use_fp16": self.fp16,
+        }
+        
+        if cfg_model_args:  # override defaults from config file
+            model_args.update(cfg_model_args)
+
+        model = EDMPrecondSuperResolution(**model_args)
+
+        return model, model_args
+
+
+    def run_validation(self, cur_nimg, validation_dataset_iterator, model, loss_fn, validation_steps,
+                    static_channels, batch_size_per_gpu, *args):
+        """Run validation and return average validation loss."""
+        valid_loss_accum = 0
+        with torch.no_grad():
+            lead_time_label_valid = None
+            for _ in range(validation_steps):
+                img_clean_valid, img_lr_valid, date_embedding = self.load_and_preprocess_batch(validation_dataset_iterator)
+
+                loss_valid_kwargs = {
+                    "net": model,
+                    "img_clean": img_clean_valid,
+                    "img_lr": img_lr_valid,
+                    "static_channels": static_channels,
+                    "date_embedding": date_embedding,
+                }
+
+                with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
+                    loss_valid = loss_fn(**loss_valid_kwargs)
+                loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
+                valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
+
+        valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
+        if self.dist.world_size > 1:
+            torch.distributed.barrier()
+            torch.distributed.all_reduce(valid_loss_sum, op=torch.distributed.ReduceOp.SUM)
+        average_valid_loss = (valid_loss_sum / self.dist.world_size).item()
+        if self.dist.rank == 0 and self.logging_method == "mlflow":
+            mlflow.log_metric("validation_loss", average_valid_loss, cur_nimg)
+
+        return average_valid_loss

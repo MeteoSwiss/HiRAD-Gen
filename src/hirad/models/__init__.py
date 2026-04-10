@@ -5,8 +5,10 @@ from .layers import (
     AttentionOp, 
     UNetBlock, 
     PositionalEmbedding, 
-    FourierEmbedding
+    FourierEmbedding,
+    Mlp
 )
 from .song_unet import SongUNet, SongUNetPosEmbd
 from .unet import UNet
 from .preconditioning import EDMPrecondSuperResolution
+from .diffusion_transformer import DiT

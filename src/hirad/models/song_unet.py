@@ -681,7 +681,7 @@ class SongUNetPosEmbd(SongUNet):
         self,
         x,
         noise_labels,
-        class_labels,
+        class_labels: Optional[torch.Tensor] = None,
         global_index: Optional[torch.Tensor] = None,
         embedding_selector: Optional[Callable] = None,
         augment_labels=None,
