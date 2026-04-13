@@ -230,15 +230,8 @@ class TimmSelfAttention(AttentionModuleBase):
         x: Float[torch.Tensor, "batch sequence hidden_size"],
         attn_mask: Optional[Float[torch.Tensor, "..."]] = None,
     ) -> Float[torch.Tensor, "batch sequence hidden_size"]:
-        if attn_mask is not None and not timm_v1_0_16:
-            raise ValueError(
-                "attn_mask in TimmSelfAttention is only supported for timm version 1.0.16 and higher"
-            )
 
-        if not timm_v1_0_16:
-            return self.attn_op(x)
-        else:
-            return self.attn_op(x, attn_mask=attn_mask)
+        return self.attn_op(x, attn_mask=attn_mask)
 
 
 class TESelfAttention(AttentionModuleBase):

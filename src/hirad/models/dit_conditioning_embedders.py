@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from jaxtyping import Float
 
-from .layers import Linear, 
+from .layers import Linear
 from .dit_layers import PositionalEmbedding
 
 
