@@ -145,8 +145,9 @@ class DiT(nn.Module):
         attn_kwargs: Dict[str, Any] = {},
         drop_path_rates: list[float] | None = None,
         force_tokenization_fp32: bool = False,
+        amp_mode: bool = False,
     ):
-        super().__init__(meta=MetaData())
+        super().__init__()
         self.input_size = (
             img_resolution
             if isinstance(img_resolution, (tuple, list))
@@ -217,7 +218,7 @@ class DiT(nn.Module):
                 ConditioningEmbedderType[conditioning_embedder.upper()],
                 hidden_size=hidden_size,
                 condition_dim=condition_dim or 0,
-                amp_mode=self.meta.amp_gpu,
+                amp_mode=amp_mode,
                 **conditioning_embedder_kwargs,
             )
         else:

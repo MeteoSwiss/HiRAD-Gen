@@ -14,64 +14,34 @@ from hirad.utils.checkpoint import load_checkpoint
 
 
 class TrainingManagerBase(ABC):
-    def __init__(self, dist: DistributedManager, logger: PythonLogger):
+    def __init__(self, dist: DistributedManager,
+                       logger: PythonLogger,
+                       dataset: DownscalingDataset,
+                       is_real_target: bool,
+                       n_month_hour_channels: int,
+                       img_shape: tuple[int, int],
+                       input_dtype: torch.dtype,
+                       enable_amp: bool,
+                       amp_dtype: torch.dtype,
+                       use_apex_gn: bool,
+                       logging_method: str,
+                       ):
         self.dist = dist
         self.logger = logger
-
-    @abstractmethod
-    def load_and_preprocess_batch(self):
-        pass
-
-    @abstractmethod
-    def get_static_data(self):
-        pass
+        self.dataset = dataset
+        self.is_real_target = is_real_target
+        self.n_month_hour_channels = n_month_hour_channels
+        self.img_shape = img_shape
+        self.input_dtype = input_dtype
+        self.logging_method = logging_method
+        self.enable_amp = enable_amp
+        self.amp_dtype = amp_dtype
+        self.use_apex_gn = use_apex_gn
 
     @abstractmethod
     def create_model(self):
         pass
-
-    @abstractmethod
-    def run_validation(self):
-        pass
-
-
-class TrainingManagerCorrDiff(TrainingManagerBase):
-    def __init__(
-                self, 
-                dist: DistributedManager, 
-                logger: PythonLogger, 
-                dataset: DownscalingDataset, 
-                input_dtype: torch.dtype, 
-                img_shape: tuple[int, int], 
-                n_month_hour_channels: int, 
-                fp16: bool,
-                profile_mode: bool,
-                enable_amp: bool,
-                amp_dtype: torch.dtype,
-                use_apex_gn: bool,
-                is_real_target: bool, 
-                songunet_checkpoint_level: int,
-                use_patching: bool,
-                hr_mean_conditioning: bool,
-                logging_method: str,
-                ):
-        super().__init__(dist, logger)
-        self.dataset = dataset
-        self.input_dtype = input_dtype
-        self.img_shape = img_shape
-        self.is_real_target = is_real_target
-        self.n_month_hour_channels = n_month_hour_channels
-        self.fp16 = fp16
-        self.songunet_checkpoint_level = songunet_checkpoint_level
-        self.profile_mode = profile_mode
-        self.enable_amp = enable_amp
-        self.amp_dtype = amp_dtype
-        self.use_apex_gn = use_apex_gn
-        self.use_patching = use_patching
-        self.hr_mean_conditioning = hr_mean_conditioning
-        self.logging_method = logging_method
-
-
+    
     def load_and_preprocess_batch(self, dataset_iterator):
         """Load a batch from the iterator and preprocess it (interpolate, normalize, move to device)."""
         img_clean, img_lr, *date_str = next(dataset_iterator)
@@ -138,6 +108,88 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                     .contiguous()
                 )
         return static_channels
+
+
+    def run_validation(self, cur_nimg, validation_dataset_iterator, model, loss_fn, validation_steps,
+                    static_channels, batch_size_per_gpu, patching,
+                    patch_nums_iter, use_patch_grad_acc):
+        """Run validation and return average validation loss."""
+        valid_loss_accum = 0
+        with torch.no_grad():
+            lead_time_label_valid = None
+            for _ in range(validation_steps):
+                img_clean_valid, img_lr_valid, date_embedding = self.load_and_preprocess_batch(validation_dataset_iterator)
+
+                loss_valid_kwargs = {
+                    "net": model,
+                    "img_clean": img_clean_valid,
+                    "img_lr": img_lr_valid,
+                    "static_channels": static_channels,
+                    "date_embedding": date_embedding,
+                    "use_apex_gn": self.use_apex_gn,
+                }
+                if use_patch_grad_acc is not None:
+                    loss_valid_kwargs["use_patch_grad_acc"] = use_patch_grad_acc
+                if use_patch_grad_acc:
+                    loss_fn.y_mean = None
+
+                for patch_num_per_iter in patch_nums_iter:
+                    if patching is not None:
+                        patching.set_patch_num(patch_num_per_iter)
+                        loss_valid_kwargs["patching"] = patching
+                    with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
+                        loss_valid = loss_fn(**loss_valid_kwargs)
+                    loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
+                    valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
+
+        valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
+        if self.dist.world_size > 1:
+            torch.distributed.barrier()
+            torch.distributed.all_reduce(valid_loss_sum, op=torch.distributed.ReduceOp.SUM)
+        average_valid_loss = (valid_loss_sum / self.dist.world_size).item()
+        if self.dist.rank == 0 and self.logging_method == "mlflow":
+            mlflow.log_metric("validation_loss", average_valid_loss, cur_nimg)
+
+        return average_valid_loss
+
+
+class TrainingManagerCorrDiff(TrainingManagerBase):
+    def __init__(
+                self, 
+                dist: DistributedManager, 
+                logger: PythonLogger, 
+                dataset: DownscalingDataset, 
+                input_dtype: torch.dtype, 
+                img_shape: tuple[int, int], 
+                n_month_hour_channels: int, 
+                fp16: bool,
+                profile_mode: bool,
+                enable_amp: bool,
+                amp_dtype: torch.dtype,
+                use_apex_gn: bool,
+                is_real_target: bool, 
+                songunet_checkpoint_level: int,
+                use_patching: bool,
+                hr_mean_conditioning: bool,
+                logging_method: str,
+                ):
+        super().__init__(dist,
+                        logger,
+                        dataset,
+                        is_real_target,
+                        n_month_hour_channels,
+                        img_shape,
+                        input_dtype,
+                        enable_amp,
+                        amp_dtype,
+                        use_apex_gn,
+                        logging_method)
+        self.fp16 = fp16
+        self.songunet_checkpoint_level = songunet_checkpoint_level
+        self.profile_mode = profile_mode
+        self.use_patching = use_patching
+        self.hr_mean_conditioning = hr_mean_conditioning
+
 
 
     def create_model(self, cfg_model_name: str, cfg_model_args: dict, prob_channels: list = []):
@@ -243,49 +295,6 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         return regression_net
 
 
-    def run_validation(self, cur_nimg, validation_dataset_iterator, model, loss_fn, validation_steps,
-                    static_channels, batch_size_per_gpu, patching,
-                    patch_nums_iter, use_patch_grad_acc):
-        """Run validation and return average validation loss."""
-        valid_loss_accum = 0
-        with torch.no_grad():
-            lead_time_label_valid = None
-            for _ in range(validation_steps):
-                img_clean_valid, img_lr_valid, date_embedding = self.load_and_preprocess_batch(validation_dataset_iterator)
-
-                loss_valid_kwargs = {
-                    "net": model,
-                    "img_clean": img_clean_valid,
-                    "img_lr": img_lr_valid,
-                    "static_channels": static_channels,
-                    "date_embedding": date_embedding,
-                    "augment_pipe": None,
-                    "use_apex_gn": self.use_apex_gn,
-                }
-                if use_patch_grad_acc is not None:
-                    loss_valid_kwargs["use_patch_grad_acc"] = use_patch_grad_acc
-                if use_patch_grad_acc:
-                    loss_fn.y_mean = None
-
-                for patch_num_per_iter in patch_nums_iter:
-                    if patching is not None:
-                        patching.set_patch_num(patch_num_per_iter)
-                        loss_valid_kwargs["patching"] = patching
-                    with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
-                        loss_valid = loss_fn(**loss_valid_kwargs)
-                    loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
-                    valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
-
-        valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
-        if self.dist.world_size > 1:
-            torch.distributed.barrier()
-            torch.distributed.all_reduce(valid_loss_sum, op=torch.distributed.ReduceOp.SUM)
-        average_valid_loss = (valid_loss_sum / self.dist.world_size).item()
-        if self.dist.rank == 0 and self.logging_method == "mlflow":
-            mlflow.log_metric("validation_loss", average_valid_loss, cur_nimg)
-
-        return average_valid_loss
-
 
 class TrainingManagerDiT(TrainingManagerBase):
     def __init__(
@@ -302,75 +311,18 @@ class TrainingManagerDiT(TrainingManagerBase):
                 is_real_target: bool, 
                 logging_method: str,
                 ):
-        super().__init__(dist, logger)
-        self.dataset = dataset
-        self.input_dtype = input_dtype
-        self.img_shape = img_shape
-        self.is_real_target = is_real_target
-        self.n_month_hour_channels = n_month_hour_channels
+        super().__init__(dist,
+                        logger,
+                        dataset,
+                        is_real_target,
+                        n_month_hour_channels,
+                        img_shape,
+                        input_dtype,
+                        enable_amp,
+                        amp_dtype,
+                        use_apex_gn,
+                        logging_method)
         self.fp16 = fp16
-        self.enable_amp = enable_amp
-        self.amp_dtype = amp_dtype
-        self.logging_method = logging_method
-
-
-    def load_and_preprocess_batch(self, dataset_iterator):
-        """Load a batch from the iterator and preprocess it (interpolate, normalize, move to device)."""
-        img_clean, img_lr, *date_str = next(dataset_iterator)
-
-        # Interpolate and normalize low-res input
-        img_lr = self.dataset.interpolator(
-            img_lr.to(self.dist.device, dtype=self.input_dtype)
-        ).reshape(*img_lr.shape[:-1], *self.img_shape).flip(-2)
-        img_lr = self.dataset.normalize_input(img_lr)
-
-        # Process high-res target
-        if self.is_real_target:
-            img_clean = regrid_icon_to_rotlatlon(
-                img_clean.to(self.dist.device, dtype=self.input_dtype),
-                self.dataset.regrid_indices_real,
-                self.dataset.regrid_weights_real,
-            )
-            if self.dataset.trim_edge > 0:
-                img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,
-                                            self.dataset.trim_edge:-self.dataset.trim_edge]
-            img_clean = img_clean.flip(-2)
-        else:
-            img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
-            img_clean = img_clean.reshape(*img_clean.shape[:-1], *self.img_shape).flip(-2)
-        img_clean = self.dataset.normalize_output(img_clean)
-
-        # Date embedding
-        date_embedding = None
-        if self.n_month_hour_channels > 0:
-            date_embedding = self.dataset.make_time_grids(*date_str, self.dist.device, dtype=self.input_dtype)
-
-        # Memory format
-        img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
-            memory_format=torch.channels_last
-        )
-        img_lr = img_lr.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
-            memory_format=torch.channels_last
-        )
-
-        return img_clean, img_lr, date_embedding
-
-    def get_static_data(self):
-        """Get static data from the dataset, preprocess it and move to device."""
-        static_channels = self.dataset.get_static_data()
-        if static_channels is not None:
-            if isinstance(static_channels, np.ndarray):
-                static_channels = torch.from_numpy(static_channels)
-
-            static_channels = static_channels[None, ::].flip(-2)
-            static_channels = static_channels.to(
-                self.dist.device,
-                dtype=self.input_dtype,
-                non_blocking=True,
-            ).to(memory_format=torch.channels_last)
-
-        return static_channels
-
 
     def create_model(self, cfg_model_name: str, cfg_model_args: dict):
         """Instantiate the model."""
@@ -389,6 +341,8 @@ class TrainingManagerDiT(TrainingManagerBase):
             "img_out_channels": img_out_channels,
             "img_resolution": list(self.img_shape),
             "use_fp16": self.fp16,
+            "amp_mode": self.enable_amp,
+            "condition_dim": self.n_month_hour_channels,
         }
         
         if cfg_model_args:  # override defaults from config file
@@ -397,36 +351,3 @@ class TrainingManagerDiT(TrainingManagerBase):
         model = EDMPrecondSuperResolution(**model_args)
 
         return model, model_args
-
-
-    def run_validation(self, cur_nimg, validation_dataset_iterator, model, loss_fn, validation_steps,
-                    static_channels, batch_size_per_gpu, *args):
-        """Run validation and return average validation loss."""
-        valid_loss_accum = 0
-        with torch.no_grad():
-            lead_time_label_valid = None
-            for _ in range(validation_steps):
-                img_clean_valid, img_lr_valid, date_embedding = self.load_and_preprocess_batch(validation_dataset_iterator)
-
-                loss_valid_kwargs = {
-                    "net": model,
-                    "img_clean": img_clean_valid,
-                    "img_lr": img_lr_valid,
-                    "static_channels": static_channels,
-                    "date_embedding": date_embedding,
-                }
-
-                with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
-                    loss_valid = loss_fn(**loss_valid_kwargs)
-                loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
-                valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
-
-        valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
-        if self.dist.world_size > 1:
-            torch.distributed.barrier()
-            torch.distributed.all_reduce(valid_loss_sum, op=torch.distributed.ReduceOp.SUM)
-        average_valid_loss = (valid_loss_sum / self.dist.world_size).item()
-        if self.dist.rank == 0 and self.logging_method == "mlflow":
-            mlflow.log_metric("validation_loss", average_valid_loss, cur_nimg)
-
-        return average_valid_loss
