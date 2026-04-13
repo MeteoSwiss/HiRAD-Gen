@@ -207,4 +207,6 @@ core
 src/anemoi-core-ds-collab/training/src/anemoi/training/_version.py
 src/anemoi-core-ds-collab/graphs/src/anemoi/graphs/_version.py
 src/anemoi-core-ds-collab/models/src/anemoi/models/_version.py
+
+*.png
 *.err

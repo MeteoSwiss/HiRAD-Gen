@@ -145,7 +145,6 @@ class GridData():
         
         self._lambda3 = 1 - self._lambda1 - self._lambda2
 
-
     def to_torch(self, device: torch.device ='cpu') -> None:
         """
         Prepare barycentric coordinates and simplex indices for PyTorch operations.
@@ -232,7 +231,26 @@ class GridData():
         if (not self.is_torch and np.any(self._simplex_id == -1)) or (self.is_torch and torch.any(self._simplex_id == -1)):
             out[::, self._simplex_id == -1] = fill_value
 
-        return out.reshape(orig_shape[:-1] + (out.shape[-1],))
+        return out.reshape(orig_shape[:-1] + (out.shape[-1],)) 
+
+    # Utility method to get interpolation weights matrix.
+    def get_interpolation_weights(self) -> np.ndarray:
+        coords_target = np.stack([self.longitudes_target, self.latitudes_target], axis=-1)
+
+        vertices = self.tri.simplices[self._simplex_id]
+        T = self._tri.transform[self._simplex_id, :2] # 
+        r3 = self._tri.transform[simplex, 2]  # translation vector
+        w = np.einsum('ijk,ik->ij', T, coords_target - r3)
+        weights = np.c_[w, 1 - w.sum(axis=1)] # (N, 3) weights
+
+         # 3. Build the CSR Sparse Matrix
+        # Each row (target point) has 3 non-zero entries (source point weights)
+        rows = np.repeat(np.where(valid)[0], 3)
+        cols = v_indices.flatten()
+        data = weights.flatten()
+    
+    return csr_matrix((data, (rows, cols)), shape=(n_dst, n_src))
+
     
     def __call__(self, values: np.ndarray | torch.Tensor, fill_value: Optional[float] = np.nan) -> np.ndarray:
         """Alias for forward method to make class callable."""
