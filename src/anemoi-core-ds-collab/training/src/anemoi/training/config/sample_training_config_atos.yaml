@@ -423,7 +423,9 @@ training:
   # run_alias: null
   deterministic: False
   predict_residuals: False
-  precision: bf16-mixed
+  #precision: bf16-mixed
+  # Precision bf16-mixed is not supported by the model summary.  Estimated model size in MB will not be accurate. Using 32 bits instead.
+  precision: 16
   multistep_input: 1
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
