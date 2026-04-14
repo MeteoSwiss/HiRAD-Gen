@@ -310,6 +310,7 @@ class TrainingManagerDiT(TrainingManagerBase):
                 amp_dtype: torch.dtype,
                 is_real_target: bool, 
                 logging_method: str,
+                use_apex_gn: bool,
                 ):
         super().__init__(dist,
                         logger,

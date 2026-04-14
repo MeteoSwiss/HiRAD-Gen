@@ -1,0 +1,7 @@
+name: diffusion_transformer
+
+model_args:
+  depth: 16
+  hidden_size: 512
+  num_heads: 8
+  patch_size: 16
