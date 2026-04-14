@@ -77,10 +77,10 @@ def main(cfg: DictConfig) -> None:
     
     # performance optimization configuration
     use_torch_compile = getattr(cfg.training.perf, "torch_compile", False)
-    use_apex_gn = getattr(cfg.training.perf, "use_apex_gn", False)
+    use_apex_gn = getattr(cfg.training.perf, "use_apex_gn", True)
     profile_mode = getattr(cfg.training.perf, "profile_mode", False)
     fp_optimizations = cfg.training.perf.fp_optimizations
-    songunet_checkpoint_level = cfg.training.perf.songunet_checkpoint_level
+    songunet_checkpoint_level = getattr(cfg.training.perf, "songunet_checkpoint_level", None)
     fp16 = fp_optimizations == "fp16"
     enable_amp = fp_optimizations.startswith("amp")
     amp_dtype = torch.float16 if (fp_optimizations == "amp-fp16") else torch.bfloat16
@@ -212,6 +212,7 @@ def main(cfg: DictConfig) -> None:
         "amp_dtype": amp_dtype,
         "is_real_target": is_real_target,
         "logging_method": cfg.logging.get("method", None),
+        "use_apex_gn": use_apex_gn,
     }
     if cfg.model.name in {"diffusion_transformer"}:
         training_manager = TrainingManagerDiT(**training_manager_args)
@@ -219,7 +220,6 @@ def main(cfg: DictConfig) -> None:
         training_manager = TrainingManagerCorrDiff(
                                             **training_manager_args,
                                             profile_mode=profile_mode, 
-                                            use_apex_gn=use_apex_gn,
                                             songunet_checkpoint_level=songunet_checkpoint_level,
                                             use_patching=use_patching,
                                             hr_mean_conditioning=cfg.model.get("hr_mean_conditioning", False),
@@ -231,7 +231,7 @@ def main(cfg: DictConfig) -> None:
 
     # # Print the model summary
     # if dist.rank == 0:
-    #     summary(model, input_size=[(1, img_out_channels, *img_shape), (1, img_in_channels, *img_shape), (1,1)], device=dist.device)
+    #     summary(model, input_size=[(1, 4, *img_shape), (1, 13+1, *img_shape), (1,1)], device=dist.device)
 
     # raise NotImplementedError("Check if model_args are correct when using patching - img_in_channels should include global channels and lead time channels if applicable")
 
