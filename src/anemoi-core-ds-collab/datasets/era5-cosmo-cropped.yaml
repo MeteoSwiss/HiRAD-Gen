@@ -1,0 +1,45 @@
+#yaml
+name: era-n320crop2cosmo-2015-2020-1h-v0
+
+description: |
+  This recipe takes the ERA5 dataset and crops it to the COSMO region + 100km buffer, for the purposes of downscaling.
+
+dates:
+  end: '2020-10-28T18:59:00'
+  frequency: 1h
+  start: '2015-11-29T00:00:00'
+
+input:
+    pipe: #default era5 variables and crops
+        - anemoi-dataset:
+                dataset: /capstor/store/cscs/pasc/c38/anemoi-datasets/aifs-ea-an-oper-0001-mars-n320-1979-2023-1h-v1-with-ERA51.zarr
+                select: # all era5 variables you are interested in
+                    - 10u
+                    - 10v
+                    - 2t
+                    - t_850
+                    - tcw
+                    - tp
+                    - u_850
+                    - v_850
+                    - z_850
+                    - t_500
+                    - u_500
+                    - v_500
+                    - z_500                    
+                    # Constants / forcings
+                    - sin_julian_day
+                    - sin_latitude
+                    - sin_local_time
+                    - sin_longitude
+                    - cos_julian_day
+                    - cos_latitude
+                    - cos_local_time
+                    - cos_longitude
+                    - insolation
+                    - lsm
+                    - z
+        - regrid:
+            # anemoi-transform make-regrid-file global-on-lam-mask --global-grid era_grid.npz --lam-grid cosmo_grid.npz
+            # --output era2cosmo_mask_100km.npz --distance 100
+            mask: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data/era2cosmo_mask_100km.npz
