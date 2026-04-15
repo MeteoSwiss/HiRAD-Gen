@@ -21,8 +21,8 @@
 ### CONFIG ###
 CONFIG_NAME="src/hirad/conf/eval_real.yaml"
 
-srun --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e . --no-dependencies
+srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
+    pip install -e .
 
     # Diurnal cycle
     # python src/hirad/eval/diurnal_cycle_precip_mean_wet-hour.py --config-name=${CONFIG_NAME}

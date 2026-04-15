@@ -13,17 +13,21 @@ build_job:
   extends: .container-builder-cscs-gh200
   variables:
     DOCKERFILE: ci/docker/Dockerfile.ci
+    KUBERNETES_MEMORY_REQUEST: '64Gi'
+    KUBERNETES_MEMORY_LIMIT: '64Gi'
 
 test_job:
   stage: test
   extends: .container-runner-clariden-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-     - echo 'hello world'
-  #  - pip install -e . --no-dependencies
-  #  - python src/hirad/training/train.py --config-name=training_era_cosmo_regression_test.yaml
+    # - echo 'hello world'
+    - ls /opt
+    - pytest /opt/hirad-gen/tests -v
   variables:
-    SLURM_JOB_NUM_NODES: 2
-    SLURM_NTASKS: 2
-    #SLURM_ACCOUNT: a161
-    #SBATCH_ACCOUNT: a161
+    USE_MPI: NO
+    SLURM_MPI_TYPE: pmix
+    SLURM_NETWORK: disable_rdzv_get
+    PMIX_MCA_psec: native
+    SLURM_JOB_NUM_NODES: 1
+    SLURM_NTASKS: 1

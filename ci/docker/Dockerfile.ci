@@ -1,15 +1,13 @@
-FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
-    
+FROM jfrog.svc.cscs.ch/docker-group-csstaff/alps-images/ngc-physicsnemo:25.11-alps4-dev as builder
+
 # setup
-RUN apt-get update && apt-get install python3-pip python3-venv -y
 RUN pip install --upgrade pip
-    
-# Install the rest of dependencies.
-RUN pip install \
-    Cartopy==0.22.0 \
-    xskillscore
 
+# install dependencies
+RUN pip install mlflow
 
+COPY . /opt/hirad-gen
 
+WORKDIR /opt/hirad-gen
 
-
+RUN pip install /opt/hirad-gen --no-dependencies

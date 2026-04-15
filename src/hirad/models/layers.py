@@ -30,7 +30,7 @@ import torch.amp as amp
 from einops import rearrange
 from torch.nn.functional import elu, gelu, leaky_relu, relu, sigmoid, silu, tanh
 
-from hirad.models import weight_init
+from hirad.utils.model_utils import weight_init
 
 _is_apex_available = False
 if torch.cuda.is_available():
