@@ -227,7 +227,7 @@ class NativeGridDataset(IterableDataset):
         torch.manual_seed(base_seed)
         random.seed(base_seed)
         self.rng = np.random.default_rng(seed=base_seed)
-        sanity_rnd = self.rng.random(1)
+        sanity_rnd = self.rng.random(1).item()
 
         LOGGER.info(
             (

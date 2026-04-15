@@ -1,0 +1,513 @@
+name: example_era5_to_cerra_downscaling_diffusion_training
+description: |
+  Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core.
+
+config_validation: False
+
+# ===================
+# Datal config
+# ===================
+variables:
+  in_lres_variables: [2t, sp]
+  out_hres_variables: [2t, sp]
+  residual_variables: [sp]
+  direct_prediction_fields: [2t]
+  hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
+
+data:
+  residual_fields: ${variables.residual_variables}
+  direct_prediction_fields: ${variables.direct_prediction_fields}
+  format: zarr
+  frequency: 3h
+  timestep: ${data.frequency}
+  forcing: ${variables.hres_forcings}
+
+  diagnostic: []
+  num_features: null
+
+  normalizer:
+    default: "mean-std"
+    none:
+    - "cos_latitude"
+    - "cos_longitude"
+    - "sin_latitude"
+    - "sin_longitude"
+    - "cos_julian_day"
+    - "cos_local_time"
+    - "sin_julian_day"
+    - "sin_local_time"
+    - "insolation"
+    - "lsm"
+    max: [tp]
+
+  processors:
+    normalizer:
+      _target_: anemoi.models.preprocessing.multi_dataset_normalizer.TopNormalizer
+      _convert_: all
+      config: ${data.normalizer}
+
+
+# ===================
+# Dataloader config
+# ===================
+dataloader:
+  prefetch_factor: 1
+  pin_memory: True
+
+  read_group_size: ${hardware.num_gpus_per_model}
+  select_in: ${variables.in_lres_variables}
+  select_in_hres: ${variables.hres_forcings}
+  select_out: ${variables.out_hres_variables}
+
+  dataset:
+    zip:
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
+        name: lres
+        select: ${dataloader.select_in}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
+        name: hres
+        select: ${dataloader.select_in_hres}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
+        name: out
+        select: ${dataloader.select_out}
+    adjust: dates
+
+
+  num_workers:
+    training: 6
+    validation: 6
+    test: 6
+    predict: 2
+
+  limit_batches:
+    training: null
+    validation: null
+    test: 20
+    predict: 20
+
+  batch_size:
+    training: 1
+    validation: 1
+    test: 1
+    predict: 1
+
+  training:
+    start: 2020-01-01T00:00:00
+    #end: 2020-01-03T00:00:00
+    end: 2022-01-01T00:00:00
+    frequency: ${data.frequency}
+    dataset: ${dataloader.dataset}
+  validation:
+    start: 2022-01-01T00:00:00
+    #end: 2022-01-03T00:00:00
+    end: 2023-01-01T00:00:00
+    frequency: ${data.frequency}
+    dataset: ${dataloader.dataset}
+  test:
+    start: 2023-01-01T00:00:00
+    #end: 2023-01-03T00:00:00
+    end: 2023-12-31T00:00:00
+    frequency: ${data.frequency}
+    dataset: ${dataloader.dataset}
+
+  hres_grid_indices:
+    _target_: anemoi.training.data.grid_indices.FullGrid
+    nodes_name: ${graph.data}
+
+  grid_indices:
+    _target_: anemoi.training.data.grid_indices.FullGrid
+    nodes_name: ${graph.data}
+
+  lres_grid_indices:
+    _target_: anemoi.training.data.grid_indices.FullGrid
+    nodes_name: ${graph.lres}
+
+# ===================
+# Datamodule config
+# ===================
+datamodule:
+  _target_: anemoi.training.data.datamodule.DownscalingAnemoiDatasetsDataModule
+
+# ===================
+# Diagnostic config
+# ===================
+diagnostics:
+  check_val_every_n_epoch: 10
+  enable_checkpointing: True
+  profiler: False
+  enable_progress_bar: True
+  print_memory_summary: False
+  callbacks: []
+  checkpoint:
+    every_n_minutes:
+      save_frequency: 60   # Approximate, as this is checked at the end of training steps
+      num_models_saved: 3  # If set to k, saves the 'last' k model weights in the training.
+
+    every_n_epochs:
+      save_frequency: 10
+      num_models_saved: 3 # If set to -1, all checkpoints are kept ensuring runs can be continued/forked at any point in the training process
+
+    every_n_train_steps:
+      save_frequency: 1e4  # Does not scale with rollout
+      num_models_saved: -1
+
+  log:
+    interval: 500
+    mlflow:
+      project_name: 'mmcglohon_mlflow_project'
+      experiment_name: 'anemoi_downscaling_era_cosmo'
+      run_name: ${name}
+      enabled: True
+      offline: False
+      system: True
+      authentication: True
+      on_resume_create_child: True
+      tracking_uri: https://mlflow.ecmwf.int
+      log_model: False
+      terminal: False
+      expand_hyperparams: # Which keys in hyperparams to expand
+        - config
+      http_max_retries: 35
+      max_params_length: 2000
+    wandb:
+      enabled: False
+      offline: False
+      log_model: False
+      project: 'mmcglohon_wandb_project'
+      entity: False
+      gradients: False
+      parameters: False
+    tensorboard:
+      enabled: False
+  plot:
+    enabled: False  # plot should NOT be enabled when using diffusion (not handled yet)
+    callbacks: []
+  debug:
+    anomaly_detection: False
+
+# ===================
+# Hardware config
+# ===================
+hardware:
+  accelerator: auto
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE, 1}}
+  num_nodes: ${oc.decode:${oc.env:SLURM_NNODES, 1}}
+  num_gpus_per_model: 1 # sharding
+  paths:
+    inputs: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    output: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/output
+    grids: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    truncation: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    residual_statistics: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    graph: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    checkpoints: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/checkpoints
+    plots: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/plots
+    profiler: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/profiler
+    logs:
+      wandb: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/logs/wandb
+      mlflow: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/logs/mlflow
+      tensorboard: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/logs/tensorboard
+
+  files:
+    dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-2020-2023-3h-v0.zarr
+    dataset_y: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr
+    dataset_y_forcings: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr #can be the same as output_dataset
+    warm_start: null
+    graph: ${graph.name}.pt
+    residual_statistics: cerra_residuals_2t_10u_10v_100u_100v_sp_2d_msl_tcc_ssrd_strd_tp_1990_2019.npy
+    truncation: era5crop2cerra_to_cerra_interpolation_linear.npz # lres to hres !
+    truncation_inv: cerra_to_era5crop2cerra_interpolation_linear.npz # hres to lres
+    checkpoint:
+      every_n_epochs: anemoi-by_epoch-epoch_{epoch:03d}-step_{step:06d}
+      every_n_train_steps: anemoi-by_step-epoch_{epoch:03d}-step_{step:06d}
+      every_n_minutes: anemoi-by_time-epoch_{epoch:03d}-step_{step:06d}
+
+# ===================
+# Graph config
+# ===================
+graph:
+  name: one-encoder-decoder-cerra-graph-r8
+  overwrite: False
+  data: data
+  hidden: hidden
+  lres: lres
+
+  nodes:
+    # in nodes
+    lres:
+      node_builder:
+        _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
+      attributes: ${graph.attributes.nodes}
+    # in_hres nodes
+    data:
+      node_builder:
+        _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
+      attributes: ${graph.attributes.nodes}
+    # Hidden nodes
+    hidden:
+      node_builder:
+        _target_: anemoi.graphs.nodes.LimitedAreaTriNodes
+        resolution: 8
+        margin_radius_km: 11
+        reference_node_name: data
+      attributes: ${graph.attributes.nodes}
+
+  edges:
+
+  # Encoder in_hres-hidden configuration
+  - source_name: data
+    target_name: hidden
+    edge_builders:
+      - _target_: anemoi.graphs.edges.CutOffEdges
+        cutoff_factor: 0.7 # only for cutoff method
+    attributes: ${graph.attributes.edges}
+
+  # Processor configuration
+  - source_name: hidden
+    target_name: hidden
+    edge_builders:
+      - _target_: anemoi.graphs.edges.MultiScaleEdges
+        x_hops: 1
+        scale_resolutions: [5, 6, 7, 8]
+    attributes: ${graph.attributes.edges}
+  # Decoder configuration
+  - source_name: hidden
+    target_name: data
+    edge_builders:
+      - _target_: anemoi.graphs.edges.KNNEdges # options: KNNEdges, CutOffEdges
+        num_nearest_neighbours: 3 # only for knn method
+    attributes: ${graph.attributes.edges}
+
+
+  attributes:
+    nodes:
+      area_weight:
+        _target_: anemoi.graphs.nodes.attributes.SphericalAreaWeights
+        norm: unit-max
+    edges:
+      edge_length:
+        _target_: anemoi.graphs.edges.attributes.EdgeLength
+        norm: unit-std
+      edge_dirs:
+        _target_: anemoi.graphs.edges.attributes.EdgeDirection
+        norm: unit-std
+
+# ===================
+# Model config
+# ===================
+model:
+  name: one-encoder-decoder-64-model
+  num_heads: 4
+  num_chunks: 2
+  mlp_hidden_ratio: 4
+  num_layers: 8
+  num_channels: 128
+  cpu_offload: False
+  keep_batch_sharded: True
+  model:
+    _target_: anemoi.models.models.AnemoiDownscalingModelEncProcDec
+    diffusion:
+      sigma_data: 1.0
+      noise_channels: 32
+      noise_cond_dim: 16
+      sigma_max: 88.0
+      sigma_min: 0.02
+      rho: 7.0
+      log_normal_mean: -1.2
+      log_normal_std: 1.2
+
+      noise_embedder:
+        _target_: anemoi.models.layers.diffusion.SinusoidalEmbeddings
+        num_channels: 32 #${model.model.diffusion.noise_channels}
+        max_period: 1000
+
+      inference_defaults:
+        noise_scheduler:
+          schedule_type: "karras"
+          sigma_max: 100000.0
+          sigma_min: 0.02
+          rho: 7.0
+          num_steps: 80
+
+        diffusion_sampler:
+          sampler: "heun"
+          S_churn: 2.5
+          S_min: 0.75
+          S_max: 100000
+          S_noise: 1.05
+
+  layer_kernels:
+    LayerNorm:
+      _target_: anemoi.models.layers.normalization.ConditionalLayerNorm
+      normalized_shape: ${model.num_channels}
+      condition_shape: 16  #TODO: Must be equal to model.diffusion.noise_cond_dim?
+      w_one_bias_zero_init: True
+      autocast: falseconfig/core-ds_diffusion_cerra_1985_2020_non_residual_1_encoders_long_training_no_sharding.yaml
+    Linear:
+      _target_: torch.nn.Linear
+    Activation:
+      _target_: torch.nn.GELU
+    QueryNorm:
+      _target_: anemoi.models.layers.normalization.AutocastLayerNorm
+      bias: False
+    KeyNorm:
+      _target_: anemoi.models.layers.normalization.AutocastLayerNorm
+      bias: False
+
+  encoder:
+    _target_: anemoi.models.layers.mapper.GraphTransformerForwardMapper
+    trainable_size: ${model.trainable_parameters.data2hidden}
+    sub_graph_edge_attributes: ${model.attributes.edges}
+    num_chunks: ${model.num_chunks}
+    mlp_hidden_ratio: ${model.mlp_hidden_ratio} # GraphTransformer or Transformer only
+    num_heads: ${model.num_heads}        # GraphTransformer or Transformer only
+    qk_norm: True
+    cpu_offload: ${model.cpu_offload}
+    layer_kernels: ${model.layer_kernels}
+    #shard_strategy: "heads"  # Should yield better computational efficiency
+
+  processor:
+    _target_: anemoi.models.layers.processor.GraphTransformerProcessor
+    trainable_size: ${model.trainable_parameters.hidden2hidden}
+    sub_graph_edge_attributes: ${model.attributes.edges}
+    num_layers: ${model.num_layers}
+    num_chunks: ${model.num_chunks}
+    mlp_hidden_ratio: ${model.mlp_hidden_ratio} # GraphTransformer or Transformer only
+    num_heads: ${model.num_heads}        # GraphTransformer or Transformer only
+    qk_norm: True
+    cpu_offload: ${model.cpu_offload}
+    layer_kernels: ${model.layer_kernels}
+
+  decoder:
+    _target_: anemoi.models.layers.mapper.GraphTransformerBackwardMapper
+    trainable_size: ${model.trainable_parameters.hidden2data}
+    sub_graph_edge_attributes: ${model.attributes.edges}
+    num_chunks: ${model.num_chunks}
+    mlp_hidden_ratio: ${model.mlp_hidden_ratio} # GraphTransformer or Transformer only
+    num_heads: ${model.num_heads}        # GraphTransformer or Transformer only
+    initialise_data_extractor_zero: False
+    qk_norm: True
+    cpu_offload: ${model.cpu_offload}
+    layer_kernels: ${model.layer_kernels}
+    #shard_strategy: "heads"  # Should yield better computational efficiency
+
+  output_mask:
+    _target_: anemoi.training.utils.masks.NoOutputMask
+
+  trainable_parameters:
+    data: 0
+    hidden: 0
+    data2hidden: 0
+    hidden2data: 0
+    hidden2hidden: 0
+
+  attributes:
+    edges:
+    - edge_length
+    - edge_dirs
+    nodes: []
+
+  # Bounding configuration
+  bounding: []
+
+# ===================
+# Training config
+# ===================
+training:
+  max_epochs: 100
+  max_steps: 100000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
+
+  # run in deterministic mode ; slows down
+  # run_alias: null
+  deterministic: False
+  predict_residuals: False
+  precision: bf16-mixed
+  #precision: 16
+  multistep_input: 1
+  accum_grad_batches: 1
+  zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
+  loss_gradient_scaling: False
+  run_id: null
+  fork_run_id: null
+  transfer_learning: False # activate to perform transfer learning
+  load_weights_only: False # only load model weights, do not restore optimiser states etc.
+
+  num_sanity_val_steps: 1
+  check_val_every_n_epoch: ${diagnostics.check_val_every_n_epoch}
+  metrics: [2t, 10u, 10v, t_850, tp]
+
+  model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
+  training_approach: probabilistic_low_noise   # probabilistic_high_noise
+
+  # Training loss
+  training_loss:
+    _target_: anemoi.training.losses.WeightedMSELoss
+    scalers: ['general_variable', 'pressure_level', 'node_weights']
+
+  # Validation
+  validation_metrics:
+    mse:
+      _target_: anemoi.training.losses.WeightedMSELoss
+      scalers: ['node_weights']  # Cannot scale over the variable dimension due to possible remappings.
+  # Strategy (sharding)
+  strategy:
+    _target_: anemoi.training.distributed.strategy.DDPGroupStrategy
+    num_gpus_per_model: ${hardware.num_gpus_per_model}
+    read_group_size: ${dataloader.read_group_size}
+
+  lr:
+    warmup: 500
+    rate: 3e-5
+    iterations: ${training.max_steps}
+    min: 1e-7
+
+  rollout:
+    start: 1
+    epoch_increment: 0  # increase rollout every n epochs
+    max: 1
+
+  scalers:
+    general_variable:
+      _target_: anemoi.training.losses.scalers.GeneralVariableLossScaler
+      weights:
+        default: 1
+        2t: 2
+        sp: 1.5
+
+    pressure_level:
+      _target_: anemoi.training.losses.scalers.ReluVariableLevelScaler
+      group: pl
+      y_intercept: 0.0
+      slope: 0.0001659751037 # 1./6025 -> 1./sum(1000, 925, 850, 700, 600, 500, 400, 300, 250, 200, 150, 100, 50)
+
+    node_weights:  # Scalers from node attributes
+      _target_: anemoi.training.losses.scalers.GraphNodeAttributeScaler
+      nodes_name: ${graph.data}
+      nodes_attribute_name: area_weight
+      norm: unit-sum
+
+
+  variable_groups:
+    default: sfc
+    pl:
+      param: [r, t, u, v, w, z]
+
+  # Clipp gradients, 0 : don't clip, default algorithm: norm, alternative: value
+  gradient_clip:
+    val: 1.
+    algorithm: norm
+
+  # Stochastic weight averaging (https://pytorch.org/blog/stochastic-weight-averaging-in-pytorch/)
+  swa:
+    enabled: False
+    lr: 1.e-4
+
+  # Optimizer settings
+  optimizer:
+    zero: False
+    kwargs:
+      weight_decay: 0.1
+      betas: [0.9, 0.95]
+      eps: 1e-7

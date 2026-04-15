@@ -1,32 +1,33 @@
 #yaml
-name: aifs-ea-an-oper-0001-mars-n320crop2cosmo-1979-2024-1h-v2-with-era51.yaml
+name: cerra-rr-an-oper-se-al-ec-mars-5p5km-2020-2023-3h-v2
 
 description: |
-  This recipe subsamples the 1h full-resolution ERA5 dataset and crops it to the COSMO region + 100km buffer, for the purposes of downscaling.
+  This recipe takes crops the cerra dataset for transfer.
 
 dates:
-  end: '2020-12-31T23:59:00'
-  frequency: 1h
-  start: '2015-10-01T00:00:00'
+  start: '2020-01-01T00:00:00'
+  frequency: 3h
+  end: '2023-12-31T18:00:00'
+  group_by: daily
 
 input:
     pipe: #default era5 variables and crops
         - anemoi-dataset:
-                dataset:  /capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-1h-v2-with-era51.zarr
-                select: # all era5 variables you are interested in
+                dataset: /home/mlx/ai-ml/datasets/cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr
+                select: # all cerra variables you are interested in
                     - 10u
                     - 10v
                     - 2t
-                    - tcw
                     - t_850
-                    - z_850
+                    - tcw
+                    - tp
                     - u_850
                     - v_850
+                    - z_850
                     - t_500
-                    - z_500
                     - u_500
                     - v_500
-                    - tp
+                    - z_500                    
                     # Constants / forcings
                     - sin_julian_day
                     - sin_latitude
@@ -37,5 +38,5 @@ input:
                     - cos_local_time
                     - cos_longitude
                     - insolation
-        - regrid:
-            mask: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data/era2cosmo_mask_100km.npz
+                    - lsm
+                    - z
