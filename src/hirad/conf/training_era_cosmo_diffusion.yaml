@@ -10,7 +10,7 @@ defaults:
   - _self_
 
   # Dataset
-  - dataset/era_cosmo
+  - dataset/anemoi_era_cosmo
 
   # Model
   - model/era_cosmo_diffusion

@@ -9,7 +9,7 @@ hydra:
 defaults:
   - _self_
   # Dataset
-  - dataset/era_real_inference
+  - dataset/anemoi_era_real_inference
 
   # Sampler
   - sampler/stochastic

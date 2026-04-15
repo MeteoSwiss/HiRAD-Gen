@@ -16,6 +16,7 @@ from hirad.inference import Generator
 from hirad.utils.inference_utils import save_results
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
+from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 
 from hirad.datasets import get_dataset_and_sampler_inference
 
@@ -41,13 +42,18 @@ def main(cfg: DictConfig) -> None:
     if dist.world_size > 1:
         torch.distributed.barrier()
 
+    use_apex_gn = cfg.generation.perf.get("use_apex_gn", False)
+    input_dtype = torch.float16 if cfg.generation.perf.get("force_fp16", False) and use_apex_gn else torch.float32
+
     # Parse the inference input times
-    if cfg.generation.times_range and cfg.generation.times:
+    if cfg.generation.get("times_range", None) and cfg.generation.get("times", None):
         raise ValueError("Either times_range or times must be provided, but not both")
-    if cfg.generation.times_range:
+    if cfg.generation.get("times_range", None):
         times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
-    else:
+    elif cfg.generation.get("times", None):
         times = cfg.generation.times
+    else:
+        raise ValueError("Either times_range or times must be provided")
 
     # Create dataset object
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
@@ -58,6 +64,11 @@ def main(cfg: DictConfig) -> None:
     dataset, sampler = get_dataset_and_sampler_inference(
         dataset_cfg=dataset_cfg, times=times, has_lead_time=has_lead_time
     )
+    dataset.stats_to_torch(device=dist.device, dtype=input_dtype)
+    is_real_target = dataset_cfg.get("type").split("_")[-1] == "real"
+    if is_real_target:
+        dataset.regrid_indices_real = dataset.regrid_indices_real.to(dist.device)
+        dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)      
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
 
@@ -164,6 +175,7 @@ def main(cfg: DictConfig) -> None:
                                       overlap_pix=cfg.generation.overlap_pix,
                                       )
     sampler_params = cfg.sampler.params if "params" in cfg.sampler else {}
+    sampler_params["use_apex_gn"] = use_apex_gn
     generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
     # generate images
@@ -218,8 +230,27 @@ def main(cfg: DictConfig) -> None:
 
                 start = end = DummyEvent()
 
+            dataset.interpolator.to_torch(device=dist.device)
+
+            static_channels = dataset.get_static_data()
+            if static_channels is not None:
+                static_channels = static_channels[None, ::].flip(-2)
+                if use_apex_gn:
+                    static_channels = static_channels.to(
+                        dist.device,
+                        dtype=input_dtype,
+                        non_blocking=True,
+                    ).to(memory_format=torch.channels_last)
+                else:
+                    static_channels = (
+                        static_channels.to(dist.device)
+                        .to(input_dtype)
+                        .contiguous()
+                    )
+            lead_time_label = None
+
             times = dataset.time()
-            for index, (image_tar, image_lr, *lead_time_label) in enumerate(
+            for index, (image_tar, image_lr, *date_str) in enumerate(
                 iter(data_loader)
             ):
                 time_index += 1
@@ -232,22 +263,30 @@ def main(cfg: DictConfig) -> None:
                 savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
                 os.makedirs(savedir,exist_ok=True)
                 # continue
+                if is_real_target:
+                    image_tar = regrid_icon_to_rotlatlon(
+                        image_tar.to(dist.device, dtype=input_dtype),
+                        dataset.regrid_indices_real,
+                        dataset.regrid_weights_real,
+                    )
+                    if dataset.trim_edge > 0:
+                        image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
                 if lead_time_label:
                     lead_time_label = lead_time_label[0].to(dist.device).contiguous()
                 else:
                     lead_time_label = None
-                image_lr = (
-                    image_lr.to(device=device)
-                    .to(torch.float32)
-                    .to(memory_format=torch.channels_last)
-                )
-                image_tar = image_tar.to(device=device).to(torch.float32)
-                # image_out, image_reg = generate_fn(image_lr,lead_time_label)
+                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
+                image_lr = dataset.normalize_input(image_lr)
+                image_lr = image_lr.to(memory_format=torch.channels_last)
                 random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
-                # print(f"On rank {dist.rank} using base random seed: {random_seed} for time index {time_index}")
+                date_embedding = None
+                if dataset._n_month_hour_channels:
+                    date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
                 image_out, image_reg = generator.generate(
                                             image_lr,
-                                            lead_time_label,
+                                            static_channels=static_channels,
+                                            date_embedding=date_embedding,
+                                            lead_time_label=lead_time_label,
                                             randomize=cfg.generation.get("randomize", False),
                                             random_seed=random_seed
                                         )
@@ -255,7 +294,11 @@ def main(cfg: DictConfig) -> None:
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
                     # write out data in a seperate thread so we don't hold up inferencing
-                    
+                    image_tar = image_tar[0].squeeze().cpu().numpy()
+                    prediction_ensemble = dataset.denormalize_output(image_out).squeeze().flip(-2).cpu().numpy()
+                    baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
+                    if image_reg is not None:
+                        mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
                     writer_threads.append(
                         writer_executor.submit(
                             save_results,

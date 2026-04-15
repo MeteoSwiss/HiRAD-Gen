@@ -21,27 +21,7 @@ from typing import Any, Dict, List, Literal, Tuple, Union
 import torch
 import torch.nn as nn
 
-from .meta import ModelMetaData
-
 network_module = importlib.import_module("hirad.models")
-
-
-@dataclass
-class MetaData(ModelMetaData):
-    name: str = "UNet"
-    # Optimization
-    jit: bool = False
-    cuda_graphs: bool = False
-    amp_cpu: bool = False
-    amp_gpu: bool = True
-    torch_fx: bool = False
-    # Data type
-    bf16: bool = True
-    # Inference
-    onnx: bool = False
-    # Physics informed
-    func_torch: bool = False
-    auto_grad: bool = False
 
 
 class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
@@ -61,7 +41,7 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
         Execute the underlying model at FP16 precision, by default False.
     model_type: str, optional
         Class name of the underlying model. Must be one of the following:
-        'SongUNet', 'SongUNetPosEmbd', 'SongUNetPosLtEmbd', 'DhariwalUNet'.
+        'SongUNet', 'SongUNetPosEmbd'.
         Defaults to 'SongUNetPosEmbd'.
     **model_kwargs : dict
         Keyword arguments passed to the underlying model `__init__` method.
@@ -70,8 +50,7 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
     --------
     For information on model types and their usage:
     :class:`~models.song_unet.SongUNet`: Basic U-Net for diffusion models
-    :class:`~models.song_unet.SongUNetPosEmbd`: U-Net with positional embeddings
-    :class:`~models.song_unet.SongUNetPosLtEmbd`: U-Net with positional and lead-time embeddings
+    :class:`~models.song_unet.SongUNetPosEmbd`: U-Net with positional embeddings and lead time embeddings
 
     Please refer to the documentation of these classes for details on how to call
     and use these models directly.
@@ -127,7 +106,7 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
         img_out_channels: int,
         use_fp16: bool = False,
         model_type: Literal[
-            "SongUNetPosEmbd", "SongUNetPosLtEmbd", "SongUNet", "DhariwalUNet"
+            "SongUNetPosEmbd", "SongUNet"
         ] = "SongUNetPosEmbd",
         **model_kwargs: dict,
     ):
@@ -292,103 +271,3 @@ class UNet(nn.Module):  # TODO a lot of redundancy, need to clean up
             if hasattr(sub_module, "amp_mode"):
                 sub_module.amp_mode = value
 
-# TODO: implement amp_mode property for StormCastUNet (same as UNet)
-class StormCastUNet(nn.Module):
-    """
-    U-Net wrapper for StormCast; used so the same Song U-Net network can be re-used for this model.
-
-    Parameters
-    -----------
-    img_resolution : int or List[int]
-        The resolution of the input/output image.
-    img_channels : int
-         Number of color channels.
-    img_in_channels : int
-        Number of input color channels.
-    img_out_channels : int
-        Number of output color channels.
-    use_fp16: bool, optional
-        Execute the underlying model at FP16 precision?, by default False.
-    sigma_min: float, optional
-        Minimum supported noise level, by default 0.
-    sigma_max: float, optional
-        Maximum supported noise level, by default float('inf').
-    sigma_data: float, optional
-        Expected standard deviation of the training data, by default 0.5.
-    model_type: str, optional
-        Class name of the underlying model, by default 'SongUNet'.
-    **model_kwargs : dict
-        Keyword arguments for the underlying model.
-
-    """
-
-    def __init__(
-        self,
-        img_resolution,
-        img_in_channels,
-        img_out_channels,
-        use_fp16=False,
-        sigma_min=0,
-        sigma_max=float("inf"),
-        sigma_data=0.5,
-        model_type="SongUNet",
-        **model_kwargs,
-    ):
-        super().__init__() #meta=MetaData("StormCastUNet")
-
-        if isinstance(img_resolution, int):
-            self.img_shape_x = self.img_shape_y = img_resolution
-        else:
-            self.img_shape_x = img_resolution[0]
-            self.img_shape_y = img_resolution[1]
-
-        self.img_in_channels = img_in_channels
-        self.img_out_channels = img_out_channels
-
-        self.use_fp16 = use_fp16
-        self.sigma_min = sigma_min
-        self.sigma_max = sigma_max
-        self.sigma_data = sigma_data
-        model_class = getattr(network_module, model_type)
-        self.model = model_class(
-            img_resolution=img_resolution,
-            in_channels=img_in_channels,
-            out_channels=img_out_channels,
-            **model_kwargs,
-        )
-
-    def forward(self, x, force_fp32=False, **model_kwargs):
-        """Run a forward pass of the StormCast regression U-Net.
-
-        Args:
-            x (torch.Tensor): input to the U-Net
-            force_fp32 (bool, optional): force casting to fp_32 if True. Defaults to False.
-
-        Raises:
-            ValueError: If input data type is a mismatch with provided options
-
-        Returns:
-            D_x (torch.Tensor): Output (prediction) of the U-Net
-        """
-
-        x = x.to(torch.float32)
-        dtype = (
-            torch.float16
-            if (self.use_fp16 and not force_fp32 and x.device.type == "cuda")
-            else torch.float32
-        )
-
-        F_x = self.model(
-            x.to(dtype),
-            torch.zeros(x.shape[0], dtype=x.dtype, device=x.device),
-            class_labels=None,
-            **model_kwargs,
-        )
-
-        if (F_x.dtype != dtype) and not torch.is_autocast_enabled():
-            raise ValueError(
-                f"Expected the dtype to be {dtype}, but got {F_x.dtype} instead."
-            )
-
-        D_x = F_x.to(torch.float32)
-        return D_x

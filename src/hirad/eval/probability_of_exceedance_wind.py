@@ -13,6 +13,7 @@ import xarray as xr
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
 from hirad.eval.plotting import get_channel_indices
+from hirad.eval.eval_utils import percentiles_from_histogram
 
 
 def compute_wind_speed(u, v):
@@ -31,8 +32,7 @@ def compute_exceedance_probs(values, thresholds, use_abs=False):
 def update_exceedance_counts(counts, total, values, thresholds, use_abs=False):
     """Update exceedance counts incrementally."""
     data = np.abs(values) if use_abs else values
-    for i, threshold in enumerate(thresholds):
-        counts[i] += np.sum(data > threshold)
+    counts += (data[:, None] > thresholds[None, :]).sum(axis=0)
     total += len(values)
     return counts, total
 
@@ -159,7 +159,7 @@ def main(cfg: dict):
 
     # Initialize dataset
     dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.pop("type")
+    dataset_type = dataset_cfg.get("type")
     dataset = known_datasets[dataset_type](**dataset_cfg)
     logger.info("Dataset initialized")
 
@@ -180,17 +180,24 @@ def main(cfg: dict):
     logger.info(f"Wind component channel indices - output: 10u={u10_out}, 10v={v10_out}, input: 10u={u10_in}, 10v={v10_in}")
 
     # Define thresholds for exceedance calculation (same for all variables)
-    thresholds = np.logspace(-1, 1.5, 200)  # From 0.1 to ~31.6 m/s
+    thresholds = np.logspace(-1, 2, 200)  # From 0.1 to ~100 m/s
     n_thresholds = len(thresholds)
+
+    # Histogram bins for percentile estimation (fine-grained log-spaced)
+    hist_bins = np.concatenate([
+        np.array([0.0]),
+        np.logspace(-1, 2.5, 5000) # From 0.1 to ~316 m/s
+    ])
+    n_hist_bins = len(hist_bins) - 1
     
     # Storage for exceedance counts (incremental computation)
     exceedance_counts = {
         'speed': {}, 'u': {}, 'v': {}
     }
     totals = {'speed': {}, 'u': {}, 'v': {}}
-    
-    # Storage for percentile computation (collect samples)
-    percentile_samples = {'speed': {}, 'u': {}, 'v': {}}
+    hist_counts = {
+        'speed': {}, 'u': {}, 'v': {}
+    }
     
     # -- Process target and baseline --
     for mode in ['target', 'baseline', 'regression-prediction']:
@@ -200,7 +207,7 @@ def main(cfg: dict):
         for var in ['speed', 'u', 'v']:
             exceedance_counts[var][mode] = np.zeros(n_thresholds, dtype=np.int64)
             totals[var][mode] = 0
-            percentile_samples[var][mode] = []
+            hist_counts[var][mode] = np.zeros(n_hist_bins, dtype=np.int64)
         
         try:
             for i, ts in enumerate(times):
@@ -237,10 +244,9 @@ def main(cfg: dict):
                 )
                 
                 # Collect samples for percentiles (subsample to save memory)
-                sample_rate = max(1, len(speed_vals) // 10000)  # Keep ~10k samples per timestep
-                percentile_samples['speed'][mode].extend(speed_vals[::sample_rate])
-                percentile_samples['u'][mode].extend(u_vals[::sample_rate])
-                percentile_samples['v'][mode].extend(v_vals[::sample_rate])
+                hist_counts['speed'][mode] += np.histogram(speed_vals, bins=hist_bins)[0]
+                hist_counts['u'][mode] += np.histogram(np.abs(u_vals), bins=hist_bins)[0]
+                hist_counts['v'][mode] += np.histogram(np.abs(v_vals), bins=hist_bins)[0]
                 
         except Exception as e:
             logger.warning(f"{mode} data not found or error occurred, skipping: {e}")
@@ -254,7 +260,7 @@ def main(cfg: dict):
     n_members = None
     member_counts = {'speed': [], 'u': [], 'v': []}
     member_totals = {'speed': [], 'u': [], 'v': []}
-    member_samples = {'speed': [], 'u': [], 'v': []}
+    member_hist_counts = {'speed': [], 'u': [], 'v': []}
     
     for i, ts in enumerate(times):
         if i % cfg.get("log_interval") == 0:
@@ -267,7 +273,7 @@ def main(cfg: dict):
             for var in ['speed', 'u', 'v']:
                 member_counts[var] = [np.zeros(n_thresholds, dtype=np.int64) for _ in range(n_members)]
                 member_totals[var] = [0 for _ in range(n_members)]
-                member_samples[var] = [[] for _ in range(n_members)]
+                member_hist_counts[var] = [np.zeros(n_hist_bins, dtype=np.int64) for _ in range(n_members)]
         
         for member_idx in range(n_members):
             u = preds[member_idx, u10_out]
@@ -291,10 +297,9 @@ def main(cfg: dict):
             )
             
             # Collect samples for percentiles
-            sample_rate = max(1, len(speed_vals) // 10000)
-            member_samples['speed'][member_idx].extend(speed_vals[::sample_rate])
-            member_samples['u'][member_idx].extend(u_vals[::sample_rate])
-            member_samples['v'][member_idx].extend(v_vals[::sample_rate])
+            member_hist_counts['speed'][member_idx] += np.histogram(speed_vals, bins=hist_bins)[0]
+            member_hist_counts['u'][member_idx] += np.histogram(np.abs(u_vals), bins=hist_bins)[0]
+            member_hist_counts['v'][member_idx] += np.histogram(np.abs(v_vals), bins=hist_bins)[0]
     
     logger.info(f"Collected {n_members} ensemble members for predictions")
     
@@ -320,19 +325,18 @@ def main(cfg: dict):
     
     # Single datasets (target, baseline, regression-prediction)
     for var in ['speed', 'u', 'v']:
-        use_abs = (var in ['u', 'v'])
         for mode in ['target', 'baseline', 'regression-prediction']:
-            if mode in percentile_samples[var] and len(percentile_samples[var][mode]) > 0:
-                percentiles_data[var][mode] = compute_percentiles(
-                    np.array(percentile_samples[var][mode]), percentiles, use_abs
+            if mode in hist_counts[var] and totals[var][mode] > 0:
+                percentiles_data[var][mode] = percentiles_from_histogram(
+                    hist_counts[var][mode], hist_bins, percentiles
                 )
         
         # Ensemble members
         percentiles_data[var]['predictions'] = {}
         for member_idx in range(n_members):
-            if len(member_samples[var][member_idx]) > 0:
-                percentiles_data[var]['predictions'][f'member_{member_idx}'] = compute_percentiles(
-                    np.array(member_samples[var][member_idx]), percentiles, use_abs
+            if member_totals[var][member_idx] > 0:
+                percentiles_data[var]['predictions'][f'member_{member_idx}'] = percentiles_from_histogram(
+                    member_hist_counts[var][member_idx], hist_bins, percentiles
                 )
     
     # Create exceedance plots
