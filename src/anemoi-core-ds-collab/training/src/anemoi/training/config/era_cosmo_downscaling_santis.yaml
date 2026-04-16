@@ -1,6 +1,6 @@
-name: example_era5_to_cerra_downscaling_diffusion_training
+name: example_era5_to_cosmo_downscaling_diffusion_training
 description: |
-  Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core.
+  Example recipe for training ERA5 to COSMO downscaling diffusion model on CSCS, using the ds-collab branch of anemoi-core.
 
 config_validation: False
 
@@ -8,17 +8,17 @@ config_validation: False
 # Datal config
 # ===================
 variables:
-  in_lres_variables: [2t, sp]
-  out_hres_variables: [2t, sp]
-  residual_variables: [sp]
+  in_lres_variables: [2t, 10u, 10v, tp, tcw, u_500, u_850, v_500, v_850, t_500, t_850, z_500, z_850]
+  out_hres_variables: [2t, 10u, 10v, tp]
+  residual_variables: []
   direct_prediction_fields: [2t]
-  hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
+  hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, z]
 
 data:
   residual_fields: ${variables.residual_variables}
   direct_prediction_fields: ${variables.direct_prediction_fields}
   format: zarr
-  frequency: 3h
+  frequency: 1h
   timestep: ${data.frequency}
   forcing: ${variables.hres_forcings}
 
@@ -92,21 +92,21 @@ dataloader:
     predict: 1
 
   training:
-    start: 2020-01-01T00:00:00
+    start: 2015-11-29T00:00:00
     #end: 2020-01-03T00:00:00
-    end: 2022-01-01T00:00:00
+    end: 2019-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   validation:
-    start: 2022-01-01T00:00:00
+    start: 2019-01-01T00:00:00
     #end: 2022-01-03T00:00:00
-    end: 2023-01-01T00:00:00
+    end: 2020-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   test:
-    start: 2023-01-01T00:00:00
+    start: 2020-01-01T00:00:00
     #end: 2023-01-03T00:00:00
-    end: 2023-12-31T00:00:00
+    end: 2020-10-28T18:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
 
@@ -209,14 +209,14 @@ hardware:
       tensorboard: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/logs/tensorboard
 
   files:
-    dataset_x: caerraml-ea-an-oper-atos-n320crop2cerra-2020-2023-3h-v0.zarr
-    dataset_y: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr
-    dataset_y_forcings: cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v2.zarr #can be the same as output_dataset
+    dataset_x: aifs-ea-an-oper-0001-mars-n320crop2cosmo-1979-2024-1h-v2-with-era51.zarr
+    dataset_y: mch-co2-an-archive-0p02-2015-2020-1h-v3-pl13.zarr
+    dataset_y_forcings: mch-co2-an-archive-0p02-2015-2020-1h-v3-pl13.zarr #can be the same as output_dataset
     warm_start: null
     graph: ${graph.name}.pt
-    residual_statistics: cerra_residuals_2t_10u_10v_100u_100v_sp_2d_msl_tcc_ssrd_strd_tp_1990_2019.npy
-    truncation: era5crop2cerra_to_cerra_interpolation_linear.npz # lres to hres !
-    truncation_inv: cerra_to_era5crop2cerra_interpolation_linear.npz # hres to lres
+    residual_statistics: null
+    truncation: era2cosmo_cropped_to_cosmo_linear.mat.npz  # lres to hres !
+    truncation_inv: cosmo_to_era2cosmo_cropped_linear.mat.npz  # hres to lres
     checkpoint:
       every_n_epochs: anemoi-by_epoch-epoch_{epoch:03d}-step_{step:06d}
       every_n_train_steps: anemoi-by_step-epoch_{epoch:03d}-step_{step:06d}
@@ -226,7 +226,7 @@ hardware:
 # Graph config
 # ===================
 graph:
-  name: one-encoder-decoder-cerra-graph-r8
+  name: one-encoder-decoder-cosmo-graph-r8 # TODO: This is copied from cerra-- we may need to change it.
   overwrite: False
   data: data
   hidden: hidden
@@ -344,7 +344,8 @@ model:
       normalized_shape: ${model.num_channels}
       condition_shape: 16  #TODO: Must be equal to model.diffusion.noise_cond_dim?
       w_one_bias_zero_init: True
-      autocast: falseconfig/core-ds_diffusion_cerra_1985_2020_non_residual_1_encoders_long_training_no_sharding.yaml
+      # TODO: commented this out for ERA-COSMO, not sure if it is needed.
+      #autocast: falseconfig/core-ds_diffusion_cerra_1985_2020_non_residual_1_encoders_long_training_no_sharding.yaml
     Linear:
       _target_: torch.nn.Linear
     Activation:
