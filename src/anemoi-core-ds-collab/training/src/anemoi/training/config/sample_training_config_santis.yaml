@@ -429,7 +429,7 @@ training:
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
   loss_gradient_scaling: False
-  run_id: null
+  run_id: 298f1ec5b425406cb53da11c13c39e10
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.

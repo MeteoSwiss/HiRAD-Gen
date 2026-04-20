@@ -80,8 +80,8 @@ dataloader:
     predict: 2
 
   limit_batches:
-    training: null
-    validation: null
+    training: 500
+    validation: 50
     test: 20
     predict: 20
 
@@ -214,7 +214,7 @@ hardware:
     dataset_y_forcings: mch-co2-an-archive-0p02-2015-2020-1h-v3-pl13.zarr #can be the same as output_dataset
     warm_start: null
     graph: ${graph.name}.pt
-    residual_statistics: null
+    residual_statistics: era_cosmo_residuals_2015_2018.npy
     truncation: era2cosmo_cropped_to_cosmo_linear.mat.npz  # lres to hres !
     truncation_inv: cosmo_to_era2cosmo_cropped_linear.mat.npz  # hres to lres
     checkpoint:
@@ -430,7 +430,7 @@ training:
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
   loss_gradient_scaling: False
-  run_id: null
+  run_id: d854be9735dc4aca98b3f130b172c155  # Use run ID already started once
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.
