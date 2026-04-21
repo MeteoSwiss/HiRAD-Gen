@@ -18,31 +18,20 @@ def _sync_t() -> float:
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     return time.perf_counter()
-
-class Generator():
+class GeneratorBase():
     def __init__(self, 
-                net_reg: torch.nn.Module, 
-                net_res: torch.nn.Module,
                 batch_size: int,
                 ensemble_size: int,
-                hr_mean_conditioning: bool, 
-                n_out_channels: int, 
-                inference_mode: str,
-                dist: DistributedManager,
-                ):
-        
-        self.net_reg = net_reg
-        self.net_res = net_res
+                n_out_channels: int,
+                dist: DistributedManager):
         self.batch_size = batch_size
-        self.hr_mean_conditioning = hr_mean_conditioning
-        self.n_out_channels = n_out_channels
-        self.inference_mode = inference_mode
         self.ensemble_size = ensemble_size
+        self.n_out_channels = n_out_channels
         self.dist = dist
-        self.get_rank_batches()
         self.patching = None
         self._timings: dict[str, float] = defaultdict(float)
         self._timing_counts: dict[str, int] = defaultdict(int)
+        self.get_rank_batches()
 
     def get_rank_batches(self, seeds=None):
         if seeds is None:
@@ -71,6 +60,28 @@ class Generator():
     def get_timings(self) -> dict[str, tuple[float, int]]:
         """Return accumulated timing stats: {key: (total_seconds, call_count)}."""
         return {k: (self._timings[k], self._timing_counts[k]) for k in self._timings}
+class GeneratorCorrDiff(GeneratorBase):
+    def __init__(self, 
+                net_reg: torch.nn.Module, 
+                net_res: torch.nn.Module,
+                batch_size: int,
+                ensemble_size: int,
+                hr_mean_conditioning: bool, 
+                n_out_channels: int, 
+                inference_mode: str,
+                dist: DistributedManager,
+                ):
+        super().__init__(
+            batch_size=batch_size,
+            ensemble_size=ensemble_size,
+            n_out_channels=n_out_channels,
+            dist=dist
+        )
+        self.net_reg = net_reg
+        self.net_res = net_res
+        self.hr_mean_conditioning = hr_mean_conditioning
+        self.inference_mode = inference_mode
+
 
     def initialize_patching(self, img_shape, patch_shape, boundary_pix, overlap_pix):
         self.patching = GridPatching2D(
@@ -187,4 +198,79 @@ class Generator():
             else:
                 if self.inference_mode != "regression":
                     return image_out, image_reg[0:1,::]
+                return image_out, None
+
+class GeneratorDiT(GeneratorBase):
+    def __init__(self,
+                model: torch.nn.Module,
+                batch_size: int,
+                ensemble_size: int,
+                n_out_channels: int, 
+                dist: DistributedManager):
+        super().__init__(
+            batch_size=batch_size,
+            ensemble_size=ensemble_size,
+            n_out_channels=n_out_channels,
+            dist=dist
+        )
+        self.model = model
+
+    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=True):
+        with nvtx.annotate("generate_fn", color="green"):
+            # (1, C, H, W)
+            img_shape = image_lr.shape[-2:]
+
+            if randomize:
+                # Set random seed for numpy
+                if random_seed is not None:
+                    np.random.seed((random_seed) % (1 << 31))
+                seeds = np.random.randint(0, 1<<31, size=self.ensemble_size)
+                self.get_rank_batches(seeds=seeds)
+
+            model_args = {}
+            if date_embedding is not None:
+                model_args = {"condition": date_embedding}
+
+            with nvtx.annotate("DiT model", color="purple"):
+                image_out = diffusion_step(
+                    net=self.model,
+                    sampler_fn=self.sampler,
+                    img_shape=img_shape,
+                    img_out_channels=self.n_out_channels,
+                    rank_batches=self.rank_batches,
+                    img_lr=image_lr.expand(
+                        self.batch_size, -1, -1, -1
+                    ).to(memory_format=torch.channels_last),
+                    rank=self.dist.rank,
+                    device=image_lr.device,
+                    lead_time_label=lead_time_label,
+                    static_channels=static_channels,
+                    use_apex_gn=use_apex_gn,
+                    additional_model_args=model_args,
+                )
+
+            # Gather tensors on rank 0
+            if self.dist.world_size > 1:
+                if self.dist.rank == 0:
+                    gathered_tensors = [
+                        torch.zeros_like(
+                            image_out, dtype=image_out.dtype, device=image_out.device
+                        )
+                        for _ in range(self.dist.world_size)
+                    ]
+                else:
+                    gathered_tensors = None
+
+                torch.distributed.barrier()
+                gather(
+                    image_out,
+                    gather_list=gathered_tensors if self.dist.rank == 0 else None,
+                    dst=0,
+                )
+
+                if self.dist.rank == 0:
+                    return torch.cat(gathered_tensors), None
+                else:
+                    return None, None
+            else:
                 return image_out, None
