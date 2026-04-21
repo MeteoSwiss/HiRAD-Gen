@@ -43,6 +43,7 @@ def stochastic_sampler(
     S_max: float = float("inf"),
     S_noise: float = 1,
     use_apex_gn: bool = False,
+    model_args: Optional[dict] = {},
 ) -> torch.Tensor:
     """
     Proposed EDM sampler (Algorithm 2) with minor changes to enable
@@ -123,6 +124,9 @@ def stochastic_sampler(
         Noise scaling factor applied during the churn step. By default 1.
     use_apex_gn : bool
         Whether Apex's fused group normalization is used.
+    model_args : dict
+        Additional arguments to pass to the model during sampling. 
+        This can be used to pass any extra conditioning information required by the model.
 
     Returns
     -------
@@ -222,6 +226,7 @@ def stochastic_sampler(
             # emb: (N_pe, image_shape_y, image_shape_x)
             # return: (batch_size * patch_num, N_pe, patch_shape_y, patch_shape_x)
             return patching.apply(emb[None].expand(batch_size, -1, -1, -1))
+        model_args["embedding_selector"] = patch_embedding_selector
 
     else:
         if date_embedding is not None:
@@ -231,8 +236,6 @@ def stochastic_sampler(
             else:
                 date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).contiguous() 
             x_lr = torch.cat((x_lr, date_embedding), dim=1)
-
-        patch_embedding_selector = None
 
     # Main sampling loop.
     x_next = latents.to(torch.float64) * t_steps[0]
@@ -260,21 +263,15 @@ def stochastic_sampler(
                 t_hat,
                 class_labels,
                 lead_time_label=lead_time_label,
-                embedding_selector=patch_embedding_selector,
+                **model_args
             ).to(torch.float64)
         else:
-            # print("Sizes")
-            # print(x_hat_batch.shape)
-            # print(x_lr.shape)
-            # print(t_hat)
-            # print(class_labels)
-            # print(global_index)
             denoised = net(
                 x_hat_batch,
                 x_lr,
                 t_hat,
                 class_labels,
-                embedding_selector=patch_embedding_selector,
+                **model_args
             ).to(torch.float64)
         if patching:
             # Un-patch the denoised image
@@ -299,7 +296,7 @@ def stochastic_sampler(
                     t_next,
                     class_labels,
                     lead_time_label=lead_time_label,
-                    embedding_selector=patch_embedding_selector,
+                    **model_args
                 ).to(torch.float64)
             else:
                 denoised = net(
@@ -307,7 +304,7 @@ def stochastic_sampler(
                     x_lr,
                     t_next,
                     class_labels,
-                    embedding_selector=patch_embedding_selector,
+                    **model_args
                 ).to(torch.float64)
             if patching:
                 # Un-patch the denoised image

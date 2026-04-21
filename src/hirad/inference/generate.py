@@ -11,8 +11,8 @@ from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from concurrent.futures import ThreadPoolExecutor
 
-from hirad.models import EDMPrecondSuperResolution, UNet
-from hirad.inference import Generator
+from hirad.models import EDMPrecondSuperResolution, UNet, DiT
+from hirad.inference import GeneratorCorrDiff, GeneratorDiT
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
@@ -77,11 +77,13 @@ def main(cfg: DictConfig) -> None:
     #TODO: Isolate loading into the method of generator
     # Parse the inference mode
     if cfg.generation.inference_mode == "regression":
-        load_net_reg, load_net_res = True, False
+        load_net_reg, load_net_res, load_model = True, False, False
     elif cfg.generation.inference_mode == "diffusion":
-        load_net_reg, load_net_res = False, True
+        load_net_reg, load_net_res, load_model = False, True, False
     elif cfg.generation.inference_mode == "all":
-        load_net_reg, load_net_res = True, True
+        load_net_reg, load_net_res, load_model = True, True, False
+    elif cfg.generation.inference_mode == "dit":
+        load_net_reg, load_net_res, load_model = False, False, True
     else:
         raise ValueError(f"Invalid inference mode {cfg.generation.inference_mode}")
 
@@ -148,6 +150,36 @@ def main(cfg: DictConfig) -> None:
     else:
         net_reg = None
 
+    if load_model:
+        dit_ckpt_path = cfg.generation.io.dit_ckpt_path
+        logger0.info(f'Loading DiT model from "{dit_ckpt_path}"...')
+
+        dit_model_args_path = os.path.join(dit_ckpt_path, 'model_args.json')
+        if not os.path.isfile(dit_model_args_path):
+            raise FileNotFoundError(f"Missing config file at '{dit_model_args_path}'.")
+        with open(dit_model_args_path, 'r') as f:
+            dit_model_args = json.load(f)
+        # Disable AMP for inference (even if model is trained with AMP)
+        if "amp_mode" in dit_model_args:
+            dit_model_args["amp_mode"] = False
+        use_apex_gn = True
+
+        net_dit = EDMPrecondSuperResolution(**dit_model_args)
+
+        _ = load_checkpoint(
+            path=dit_ckpt_path,
+            model=net_dit,
+            device=dist.device
+        )
+        
+        net_dit = net_dit.eval().to(device)
+        if use_apex_gn:
+            net_dit = net_dit.to(memory_format=torch.channels_last)
+        if cfg.generation.perf.force_fp16:
+            net_dit.use_fp16 = True
+    else:
+        net_dit = None
+
     # Reset since we are using a different mode.
     if cfg.generation.perf.use_torch_compile:
         torch._dynamo.config.cache_size_limit = 264
@@ -156,18 +188,27 @@ def main(cfg: DictConfig) -> None:
             net_res = torch.compile(net_res)
         if net_reg:
             net_reg = torch.compile(net_reg)
+        if net_dit:
+            net_dit = torch.compile(net_dit)
 
-
-
-    generator = Generator(
-        net_reg=net_reg,
-        net_res=net_res,
-        batch_size=cfg.generation.seed_batch_size,
-        ensemble_size=cfg.generation.num_ensembles,
-        hr_mean_conditioning=cfg.generation.hr_mean_conditioning,
-        n_out_channels=img_out_channels,
-        inference_mode=cfg.generation.inference_mode,
-        dist=dist,
+    if net_reg is not None or net_res is not None:
+        generator = GeneratorCorrDiff(
+            net_reg=net_reg,
+            net_res=net_res,
+            batch_size=cfg.generation.seed_batch_size,
+            ensemble_size=cfg.generation.num_ensembles,
+            hr_mean_conditioning=cfg.generation.hr_mean_conditioning,
+            n_out_channels=img_out_channels,
+            inference_mode=cfg.generation.inference_mode,
+            dist=dist,
+            )
+    elif net_dit is not None:
+        generator = GeneratorDiT(
+            model=net_dit,
+            batch_size=cfg.generation.seed_batch_size,
+            ensemble_size=cfg.generation.num_ensembles,
+            n_out_channels=img_out_channels,
+            dist=dist
         )
 
     # Parse the patch shape

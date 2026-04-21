@@ -127,6 +127,7 @@ def diffusion_step(
     static_channels: Optional[torch.Tensor] = None,
     date_embedding: Optional[torch.Tensor] = None,
     use_apex_gn: bool = False,
+    additional_model_args: Optional[dict] = {},
 ) -> torch.Tensor:
 
     """
@@ -170,6 +171,8 @@ def diffusion_step(
         Date embedding input of shape (B, C_date).
     use_apex_gn : bool, optional
         Whether Apex's fused group normalization is used. Default is False.
+    additional_model_args : dict, optional
+        Additional arguments to pass to the model during sampling. Default is an empty dictionary.
 
     Returns
     -------
@@ -236,7 +239,7 @@ def diffusion_step(
 
             with torch.inference_mode():
                 images = sampler_fn(
-                    net, latents, img_lr, randn_like=rnd.randn_like, **additional_args
+                    net, latents, img_lr, randn_like=rnd.randn_like, model_args=additional_model_args, **additional_args
                 )
             all_images.append(images)
     return torch.cat(all_images)
