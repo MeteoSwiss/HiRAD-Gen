@@ -199,7 +199,7 @@ hardware:
     grids: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/downscaling-data
     truncation: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/downscaling-data
     residual_statistics: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/downscaling-data
-    graph: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/downscaling-data
+    graph: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/graph
     checkpoints: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/checkpoints
     plots: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/plots
     profiler: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/profiler
@@ -227,7 +227,7 @@ hardware:
 # ===================
 graph:
   name: one-encoder-decoder-cerra-graph-r8
-  overwrite: False
+  overwrite: True
   data: data
   hidden: hidden
   lres: lres
@@ -344,7 +344,7 @@ model:
       normalized_shape: ${model.num_channels}
       condition_shape: 16  #TODO: Must be equal to model.diffusion.noise_cond_dim?
       w_one_bias_zero_init: True
-      autocast: falseconfig/core-ds_diffusion_cerra_1985_2020_non_residual_1_encoders_long_training_no_sharding.yaml
+      #autocast: falseconfig/core-ds_diffusion_cerra_1985_2020_non_residual_1_encoders_long_training_no_sharding.yaml
     Linear:
       _target_: torch.nn.Linear
     Activation:
@@ -421,15 +421,16 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: False
+  deterministic: True # False
   predict_residuals: False
-  precision: bf16-mixed
+  #precision: bf16-mixed
   #precision: 16
+  precision: 32
   multistep_input: 1
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
   loss_gradient_scaling: False
-  run_id: 298f1ec5b425406cb53da11c13c39e10
+  run_id: null #298f1ec5b425406cb53da11c13c39e10
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.
@@ -439,7 +440,7 @@ training:
   metrics: [2t, 10u, 10v, t_850, tp]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:

@@ -199,7 +199,7 @@ hardware:
     grids: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
     truncation: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
     residual_statistics: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
-    graph: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data
+    graph: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling-data/era-cosmo-run/graph
     checkpoints: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/checkpoints
     plots: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/plots
     profiler: /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/era-cosmo-run/profiler
@@ -226,8 +226,8 @@ hardware:
 # Graph config
 # ===================
 graph:
-  name: one-encoder-decoder-cosmo-graph-r8 # TODO: This is copied from cerra-- we may need to change it.
-  overwrite: False
+  name: one-encoder-decoder-cosmoprob-graph-r8 # TODO: This is copied from cerra-- we may need to change it.
+  overwrite: True
   data: data
   hidden: hidden
   lres: lres
@@ -417,20 +417,21 @@ model:
 # Training config
 # ===================
 training:
-  max_epochs: 100
-  max_steps: 100000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
+  max_epochs: 1000
+  max_steps: 1000000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: False
+  deterministic: False #True # False
   predict_residuals: False
-  precision: bf16-mixed
+  precision: 32
+  #precision: bf16-mixed
   #precision: 16
   multistep_input: 1
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
-  loss_gradient_scaling: False
-  run_id: d854be9735dc4aca98b3f130b172c155  # Use run ID already started once
+  loss_gradient_scaling:  False # Setting this to true seems to mess up loss calcs (NaNs?)
+  run_id: null #d854be9735dc4aca98b3f130b172c155  # enter a run ID to start from a checkpoint, or null to start from scratch
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.
@@ -440,7 +441,7 @@ training:
   metrics: [2t, 10u, 10v, t_850, tp]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: probabilistic_low_noise #deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:
