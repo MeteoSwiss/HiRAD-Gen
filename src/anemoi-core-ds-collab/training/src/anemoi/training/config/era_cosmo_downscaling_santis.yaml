@@ -94,13 +94,15 @@ dataloader:
   training:
     start: 2015-11-29T00:00:00
     #end: 2020-01-03T00:00:00
-    end: 2019-01-01T00:00:00
+    #end: 2019-01-01T00:00:00
+    end: 2015-11-29T01:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   validation:
     start: 2019-01-01T00:00:00
     #end: 2022-01-03T00:00:00
-    end: 2020-01-01T00:00:00
+    #end: 2020-01-01T00:00:00
+    end: 2019-01-01T01:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   test:
@@ -422,7 +424,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: False #True # False
+  deterministic:  False #True # False
   predict_residuals: False
   precision: 32
   #precision: bf16-mixed
@@ -431,7 +433,11 @@ training:
   accum_grad_batches: 1
   zero_optimizer: False         # use ZeroRedundancyOptimizer ; saves memory for larger models
   loss_gradient_scaling:  False # Setting this to true seems to mess up loss calcs (NaNs?)
-  run_id: null #d854be9735dc4aca98b3f130b172c155  # enter a run ID to start from a checkpoint, or null to start from scratch
+  # enter a run ID to start from a checkpoint, or null to start from scratch
+  run_id: null  # Train from scratch
+  #run_id: d854be9735dc4aca98b3f130b172c155  # Train on a probabilistic run for a long time
+  #run_id: 91ec8b1c71484de68ba5faaed1f002bf # Train on deterministic mode from a probabilistic starting point
+  #run_id: 32ece689e9214280b44ea8e821b6c480 # Train on probabilistic mode from a deterministic starting point
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning
   load_weights_only: False # only load model weights, do not restore optimiser states etc.
