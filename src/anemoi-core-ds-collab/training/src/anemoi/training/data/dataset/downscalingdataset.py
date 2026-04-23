@@ -86,7 +86,7 @@ class DownscalingDataset(NativeGridDataset):
             shuffled_chunk_indices[:10],
         )
 
-        for i in shuffled_chunk_indices:
+        for i in  [0] #shuffled_chunk_indices:
 
             import time
 
