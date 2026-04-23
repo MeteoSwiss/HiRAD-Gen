@@ -8,8 +8,8 @@ config_validation: False
 # Datal config
 # ===================
 variables:
-  in_lres_variables: [2t, sp]
-  out_hres_variables: [2t, sp]
+  in_lres_variables: [2t] # [2t, sp]
+  out_hres_variables: [2t] #[2t, sp]
   residual_variables: [sp]
   direct_prediction_fields: [2t]
   hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
@@ -421,7 +421,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: True # False
+  deterministic: False #True # False
   predict_residuals: False
   #precision: bf16-mixed
   #precision: 16
@@ -440,7 +440,7 @@ training:
   metrics: [2t, 10u, 10v, t_850, tp]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: deterministic #probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: probabilistic_low_noise #deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:
