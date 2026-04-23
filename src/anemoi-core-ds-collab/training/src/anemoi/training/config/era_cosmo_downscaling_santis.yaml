@@ -426,7 +426,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic:  False #True # False
+  deterministic:  True # False
   predict_residuals: False
   precision: 32
   #precision: bf16-mixed
@@ -450,7 +450,7 @@ training:
   metrics: [2t]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: probabilistic_low_noise #deterministic #probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:
