@@ -1,0 +1,11 @@
+name: idalia
+full_name: "Hurricane Idalia"
+lat_min: 10.0
+lat_max: 40.0
+lon_min: -100.0
+lon_max: -80.0
+dates: ["26", "27", "28", "29", "30"]
+analysis_dates: ["20230826"]
+year: "2023"
+month: "08"
+pressure_threshold: 1013.25

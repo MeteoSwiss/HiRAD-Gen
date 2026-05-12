@@ -1,0 +1,11 @@
+name: dora
+full_name: "Hurricane Dora"
+lat_min: 5.0
+lat_max: 25.0
+lon_min: 175.0
+lon_max: -105.0
+dates: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15", "16", "17"]
+analysis_dates: ["20230801", "20230807", "20230813"]
+year: "2023"
+month: "08"
+pressure_threshold: 1013.25

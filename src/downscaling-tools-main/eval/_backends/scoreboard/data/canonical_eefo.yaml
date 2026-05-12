@@ -1,0 +1,19 @@
+# Canonical EEFO (input baseline) tail percentiles for TC scoring.
+# Keyed by lane target resolution, then event name.
+# The EEFO represents the coarse input — one resolution step below the target.
+
+o1280:  # Lane o320->o1280. EEFO = O320 input evaluated against O1280 events.
+  idalia:
+    mslp_p1: 1002.76125
+    mslp_p01: 993.146875
+    mslp_min: 966.278125
+    wind_p99: 14.198537788414576
+    wind_p999: 20.925864865031315
+    wind_max: 35.295942508721026
+  franklin:
+    mslp_p1: 1003.6068687500001
+    mslp_p01: 990.3181175
+    mslp_min: 954.555625
+    wind_p99: 15.930964291019055
+    wind_p999: 23.266985444332526
+    wind_max: 40.470795567354905

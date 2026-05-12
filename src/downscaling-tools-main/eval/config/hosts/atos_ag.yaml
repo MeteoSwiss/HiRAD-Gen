@@ -1,0 +1,25 @@
+code_root: /home/ecm5702/dev/downscaling-tools
+scratch_root: /home/ecm5702/scratch
+perm_root: /home/ecm5702/perm
+venv: /home/ecm5702/dev/.ds-ag
+
+scheduler:
+  qos: nf
+  default_time: "04:00:00"
+  default_mem: 64G
+  default_cpus: 16
+
+environment_setup:
+  module_loads:
+    - ecmwf-toolbox
+  exports:
+    DATA_DIR: /home/mlx/ai-ml/datasets/
+    DATA_STABLE_DIR: /home/mlx/ai-ml/datasets/stable/
+    OUTPUT: /ec/res4/scratch/ecm5702/aifs
+    GRID_DIR: /home/mlx/ai-ml/grids/
+    INTER_MAT_DIR: /home/ecm5702/hpcperm/data/inter_mat
+    RESIDUAL_STATISTICS_DIR: /home/ecm5702/hpcperm/data/residuals_statistics/
+    TORCHINDUCTOR_COMPILE_THREADS: "1"
+    OMP_NUM_THREADS: "1"
+    MKL_NUM_THREADS: "1"
+  venv_activate: /home/ecm5702/dev/.ds-ag/bin/activate

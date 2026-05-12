@@ -1,0 +1,98 @@
+prepare:
+  bundle_filename_tpl: "enfo_o1280_0001_date{date}_time0000_mem{member:02d}_step{step:03d}h_input_bundle.nc"
+  args:
+    lres_sfc_grib:       "{source_grib_root}/o1280_inputs/enfo_o1280_0001_date{date}_time0000_step006to120by006_input.grib"
+    lres_pl_grib:        "{source_grib_root}/o1280_inputs/enfo_o1280_0001_date{date}_time0000_step006to120by006_input.grib"
+    hres_grib:           "{source_grib_root}/o2560_forcings/destine_rd_fc_oper_i4ql_o2560_date{date}_time0000_step006to120by006_sfc.grib"
+    target_sfc_grib:     "{source_grib_root}/o2560_forcings/destine_rd_fc_oper_i4ql_o2560_date{date}_time0000_step006to120by006_y.grib"
+    lres_sfc_channels:   "10u,10v,2t,msl"
+    lres_pl_channels:    "NONE"
+    target_sfc_channels: "10u,10v,2t,msl"
+    target_pl_channels:  "NONE"
+predict:
+  members: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  steps: [24, 48, 72, 96, 120]
+  dates: ["20250926", "20250927", "20250928", "20250929", "20250930"]
+  sampler:
+    schedule_type: "experimental_piecewise"
+    num_steps: 30
+    sigma_max: 1000.0
+    sigma_transition: 10.0
+    sigma_min: 0.03
+    high_schedule_type: "exponential"
+    low_schedule_type: "karras"
+    num_steps_high: 10
+    num_steps_low: 20
+    rho: 7.0
+    sampler: "heun"
+    S_churn: 2.5
+    S_min: 0.75
+    S_max: 1000.0
+    S_noise: 1.05
+
+tc:
+  beta: 0.5
+  mslp_ref: 1013.25
+  events: ["humberto"]
+  tail_keys: ["mslp_p1", "mslp_p01", "mslp_min", "wind_p99", "wind_p999", "wind_max"]
+  grib_dir: "/home/ecm5702/perm/reference/o1280_o2560/tc"
+  analysis_expid: "OPER_O1280_0001"
+  reference_expids: ["ENFO_O1280_0001"]
+  target_grib: "/home/ecm5702/hpcperm/data/input_data/destine_iekm_o2560_targets_humberto_20250926_20250930/iekm_o2560_iekm_date*_time0000_step24to120_sfc_y.grib"
+  target_label: "IEKM"
+
+spectra:
+  fields: ["10u", "10v", "2t", "msl", "t_850", "z_500"]
+  wavenumber_threshold: 100.0
+
+surface:
+  weighting: "truth-std"
+
+regions:
+  showcase:
+    humberto_core: [22.0, 25.0, -60.0, -56.0]
+    java_bali_strait: [-9.0, -6.0, 112.0, 116.0]
+    gbr_reef_tight: [-18.0, -15.0, 146.0, 150.0]
+    amazon_manaus: [-4.0, -1.0, -62.0, -58.0]
+    congo_river_delta: [-7.0, -4.0, 11.0, 15.0]
+    rift_valley_tight: [7.0, 10.0, 37.0, 41.0]
+    alps_innsbruck: [46.0, 49.0, 10.0, 14.0]
+    tokyo_bay: [34.0, 37.0, 138.5, 142.5]
+    florida_keys: [24.0, 27.0, -83.0, -79.0]
+    crete_south: [34.0, 37.0, 23.5, 27.5]
+
+evaluator_groups:
+  default: [tc, spectra, surface, region_plot]
+  diagnostics: [sigma, mechanistic, intermediate, spectra_ecmwf, mlflow]
+
+resource_profiles:
+  predict:
+    qos: ng
+    gpus: 4
+    ntasks_per_node: 4
+    time: "48:00:00"
+    mem: "0"
+    cpus: 8
+  evaluate:
+    time: "04:00:00"
+    mem: 128G
+  evaluate_tc:
+    time: "06:00:00"
+    mem: 128G
+    cpus: 4
+  evaluate_spectra:
+    time: "08:00:00"
+    mem: 128G
+  evaluate_region_plot:
+    time: "06:00:00"
+    mem: 256G
+    cpus: 8
+  evaluate_sigma:
+    gpus: 1
+    time: "01:00:00"
+    mem: 64G
+    cpus: 8
+  scoreboard:
+    time: "00:30:00"
+    mem: 16G
+    cpus: 1

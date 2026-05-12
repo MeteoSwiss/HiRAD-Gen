@@ -1,0 +1,11 @@
+name: hilary
+full_name: "Hurricane Hilary"
+lat_min: 0.0
+lat_max: 35.0
+lon_min: -125.0
+lon_max: -95.0
+dates: ["16", "17", "18", "19", "20"]
+analysis_dates: ["20230816"]
+year: "2023"
+month: "08"
+pressure_threshold: 1013.25

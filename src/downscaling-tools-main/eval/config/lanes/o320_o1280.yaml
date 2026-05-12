@@ -1,0 +1,123 @@
+prepare:
+  bundle_filename_tpl: "eefo_o320_0001_date{date}_time0000_mem{member:02d}_step{step:03d}h_input_bundle.nc"
+  args:
+    lres_sfc_grib:   "{source_grib_root}/eefo_o320_0001_date{date}_time0000_mem1to10_step24to120_sfc.grib"
+    lres_pl_grib:    "{source_grib_root}/eefo_o320_0001_date{date}_time0000_mem1to10_step24to120_pl.grib"
+    hres_grib:       "{source_grib_root}/enfo_o1280_0001_date{date}_time0000_step24to120_sfc.grib"
+    target_sfc_grib: "{source_grib_root}/enfo_o1280_0001_date{date}_time0000_mem1to10_step24to120_sfc_y.grib"
+    target_pl_grib:  "{source_grib_root}/enfo_o1280_0001_date{date}_time0000_mem1to10_step24to120_pl_y.grib"
+
+predict:
+  members: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  steps: [24, 48, 72, 96, 120]
+  dates: ["20230826", "20230827", "20230828", "20230829", "20230830"]
+  sampler:
+    schedule_type: "experimental_piecewise"
+    num_steps: 30
+    sigma_max: 1000.0
+    sigma_transition: 10.0
+    sigma_min: 0.03
+    high_schedule_type: "exponential"
+    low_schedule_type: "karras"
+    num_steps_high: 10
+    num_steps_low: 20
+    rho: 7.0
+    sampler: "heun"
+    S_churn: 2.5
+    S_min: 0.75
+    S_max: 1000.0
+    S_noise: 1.05
+
+tc:
+  beta: 0.5
+  mslp_ref: 1013.25
+  events: ["idalia", "franklin"]
+  tail_keys: ["mslp_p1", "mslp_p01", "mslp_min", "wind_p99", "wind_p999", "wind_max"]
+  grib_dir: "/home/ecm5702/perm/reference/o320_o1280/tc"
+  analysis_expid: "OPER_O1280_0001"
+  reference_expids: []
+  support_mode: "regridded"
+  input_label: "input O320"
+  target_nc_label: "target O1280"
+  analysis_display_label: "OPER-AN O1280"
+
+spectra:
+  fields: ["10u", "10v", "2t", "msl", "t_850", "z_500"]
+  wavenumber_threshold: 100.0
+  nside: 512
+  lmax: 1279
+  member_aggregation: "raw-members"
+
+surface:
+  weighting: "truth-std"
+
+regions:
+  interesting:
+    tibet_karakoram: [33.5, 41.5, 79.5, 91.5]
+    andes_central: [-37.5, -29.5, -75.5, -63.5]
+    greenland_south_tip: [58.5, 66.5, -54.5, -42.5]
+    horn_of_africa: [5.5, 13.5, 35.5, 47.5]
+    iran_zagros: [31.5, 39.5, 46.5, 58.5]
+    rockies_wyoming: [40.5, 48.5, -113.5, -101.5]
+    himalayas_west: [31.5, 39.5, 64.5, 76.5]
+    new_zealand_north: [-38.5, -30.5, 168.5, 180.5]
+    hawaii_big_island: [15.5, 23.5, -161.5, -149.5]
+    japan_hokkaido: [37.5, 45.5, 134.5, 146.5]
+    amazon_forest_west: [-10.0, 0.0, -75.0, -65.0]
+    southeast_asia_maritime: [-5.0, 5.0, 115.0, 125.0]
+    central_africa_congo: [-5.0, 5.0, 15.0, 25.0]
+    greatbarrier_reef_central: [-20.0, -15.0, 145.0, 150.0]
+    amazon_forest_east: [-10.0, 0.0, -55.0, -45.0]
+  detail:
+    tibet_karakoram_core: [34.5, 38.5, 78.5, 84.5]
+    andes_central_core: [-35.5, -31.5, -72.5, -68.5]
+    greenland_south_fjords: [60.0, 63.5, -49.5, -44.5]
+    horn_of_africa_highlands: [7.0, 11.5, 38.0, 43.5]
+    zagros_core: [32.0, 36.5, 48.0, 54.5]
+    rockies_front_range: [42.0, 46.0, -110.0, -105.0]
+    himalayas_west_core: [32.0, 36.0, 72.0, 78.0]
+    new_zealand_north_core: [-39.0, -35.0, 173.0, 178.0]
+    hawaii_big_island_core: [18.0, 21.5, -157.5, -154.0]
+    hokkaido_core: [41.0, 44.5, 140.0, 145.5]
+
+evaluator_groups:
+  default: [tc, spectra, surface, region_plot]
+  diagnostics: [sigma, mechanistic, intermediate, spectra_ecmwf, mlflow]
+
+resource_profiles:
+  predict:
+    qos: ng
+    gpus: 4
+    ntasks_per_node: 4
+    time: "24:00:00"
+    mem: "0"
+    cpus: 8
+  evaluate:
+    time: "06:00:00"
+    mem: 64G
+    cpus: 8
+  evaluate_tc:
+    time: "08:00:00"
+    mem: 64G
+    cpus: 8
+  evaluate_spectra:
+    time: "10:00:00"
+    mem: 64G
+    cpus: 16
+  evaluate_surface:
+    time: "06:00:00"
+    mem: 64G
+    cpus: 4
+  evaluate_region_plot:
+    time: "08:00:00"
+    mem: 64G
+    cpus: 8
+  evaluate_sigma:
+    gpus: 1
+    time: "01:00:00"
+    mem: 64G
+    cpus: 8
+  scoreboard:
+    time: "00:30:00"
+    mem: 16G
+    cpus: 1

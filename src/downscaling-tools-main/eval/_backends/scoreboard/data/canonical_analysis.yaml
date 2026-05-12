@@ -1,0 +1,35 @@
+# Canonical OPER analysis tail percentiles for TC scoring.
+# Keyed by resolution tag, then event name.
+# Adding new resolutions or events = YAML edit, not code change.
+
+o320:
+  idalia:
+    mslp_p1: 1002.7293048095703
+    mslp_p01: 992.9954538574219
+    mslp_min: 971.3018798828125
+    wind_p99: 14.000569772720336
+    wind_p999: 22.4329648017885
+    wind_max: 32.032962799072266
+  franklin:
+    mslp_p1: 1000.1705812499999
+    mslp_p01: 985.811875
+    mslp_min: 957.39375
+    wind_p99: 18.191709977264132
+    wind_p999: 25.2288104076867
+    wind_max: 36.36738498393529
+
+o1280:
+  idalia:
+    mslp_p1: 1003.5762500000001
+    mslp_p01: 995.8205487500001
+    mslp_min: 972.119375
+    wind_p99: 13.006895962461234
+    wind_p999: 19.56028339747756
+    wind_max: 34.5557112111888
+  franklin:
+    mslp_p1: 1001.50074375
+    mslp_p01: 984.9040237500001
+    mslp_min: 949.556875
+    wind_p99: 18.285049462085823
+    wind_p999: 26.676243323031702
+    wind_max: 45.27817758191151

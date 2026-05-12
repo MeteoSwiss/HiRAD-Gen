@@ -1,0 +1,23 @@
+{
+    "description": "Hand-verified expected output for tc_o320_idalia_analysis_anchored",
+    "hand_verification": {
+        "mslp_p1_depth_analysis": 43.25,
+        "mslp_p1_depth_model": 38.25,
+        "mslp_p1_ratio": 0.884393,
+        "mslp_p01_ratio": 0.896373,
+        "mslp_min_ratio": 0.906103,
+        "mslp_mean_ratio": 0.895623,
+        "wind_p99_ratio": 0.933333,
+        "wind_p999_ratio": 0.914286,
+        "wind_max_ratio": 0.900000,
+        "wind_mean_ratio": 0.915873,
+        "raw_model_score": 0.9057480757637763,
+        "eefo_floor": 0.25073232028468195,
+        "rescaled_score": 0.8742079409163431,
+        "enfo_deviation": 0.10456938455368402
+    },
+    "expected": {
+        "idalia": 0.8742079409163431,
+        "idalia_enfo_dev": 0.10456938455368402
+    }
+}

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") --ckpt-id <CKPT_ID> [--run-id <RUN_ID>] [options]
+
+Default strategy (proxy-first):
+  1. Runs the canonical 10 proxy date/step pairs with proxy member scope defaulting
+     to member 1 only (10 total predictions, target ~30 min GPU, qos=dg)
+     + TC extreme comparison.
+  2. STOPS — review the proxy scoreboard (another agent).
+  3. Rerun with --continue-full to submit full 250 predictions.
+
+If --run-id is omitted, one is generated as: manual_<4 random alphanumeric chars>.
+If --run-id is provided and does not start with manual_, it is normalized to manual_<RUN_ID>.
+
+Options:
+  --full-only          Skip proxy, go straight to full 250 predictions.
+  --continue-full      Continue from completed proxy to full 250.
+
+Examples:
+  # Default: proxy-first evaluation
+  $(basename "$0") --ckpt-id 4a5b2f1b24b84c52872bfcec1410b00f
+
+  # After reviewing the proxy scoreboard, continue to full 250:
+  $(basename "$0") --ckpt-id 4a5b2f1b24b84c52872bfcec1410b00f --run-id manual_abcd --continue-full
+
+  # Skip proxy, go directly to full 250 (old behavior):
+  $(basename "$0") --ckpt-id 4a5b2f1b24b84c52872bfcec1410b00f --full-only
+
+  # 9km/heavy checkpoints: 4 GPUs
+  $(basename "$0") --ckpt-id <CKPT_ID> --run-id manual_9km4g --predict-gpus 4 --predict-mem 768G --predict-cpus 32
+EOF
+}
+
+RUN_ID=""
+CKPT_ID=""
+EXTRA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run-id)
+      RUN_ID="${2:-}"
+      shift 2
+      ;;
+    --ckpt-id)
+      CKPT_ID="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "${CKPT_ID}" ]]; then
+  echo "--ckpt-id is required" >&2
+  usage
+  exit 2
+fi
+
+if [[ -z "${RUN_ID}" ]]; then
+  RAND="$(tr -dc 'a-z0-9' </dev/urandom | head -c 4 || true)"
+  if [[ ${#RAND} -ne 4 ]]; then
+    RAND="$(date +%s | tail -c 5)"
+  fi
+  RUN_ID="manual_${RAND}"
+elif [[ "${RUN_ID}" != manual_* ]]; then
+  RUN_ID="manual_${RUN_ID}"
+fi
+if [[ "${RUN_ID}" == *"/"* ]]; then
+  echo "Unsafe run-id (contains '/'): ${RUN_ID}" >&2
+  exit 2
+fi
+if [[ ! "${RUN_ID}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Unsafe run-id: ${RUN_ID}" >&2
+  echo "Allowed pattern: [A-Za-z0-9._-]+" >&2
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${SCRIPT_DIR}/codex_eval" --run-id "${RUN_ID}" --ckpt-id "${CKPT_ID}" "${EXTRA_ARGS[@]}"
