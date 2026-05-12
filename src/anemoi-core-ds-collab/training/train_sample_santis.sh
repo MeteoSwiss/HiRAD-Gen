@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --account=c38
-#SBATCH -t 12:00:00
+#SBATCH -t 3:00:00
+#SBATCH --nodes=1
 
 uenv start pytorch
 source .venv/bin/activate

@@ -1,4 +1,4 @@
-name: example_era5_to_cosmo_downscaling_diffusion_training
+name: 2t_only_prob_low_small_sample_era5_to_cosmo_downscaling_diffusion_training
 description: |
   Example recipe for training ERA5 to COSMO downscaling diffusion model on CSCS, using the ds-collab branch of anemoi-core.
 
@@ -95,21 +95,18 @@ dataloader:
 
   training:
     start: 2015-11-29T00:00:00
-    #end: 2020-01-03T00:00:00
-    end: 2019-01-01T00:00:00
-    #end: 2015-11-29T01:00:00
+    #end: 2019-01-01T00:00:00
+    end: 2015-12-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   validation:
     start: 2019-01-01T00:00:00
-    #end: 2022-01-03T00:00:00
-    end: 2020-01-01T00:00:00
-    #end: 2019-01-01T01:00:00
+    #end: 2020-01-01T00:00:00
+    end: 2019-01-03T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   test:
     start: 2020-01-01T00:00:00
-    #end: 2023-01-03T00:00:00
     end: 2020-10-28T18:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
@@ -426,7 +423,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic:  True # False
+  deterministic:  False
   predict_residuals: False
   precision: 32
   #precision: bf16-mixed
@@ -450,7 +447,7 @@ training:
   metrics: [2t]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: deterministic #probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: probabilistic_low_noise ##deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:

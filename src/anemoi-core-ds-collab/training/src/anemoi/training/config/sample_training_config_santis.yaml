@@ -1,4 +1,4 @@
-name: example_era5_to_cerra_downscaling_diffusion_training
+name: 2t_determinstic all data_lr_3e-7_min_1e-9_example_era5_to_cerra_downscaling
 description: |
   Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core.
 
@@ -93,20 +93,20 @@ dataloader:
 
   training:
     start: 2020-01-01T00:00:00
-    #end: 2020-01-03T00:00:00
-    end: 2022-01-01T00:00:00
+    #end: 2020-01-11T00:00:00
+    end: 2021-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   validation:
-    start: 2022-01-01T00:00:00
-    #end: 2022-01-03T00:00:00
-    end: 2023-01-01T00:00:00
+    start: 2021-01-01T00:00:00
+    end: 2022-01-01T00:00:00
+    #end: 2023-01-01T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
   test:
-    start: 2023-01-01T00:00:00
-    #end: 2023-01-03T00:00:00
-    end: 2023-12-31T00:00:00
+    start: 2022-01-01T00:00:00
+    end: 2023-01-01T00:00:00
+    #end: 2023-12-31T00:00:00
     frequency: ${data.frequency}
     dataset: ${dataloader.dataset}
 
@@ -190,7 +190,7 @@ diagnostics:
 # ===================
 hardware:
   accelerator: auto
-  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE, 1}}
+  num_gpus_per_node: ${oc.decode:${oc.env:SLURM_GPUS_PER_NODE, 4}}
   num_nodes: ${oc.decode:${oc.env:SLURM_NNODES, 1}}
   num_gpus_per_model: 1 # sharding
   paths:
@@ -416,12 +416,12 @@ model:
 # Training config
 # ===================
 training:
-  max_epochs: 100
+  max_epochs: 10000
   max_steps: 100000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: True # False
+  deterministic: False #True
   predict_residuals: False
   #precision: bf16-mixed
   #precision: 16
@@ -440,7 +440,7 @@ training:
   metrics: [2t, 10u, 10v, t_850, tp]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: deterministic #probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: probabilistic_low_noise  #deterministic # probabilistic_high_noise # deterministic
 
   # Training loss
   training_loss:
