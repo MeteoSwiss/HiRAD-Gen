@@ -74,4 +74,31 @@ TODO: Document
 
 ## Running inference
 
-TODO: Add in downscaling-tools and document
+While using full-fledged anemoi-inference is possible, there are some simpler tools available. Joffrey Dumont Le Brazidec has a collection at: https://github.com/JoffreyDumontLeBrazidec/downscaling-tools/ which I've added here and installed into my venv.
+
+To predict a single instance from a checkpoint:
+
+`python -m manual_inference.prediction.predict from-dataloader --name-ckpt /capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/checkpoints/6c55ff3845fd4b32b1b7fd8d69363813/last.ckpt --idx 0 --n-samples 1 --members 0 --out /capstor/scratch/cscs/mmcgloho/downscaling-tools-out-6c55ff3845fd4b32b1b7fd8d69363813.nc  --debug-from-dataloader --allow-existing-output-dir --validation-frequency=3h`
+
+You can replace --name-ckpt with one from your run, and name your own output file.
+
+This will make a .nc with fields such as `x, y, y_pred`.
+
+The following python code will generate a plot:
+
+```
+import cartopy.crs as ccrs
+import matplotlib.pyplot as plt
+
+ds_det_all=xr.open_dataset('/capstor/scratch/cscs/mmcgloho/downscaling-tools-out-6c55ff3845fd4b32b1b7fd8d69363813')
+fig = plt.figure(figsize=(10,6))
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.set_extent([0, 17.5, 40, 52], crs=ccrs.PlateCarree())
+ax.coastlines()
+sc=plt.scatter(ds.lon_hres.values, ds.lat_hres.values, c=ds.y_pred.values)
+plt.colorbar(sc, orientation='horizontal')
+plt.savefig('experiment_y_pred.png)
+
+``` 
+
+Then scatterplot ds.x_interp.values for interpolated, ds.y.values for target.
