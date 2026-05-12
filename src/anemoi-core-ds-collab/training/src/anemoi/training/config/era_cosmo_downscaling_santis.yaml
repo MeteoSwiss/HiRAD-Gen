@@ -1,4 +1,4 @@
-name: 2t_only_prob_low_small_sample_era5_to_cosmo_downscaling_diffusion_training
+name: 2t_only_deterministic_overfitting_era5_to_cosmo_downscaling_diffusion_training
 description: |
   Example recipe for training ERA5 to COSMO downscaling diffusion model on CSCS, using the ds-collab branch of anemoi-core.
 
@@ -159,7 +159,7 @@ diagnostics:
       experiment_name: 'anemoi_downscaling_era_cosmo'
       run_name: ${name}
       enabled: True
-      offline: False
+      offline: True #False
       system: True
       authentication: True
       on_resume_create_child: True
@@ -423,7 +423,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic:  False
+  deterministic:  False # True
   predict_residuals: False
   precision: 32
   #precision: bf16-mixed
@@ -447,7 +447,7 @@ training:
   metrics: [2t]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: probabilistic_low_noise ##deterministic #probabilistic_low_noise   # probabilistic_high_noise
+  training_approach: probabilistic_low_noise #deterministic #probabilistic_low_noise   # probabilistic_high_noise
 
   # Training loss
   training_loss:
