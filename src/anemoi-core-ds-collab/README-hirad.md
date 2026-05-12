@@ -34,6 +34,17 @@ To run:
 sbatch src/anemoi-core-ds-collab/training/train_sample_santis.sh
 ```
 
+### MLFlow
+
+To use a local MLFLow server, set the config value `diagnostics: log: offline: True`. Then, after starting a training run, set up the server:
+
+`mlflow ui --backend-store-uri=file:///capstor/scratch/cscs/mmcgloho/anemoi-downscaling/example-run/logs/mlflow/`
+
+(or replace the path with the value of `hardware: paths: logs: mlflow:` in the config)
+
+To use the ECMWF server, set `diagnostics: log: offline: True`. You can then find the run at `https://mlflow.ecmwf.int/` (You will need an ECMWF account)
+
+
 ### Experiments
 
 #### Running an overfitting experiment
@@ -56,7 +67,11 @@ To run from a checkpoint, set `training: run_id: ` to be the hash value of the r
 
 
 
-
 ## ERA-COSMO use case
 
 TODO: Document
+
+
+## Running inference
+
+TODO: Add in downscaling-tools and document
