@@ -235,6 +235,7 @@ def stochastic_sampler(
         patch_embedding_selector = None
 
     # Main sampling loop.
+    x_lr = x_lr.to(latents.device)  # ensure correct device once, before the loop
     x_next = latents.to(torch.float64) * t_steps[0]
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):  # 0, ..., N-1
         x_cur = x_next
@@ -242,7 +243,11 @@ def stochastic_sampler(
         gamma = S_churn / num_steps if S_min <= t_cur <= S_max else 0
         t_hat = net.module.round_sigma(t_cur + gamma * t_cur) if hasattr(net, "module") else net.round_sigma(t_cur + gamma * t_cur)
 
-        x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
+        # Only generate noise when it will actually be used (gamma > 0).
+        if gamma > 0:
+            x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
+        else:
+            x_hat = x_cur
 
         # Euler step. Perform patching operation on score tensor if patch-based
         # generation is used denoised = net(x_hat, t_hat,
