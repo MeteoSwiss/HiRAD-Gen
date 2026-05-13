@@ -643,12 +643,9 @@ def image_batching(
     )
     pad_x_right = padded_shape_x - img_shape_x - boundary_pix
     pad_y_right = padded_shape_y - img_shape_y - boundary_pix
-    image_padding = torch.nn.ReflectionPad2d(
-        (boundary_pix, pad_x_right, boundary_pix, pad_y_right)
-    ).to(
-        input.device
-    )  # (padding_left,padding_right,padding_top,padding_bottom)
-    input_padded = image_padding(input)
+    input_padded = torch.nn.functional.pad(
+        input, (boundary_pix, pad_x_right, boundary_pix, pad_y_right), mode="reflect"
+    )
     patch_num = patch_num_x * patch_num_y
 
     # Cast to float for unfold

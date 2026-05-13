@@ -256,7 +256,6 @@ def stochastic_sampler(
         x_hat_batch = (patching.apply(input=x_hat) if patching else x_hat).to(
             latents.device
         )
-        x_lr = x_lr.to(latents.device)
 
         if lead_time_label is not None:
             denoised = net(
