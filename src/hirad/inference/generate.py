@@ -225,7 +225,7 @@ def main(cfg: DictConfig) -> None:
                                       boundary_pix=cfg.generation.boundary_pix,
                                       overlap_pix=cfg.generation.overlap_pix,
                                       )
-    sampler_params = cfg.sampler.params if "params" in cfg.sampler else {}
+    sampler_params = dict(OmegaConf.to_container(cfg.sampler.params, resolve=True)) if "params" in cfg.sampler else {}
     sampler_params["use_apex_gn"] = use_apex_gn
     generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
@@ -250,7 +250,8 @@ def main(cfg: DictConfig) -> None:
             with torch.inference_mode():
 
                 data_loader = torch.utils.data.DataLoader(
-                    dataset=dataset, sampler=sampler, batch_size=1, pin_memory=True
+                    dataset=dataset, sampler=sampler, batch_size=1, pin_memory=True,
+                    num_workers=4, persistent_workers=True,
                 )
                 time_index = -1
                 if dist.rank == 0:
