@@ -436,6 +436,9 @@ class Natten2DSelfAttention(AttentionModuleBase):
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
+        q = q.to(dtype=v.dtype)
+        k = k.to(dtype=v.dtype)
+
         # Windowed neighborhood self-attention
         q, k, v = map(
             lambda x: rearrange(x, "b head (h w) c -> b h w head c", h=h),
@@ -449,6 +452,7 @@ class Natten2DSelfAttention(AttentionModuleBase):
         return x
 
 
+@torch._dynamo.disable
 def na2d(
     q: torch.Tensor,
     k: torch.Tensor,

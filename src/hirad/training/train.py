@@ -25,14 +25,10 @@ from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_pr
                                         cuda_profiler, cuda_profiler_start, cuda_profiler_stop, profiler_emit_nvtx
 from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
-from hirad.utils.function_utils import get_time_from_range
-from hirad.utils.inference_utils import save_results_as_torch
-from hirad.utils.env_info import get_env_info, flatten_dict
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.models import UNet
 from hirad.losses import ResidualLoss, RegressionLoss, DiffusionLoss
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
-from hirad.inference import Generator
 from hirad.training.training_manager import TrainingManagerCorrDiff, TrainingManagerDiT
 
 
@@ -318,12 +314,35 @@ def main(cfg: DictConfig) -> None:
         loss_fn = DiffusionLoss()
 
     # Instantiate the optimizer
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.AdamW(
         params=model.parameters(), 
         lr=cfg.training.hp.lr, 
-        betas=[0.9, 0.999], 
+        betas=[0.9, 0.999],
         eps=1e-8,
+        weight_decay=0.01,
         fused=True,
+    )
+
+    # Set up the learning rate scheduler with linear warmup and cosine annealing
+    total_steps = cfg.training.hp.training_duration // cfg.training.hp.total_batch_size
+    warmup_steps = max(1, cfg.training.hp.lr_rampup // cfg.training.hp.total_batch_size)
+    cosine_steps = max(1, total_steps - warmup_steps)
+
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=1e-8 / cfg.training.hp.lr,
+        end_factor=1.0,
+        total_iters=warmup_steps,
+    )
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=cosine_steps,
+        eta_min=cfg.training.hp.get("lr_min", 0.0),
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_steps],
     )
 
     # Load optimizer checkpoint if it exists
@@ -334,10 +353,19 @@ def main(cfg: DictConfig) -> None:
             path=checkpoint_dir,
             model=model,
             optimizer=optimizer,
+            scheduler=scheduler,
             device=dist.device,
         )
     except:
         cur_nimg = 0
+
+    # Fast-forward scheduler to current step when resuming from checkpoint
+    # only needed if no scheduler state was saved previously
+    current_step = cur_nimg // cfg.training.hp.total_batch_size
+    if current_step > 0 and scheduler.last_epoch == 0:
+        logger0.info(f"No scheduler state found, fast-forwarding LR scheduler to step {current_step}")
+        for _ in range(current_step):
+            scheduler.step()
 
     # Compile the model and regression net if applicable
     if use_torch_compile:
@@ -445,7 +473,8 @@ def main(cfg: DictConfig) -> None:
                                     ):
                                         loss = loss_fn(**loss_fn_kwargs)
 
-                                loss = loss.sum() / batch_size_per_gpu / patch_num_per_iter
+                                # loss = loss.sum() / batch_size_per_gpu / patch_num_per_iter / img_shape[0] / img_shape[1] / len(dataset.output_channels())
+                                loss = loss.mean()
                                 loss_accum += (
                                     loss
                                     / num_accumulation_rounds
@@ -470,20 +499,26 @@ def main(cfg: DictConfig) -> None:
                         ) / n_average_loss_running_mean
                         n_average_loss_running_mean += 1
 
+                    
+
+                    if dist.rank == 0:
+                        # 1. Calculate the total L2 norm of all parameters
+                        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
+
                     # Update weights.
                     with nvtx.annotate("update weights", color="blue"):
-
-                        current_lr = update_learning_rate(optimizer, 
-                                                          cfg.training.hp.lr,
-                                                          cfg.training.hp.lr_rampup,
-                                                          cfg.training.hp.lr_decay,
-                                                          cfg.training.hp.lr_decay_rate,
-                                                          cur_nimg) 
                         handle_and_clip_gradients(
                             model, grad_clip_threshold=cfg.training.hp.grad_clip_threshold
                         )
+
+                    if dist.rank == 0:
+                        # 1. Calculate the total L2 norm of all parameters
+                        total_norm_clipped = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=float('inf'))
+    
                     with nvtx.annotate("optimizer step", color="blue"):
                         optimizer.step()
+                        scheduler.step()
+                        current_lr = optimizer.param_groups[0]['lr']
 
                     cur_nimg += cfg.training.hp.total_batch_size
                     done = cur_nimg >= cfg.training.hp.training_duration
@@ -503,6 +538,9 @@ def main(cfg: DictConfig) -> None:
                         # reset running mean of average loss
                         average_loss_running_mean = 0
                         n_average_loss_running_mean = 1
+                                                # 2. Log to MLflow
+                        mlflow.log_metric("grad_norm", total_norm.item(), step=cur_nimg+cfg.training.hp.total_batch_size)
+                        mlflow.log_metric("grad_norm_clipped", total_norm_clipped.item(), step=cur_nimg+cfg.training.hp.total_batch_size)
 
 
                 # Validation
@@ -534,6 +572,7 @@ def main(cfg: DictConfig) -> None:
                         path=checkpoint_dir,
                         model=model,
                         optimizer=optimizer,
+                        scheduler=scheduler,
                         epoch=cur_nimg,
                     )
 

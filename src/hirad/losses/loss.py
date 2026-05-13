@@ -560,7 +560,7 @@ class DiffusionLoss:
 
     def __init__(
         self,
-        P_mean: float = 0.0,
+        P_mean: float = -1.2,
         P_std: float = 1.2,
         sigma_data: float = 0.5,
     ):

@@ -139,7 +139,8 @@ class TrainingManagerBase(ABC):
                         loss_valid_kwargs["patching"] = patching
                     with torch.autocast("cuda", dtype=self.amp_dtype, enabled=self.enable_amp):
                         loss_valid = loss_fn(**loss_valid_kwargs)
-                    loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
+                    # loss_valid = (loss_valid.sum() / batch_size_per_gpu / patch_num_per_iter).cpu().item()
+                    loss_valid = loss_valid.mean().cpu().item()
                     valid_loss_accum += loss_valid / validation_steps / len(patch_nums_iter)
 
         valid_loss_sum = torch.tensor([valid_loss_accum], device=self.dist.device)
