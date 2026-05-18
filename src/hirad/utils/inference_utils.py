@@ -17,6 +17,7 @@
 from typing import Optional
 import os
 import logging
+import time
 
 import nvtx
 import numpy as np
@@ -24,6 +25,13 @@ import torch
 import tqdm
 
 from .function_utils import StackedRandomGenerator
+
+
+def _sync_t() -> float:
+    """Wall-clock time after flushing all pending CUDA ops on the current device."""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.perf_counter()
 
 ############################################################################
 #                     CorrDiff Generation Utilities                        #
@@ -38,6 +46,7 @@ def regression_step(
     static_channels: Optional[torch.Tensor] = None,
     date_embedding: Optional[torch.Tensor] = None,
     use_apex_gn: bool = False,
+    _timings: Optional[dict] = None,
 ) -> torch.Tensor:
     """
     Perform a regression step to produce ensemble mean prediction.
@@ -85,6 +94,8 @@ def regression_step(
             f"but found {img_lr.shape[0]}."
         )
 
+    _t = _sync_t if _timings is not None else (lambda: 0.0)
+    _t0 = _t()
     if static_channels is not None:
         img_lr = torch.cat(
             (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
@@ -96,8 +107,9 @@ def regression_step(
         if use_apex_gn:
             date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
         else:
-            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
-        img_lr = torch.cat((img_lr, date_embedding), dim=1)    
+            date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous()
+        img_lr = torch.cat((img_lr, date_embedding), dim=1)
+    _t_prep = _t()
 
     # Perform regression on a single batch element
     with torch.inference_mode():
@@ -105,10 +117,15 @@ def regression_step(
             x = net(x=x_hat[0:1], img_lr=img_lr, lead_time_label=lead_time_label)
         else:
             x = net(x=x_hat[0:1], img_lr=img_lr, force_fp32=False)
+    _t_net = _t()
 
     # If the batch size is greater than 1, repeat the prediction
     if x_hat.shape[0] > 1:
         x = x.repeat([d if i == 0 else 1 for i, d in enumerate(x_hat.shape)])
+
+    if _timings is not None:
+        _timings["reg_input_prep"] = _timings.get("reg_input_prep", 0.0) + (_t_prep - _t0)
+        _timings["reg_net_forward"] = _timings.get("reg_net_forward", 0.0) + (_t_net - _t_prep)
 
     return x
 
@@ -127,6 +144,7 @@ def diffusion_step(
     static_channels: Optional[torch.Tensor] = None,
     date_embedding: Optional[torch.Tensor] = None,
     use_apex_gn: bool = False,
+    _timings: Optional[dict] = None,
 ) -> torch.Tensor:
 
     """
@@ -210,6 +228,8 @@ def diffusion_step(
         additional_args["date_embedding"] = date_embedding
     additional_args["use_apex_gn"] = use_apex_gn
 
+    _t = _sync_t if _timings is not None else (lambda: 0.0)
+
     # Loop over batches
     all_images = []
     for batch_seeds in tqdm.tqdm(rank_batches, unit="batch", disable=(rank != 0)):
@@ -223,6 +243,7 @@ def diffusion_step(
                 )
 
             # Initialize random generator, and generate latents
+            _t0 = _t()
             rnd = StackedRandomGenerator(device, batch_seeds)
             latents = rnd.randn(
                 [
@@ -233,11 +254,22 @@ def diffusion_step(
                 ],
                 device=device,
             )#.to(memory_format=torch.channels_last)
+            _t_latent = _t()
 
+            batch_timings: dict = {} if _timings is not None else None
             with torch.inference_mode():
                 images = sampler_fn(
-                    net, latents, img_lr, randn_like=rnd.randn_like, **additional_args
+                    net, latents, img_lr, randn_like=rnd.randn_like,
+                    _timings=batch_timings, **additional_args
                 )
+            _t_sampler = _t()
+
+            if _timings is not None:
+                _timings["diff_latent_gen"] = _timings.get("diff_latent_gen", 0.0) + (_t_latent - _t0)
+                _timings["diff_sampler_total"] = _timings.get("diff_sampler_total", 0.0) + (_t_sampler - _t_latent)
+                for k, v in batch_timings.items():
+                    _timings[k] = _timings.get(k, 0.0) + v
+
             all_images.append(images)
     return torch.cat(all_images)
 

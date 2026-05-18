@@ -1,5 +1,7 @@
 from typing import Callable
 from functools import partial
+import time
+from collections import defaultdict
 import nvtx
 import numpy as np
 import random
@@ -9,6 +11,13 @@ from hirad.utils.inference_utils import regression_step, diffusion_step
 from hirad.distributed import DistributedManager
 from hirad.utils.patching import GridPatching2D
 from hirad.inference import stochastic_sampler, deterministic_sampler
+
+
+def _sync_t() -> float:
+    """Return wall-clock time after synchronizing all pending CUDA ops."""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.perf_counter()
 
 class Generator():
     def __init__(self, 
@@ -32,6 +41,8 @@ class Generator():
         self.dist = dist
         self.get_rank_batches()
         self.patching = None
+        self._timings: dict[str, float] = defaultdict(float)
+        self._timing_counts: dict[str, int] = defaultdict(int)
 
     def get_rank_batches(self, seeds=None):
         if seeds is None:
@@ -57,6 +68,10 @@ class Generator():
         else:
             raise ValueError(f"Unknown sampling method {sampler_type}")
 
+    def get_timings(self) -> dict[str, tuple[float, int]]:
+        """Return accumulated timing stats: {key: (total_seconds, call_count)}."""
+        return {k: (self._timings[k], self._timing_counts[k]) for k in self._timings}
+
     def initialize_patching(self, img_shape, patch_shape, boundary_pix, overlap_pix):
         self.patching = GridPatching2D(
             img_shape=img_shape,
@@ -65,13 +80,17 @@ class Generator():
             overlap_pix=overlap_pix,
         )
 
-    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=False):
+    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=False, skip_timing=False):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
 
+            _step_timings: dict = {} if not skip_timing else None
+            _t = _sync_t if not skip_timing else (lambda: 0.0)
+
             if self.net_reg:
                 with nvtx.annotate("regression_model", color="yellow"):
+                    _t0 = _t()
                     image_reg = regression_step(
                         net=self.net_reg,
                         img_lr=image_lr,
@@ -85,7 +104,11 @@ class Generator():
                         static_channels=static_channels,
                         date_embedding=date_embedding,
                         use_apex_gn=use_apex_gn,
+                        _timings=_step_timings,
                     )
+                    if not skip_timing:
+                        self._timings["regression"] += _t() - _t0
+                        self._timing_counts["regression"] += 1
             if self.net_res:
                 if self.hr_mean_conditioning:
                     mean_hr = image_reg[0:1]
@@ -98,6 +121,7 @@ class Generator():
                     seeds = np.random.randint(0, 1<<31, size=self.ensemble_size)
                     self.get_rank_batches(seeds=seeds)
                 with nvtx.annotate("diffusion model", color="purple"):
+                    _t0 = _t()
                     image_res = diffusion_step(
                         net=self.net_res,
                         sampler_fn=self.sampler,
@@ -114,7 +138,16 @@ class Generator():
                         static_channels=static_channels,
                         date_embedding=date_embedding,
                         use_apex_gn=use_apex_gn,
+                        _timings=_step_timings,
                     )
+                    if not skip_timing:
+                        self._timings["diffusion"] += _t() - _t0
+                        self._timing_counts["diffusion"] += 1
+
+            if not skip_timing and _step_timings:
+                for k, v in _step_timings.items():
+                    self._timings[k] += v
+                    self._timing_counts[k] += 1
             if self.inference_mode == "regression":
                 image_out = image_reg[0:1,::]
             elif self.inference_mode == "diffusion":
@@ -134,12 +167,16 @@ class Generator():
                 else:
                     gathered_tensors = None
 
+                _t0 = _t()
                 torch.distributed.barrier()
                 gather(
                     image_out,
                     gather_list=gathered_tensors if self.dist.rank == 0 else None,
                     dst=0,
                 )
+                if not skip_timing:
+                    self._timings["gather"] += _t() - _t0
+                    self._timing_counts["gather"] += 1
 
                 if self.dist.rank == 0:
                     if self.inference_mode != "regression":

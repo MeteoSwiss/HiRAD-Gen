@@ -1,6 +1,8 @@
 import hydra
 import os
 import json
+import time
+from collections import defaultdict
 from omegaconf import OmegaConf, DictConfig
 import torch
 import torch._dynamo
@@ -21,6 +23,12 @@ from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
+
+def _sync_t() -> float:
+    """Return wall-clock time after synchronizing all pending CUDA ops."""
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.perf_counter()
 
 
 @hydra.main(version_base="1.2", config_path="../conf", config_name="config_generate")
@@ -193,6 +201,8 @@ def main(cfg: DictConfig) -> None:
     logger0.info(f"Generating images, saving results to {output_path}...")
     batch_size = 1
     warmup_steps = min(len(times) - 1, 2)
+    enable_timing = cfg.generation.perf.get("enable_timing", True)
+    _t = _sync_t if enable_timing else (lambda: 0.0)
 
     torch_cuda_profiler = (
         torch.cuda.profiler.profile()
@@ -238,6 +248,10 @@ def main(cfg: DictConfig) -> None:
 
                     start = end = DummyEvent()
 
+                # Per-section timing accumulators (wall-clock, GPU-synchronized)
+                step_timings = defaultdict(float)
+                timed_step_count = 0
+
                 #TODO: Isolate static channel loading into the method of generator or reuse training manager static channel loading
                 static_channels = dataset.get_static_data()
                 if static_channels is not None:
@@ -257,9 +271,17 @@ def main(cfg: DictConfig) -> None:
                 lead_time_label = None
 
                 times = dataset.time()
+                # t_iter_end is updated at the end of each loop body; the gap between
+                # t_iter_end[i] and the start of body[i+1] equals DataLoader fetch time.
+                t_iter_end = _t()
                 for index, (image_tar, image_lr, *date_str) in enumerate(
                     iter(data_loader)
                 ):
+                    t_iter_start = _t()
+                    t_data_load = t_iter_start - t_iter_end
+
+                    t_preproc_start = _t()
+                    
                     time_index += 1
                     if dist.rank == 0:
                         logger0.info(f"starting index: {time_index} time: {times[sampler[time_index]]}")
@@ -269,7 +291,7 @@ def main(cfg: DictConfig) -> None:
 
                     savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
                     os.makedirs(savedir,exist_ok=True)
-                    
+
                     #TODO: Move all the data processing inside the generator and just pass raw data to it. This includes regridding, normalization, date embedding creation, etc.
                     # Same as with static channel loading, we can reuse some of the code from training manager for this. This will also make it easier to maintain and update the data processing steps in one place.
                     if is_real_target:
@@ -293,16 +315,23 @@ def main(cfg: DictConfig) -> None:
                     date_embedding = None
                     if dataset._n_month_hour_channels:
                         date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
+
                     random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
+                    t_preproc_end = _t()
+
+                    t_gen_start = _t()
                     image_out, image_reg = generator.generate(
                                                 image_lr,
                                                 static_channels=static_channels,
                                                 date_embedding=date_embedding,
                                                 lead_time_label=lead_time_label,
                                                 randomize=cfg.generation.get("randomize", False),
-                                                random_seed=random_seed
+                                                random_seed=random_seed,
+                                                skip_timing=(not enable_timing or time_index < warmup_steps),
                                             )
+                    t_gen_end = _t()
 
+                    t_postproc_start = _t()
                     if dist.rank == 0:
                         batch_size = image_out.shape[0]
                         # write out data in a seperate thread so we don't hold up inferencing
@@ -311,6 +340,10 @@ def main(cfg: DictConfig) -> None:
                         baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
                         if image_reg is not None:
                             mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
+                    t_postproc_end = _t()
+
+                    t_write_start = _t()
+                    if dist.rank == 0:
                         writer_threads.append(
                             writer_executor.submit(
                                 save_results_as_torch,
@@ -322,6 +355,18 @@ def main(cfg: DictConfig) -> None:
                                 mean_pred if image_reg is not None else None,
                             )
                         )
+                    t_write_end = _t()
+
+                    if enable_timing and time_index >= warmup_steps:
+                        timed_step_count += 1
+                        step_timings["data_loading"] += t_data_load
+                        step_timings["preprocessing"] += t_preproc_end - t_preproc_start
+                        step_timings["generation"] += t_gen_end - t_gen_start
+                        step_timings["postprocessing"] += t_postproc_end - t_postproc_start
+                        step_timings["io_submit"] += t_write_end - t_write_start
+
+                    t_iter_end = _t()
+
                 end.record()
                 end.synchronize()
                 elapsed_time = (
@@ -336,6 +381,30 @@ def main(cfg: DictConfig) -> None:
                     logger.info(
                         f"Average time per batch element = {average_time_per_batch_element} s"
                     )
+
+                # Log per-section timing breakdown
+                if dist.rank == 0 and timed_step_count > 0:
+                    logger0.info("--- Inference timing breakdown (avg over timed steps, wall-clock GPU-synced) ---")
+                    for key in ["data_loading", "preprocessing", "generation", "postprocessing", "io_submit"]:
+                        avg = step_timings[key] / timed_step_count
+                        logger0.info(f"  {key:20s}: {avg:.3f} s/step")
+                    # Log generator's internal breakdown (regression / diffusion / gather)
+                    gen_timings = generator.get_timings()
+                    if gen_timings:
+                        logger0.info("--- Generator internal timing breakdown (avg over timed steps, warmup excluded) ---")
+                        for key, (total, count) in gen_timings.items():
+                            avg = total / count if count > 0 else 0.0
+                            if key.endswith("_calls"):
+                                logger0.info(f"  {key:20s}: {avg:.1f} calls/step  (n={count})")
+                            else:
+                                logger0.info(f"  {key:20s}: {avg:.3f} s/step  (n={count})")
+                        # Derived: average time per individual net() forward call
+                        if "diff_net_forward" in gen_timings and "diff_net_forward_calls" in gen_timings:
+                            fwd_total, fwd_count = gen_timings["diff_net_forward"]
+                            calls_total, calls_count = gen_timings["diff_net_forward_calls"]
+                            if calls_total > 0:
+                                per_call_ms = (fwd_total / calls_total) * 1000
+                                logger0.info(f"  {'diff_net_fwd/call':20s}: {per_call_ms:.1f} ms/call")
 
                 # make sure all the workers are done writing
                 if dist.rank == 0:
