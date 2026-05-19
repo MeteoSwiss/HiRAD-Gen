@@ -383,13 +383,26 @@ class GridPatching2D(BasePatching2D):
         super().__init__(img_shape, patch_shape)
         self.overlap_pix = overlap_pix
         self.boundary_pix = boundary_pix
-        patch_num_x = math.ceil(
-            img_shape[1] / (patch_shape[1] - overlap_pix - boundary_pix)
-        )
-        patch_num_y = math.ceil(
-            img_shape[0] / (patch_shape[0] - overlap_pix - boundary_pix)
-        )
+        stride_x = patch_shape[1] - overlap_pix - boundary_pix
+        stride_y = patch_shape[0] - overlap_pix - boundary_pix
+        patch_num_x = math.ceil(img_shape[1] / stride_x)
+        patch_num_y = math.ceil(img_shape[0] / stride_y)
         self.patch_num = patch_num_x * patch_num_y
+
+        # Precompute padded shape and padding — used by both apply and fuse.
+        self._padded_shape_x = stride_x * (patch_num_x - 1) + patch_shape[1] + boundary_pix
+        self._padded_shape_y = stride_y * (patch_num_y - 1) + patch_shape[0] + boundary_pix
+        self._pad = (
+            boundary_pix,
+            self._padded_shape_x - img_shape[1] - boundary_pix,
+            boundary_pix,
+            self._padded_shape_y - img_shape[0] - boundary_pix,
+        )  # (left, right, top, bottom) for F.pad
+
+        # overlap_count is purely geometric; cache it lazily per device so
+        # image_fuse() does not recompute it on every call.
+        self._overlap_count: Optional[Tensor] = None
+        self._overlap_count_device: Optional[torch.device] = None
 
     def apply(
         self,
@@ -473,6 +486,20 @@ class GridPatching2D(BasePatching2D):
         :func:`physicsnemo.utils.patching.image_fuse`
             The underlying function used to perform the fusion operation.
         """
+        if self._overlap_count is None or self._overlap_count.device != input.device:
+            self._overlap_count = _compute_overlap_count(
+                img_shape_y=self.img_shape[0],
+                img_shape_x=self.img_shape[1],
+                patch_shape_y=self.patch_shape[0],
+                patch_shape_x=self.patch_shape[1],
+                overlap_pix=self.overlap_pix,
+                boundary_pix=self.boundary_pix,
+                padded_shape_y=self._padded_shape_y,
+                padded_shape_x=self._padded_shape_x,
+                pad=self._pad,
+                device=input.device,
+            )
+            self._overlap_count_device = input.device
         out = image_fuse(
             input=input,
             img_shape_y=self.img_shape[0],
@@ -480,8 +507,40 @@ class GridPatching2D(BasePatching2D):
             batch_size=batch_size,
             overlap_pix=self.overlap_pix,
             boundary_pix=self.boundary_pix,
+            overlap_count=self._overlap_count,
         )
         return out
+
+
+def _compute_overlap_count(
+    img_shape_y: int,
+    img_shape_x: int,
+    patch_shape_y: int,
+    patch_shape_x: int,
+    overlap_pix: int,
+    boundary_pix: int,
+    padded_shape_y: int,
+    padded_shape_x: int,
+    pad: tuple,
+    device: torch.device,
+) -> Tensor:
+    """Compute how many patches cover each output pixel (shape: (1, 1, img_y, img_x)).
+
+    Result is static for a given geometry, so callers should cache it.
+    """
+    stride_y = patch_shape_y - overlap_pix - boundary_pix
+    stride_x = patch_shape_x - overlap_pix - boundary_pix
+    ones = torch.ones((1, 1, padded_shape_y, padded_shape_x), device=device)
+    unfolded = torch.nn.functional.unfold(
+        ones, kernel_size=(patch_shape_y, patch_shape_x), stride=(stride_y, stride_x)
+    )
+    count = torch.nn.functional.fold(
+        unfolded,
+        output_size=(padded_shape_y, padded_shape_x),
+        kernel_size=(patch_shape_y, patch_shape_x),
+        stride=(stride_y, stride_x),
+    )
+    return count[..., pad[2]: pad[2] + img_shape_y, pad[0]: pad[0] + img_shape_x]
 
 
 def image_batching(
@@ -584,12 +643,9 @@ def image_batching(
     )
     pad_x_right = padded_shape_x - img_shape_x - boundary_pix
     pad_y_right = padded_shape_y - img_shape_y - boundary_pix
-    image_padding = torch.nn.ReflectionPad2d(
-        (boundary_pix, pad_x_right, boundary_pix, pad_y_right)
-    ).to(
-        input.device
-    )  # (padding_left,padding_right,padding_top,padding_bottom)
-    input_padded = image_padding(input)
+    input_padded = torch.nn.functional.pad(
+        input, (boundary_pix, pad_x_right, boundary_pix, pad_y_right), mode="reflect"
+    )
     patch_num = patch_num_x * patch_num_y
 
     # Cast to float for unfold
@@ -633,6 +689,7 @@ def image_fuse(
     batch_size: int,
     overlap_pix: int,
     boundary_pix: int,
+    overlap_count: Optional[Tensor] = None,
 ) -> Tensor:
     """
     Reconstructs a full image from a batch of patched images. Reverts the patching
@@ -693,28 +750,23 @@ def image_fuse(
     pad_y_right = padded_shape_y - img_shape_y - boundary_pix
     pad = (boundary_pix, pad_x_right, boundary_pix, pad_y_right)
 
-    # Count local overlaps between patches
-    input_ones = torch.ones(
-        (batch_size, input.shape[1], padded_shape_y, padded_shape_x),
-        device=input.device,
-    )
-    overlap_count = torch.nn.functional.unfold(
-        input=input_ones,
-        kernel_size=(patch_shape_y, patch_shape_x),
-        stride=(
-            patch_shape_y - overlap_pix - boundary_pix,
-            patch_shape_x - overlap_pix - boundary_pix,
-        ),
-    )
-    overlap_count = torch.nn.functional.fold(
-        input=overlap_count,
-        output_size=(padded_shape_y, padded_shape_x),
-        kernel_size=(patch_shape_y, patch_shape_x),
-        stride=(
-            patch_shape_y - overlap_pix - boundary_pix,
-            patch_shape_x - overlap_pix - boundary_pix,
-        ),
-    )
+    # Count local overlaps between patches.
+    # overlap_count is purely geometric (constant for a given patch config), so
+    # callers that invoke fuse in a loop should pass a pre-cached value via the
+    # overlap_count parameter to avoid recomputing it on every call.
+    if overlap_count is None:
+        overlap_count = _compute_overlap_count(
+            img_shape_y=img_shape_y,
+            img_shape_x=img_shape_x,
+            patch_shape_y=patch_shape_y,
+            patch_shape_x=patch_shape_x,
+            overlap_pix=overlap_pix,
+            boundary_pix=boundary_pix,
+            padded_shape_y=padded_shape_y,
+            padded_shape_x=padded_shape_x,
+            pad=pad,
+            device=input.device,
+        )
 
     # Reshape input to make it 3D to apply fold
     x = rearrange(
@@ -751,11 +803,9 @@ def image_fuse(
     x_no_padding = x_folded[
         ..., pad[2] : pad[2] + img_shape_y, pad[0] : pad[0] + img_shape_x
     ]
-    overlap_count_no_padding = overlap_count[
-        ..., pad[2] : pad[2] + img_shape_y, pad[0] : pad[0] + img_shape_x
-    ]
 
-    x_no_padding = x_no_padding / overlap_count_no_padding
+    # overlap_count is (1, 1, img_shape_y, img_shape_x); broadcasts over batch and channels
+    x_no_padding = x_no_padding / overlap_count
 
     #TODO: do we want to introduce this and will it break existing checkpoints
     # if input.dtype in [torch.int32, torch.int64]:

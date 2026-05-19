@@ -16,11 +16,18 @@
 
 
 from typing import Callable, Optional
+import time
 
 import torch
 from torch import Tensor
 
 from hirad.utils.patching import GridPatching2D
+
+
+def _sync_t() -> float:
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    return time.perf_counter()
 
 
 def stochastic_sampler(
@@ -43,6 +50,7 @@ def stochastic_sampler(
     S_max: float = float("inf"),
     S_noise: float = 1,
     use_apex_gn: bool = False,
+    _timings: Optional[dict] = None,
 ) -> torch.Tensor:
     """
     Proposed EDM sampler (Algorithm 2) with minor changes to enable
@@ -162,6 +170,9 @@ def stochastic_sampler(
             f"{img_lr.shape[0]} vs {latents.shape[0]}."
         )
 
+    _t = _sync_t if _timings is not None else (lambda: 0.0)
+    _t_preproc_start = _t()
+
     # Time step discretization.
     step_indices = torch.arange(num_steps, dtype=torch.float64, device=latents.device)
     t_steps = (
@@ -212,7 +223,7 @@ def stochastic_sampler(
             if use_apex_gn:
                 date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
             else:
-                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous()
             img_lr = torch.cat((img_lr, date_embedding), dim=1)
         # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
         x_lr = patching.apply(input=x_lr, additional_input=img_lr)
@@ -229,12 +240,18 @@ def stochastic_sampler(
             if use_apex_gn:
                 date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
             else:
-                date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).contiguous() 
+                date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).contiguous()
             x_lr = torch.cat((x_lr, date_embedding), dim=1)
 
         patch_embedding_selector = None
 
+    _t_preproc_end = _t()
+
     # Main sampling loop.
+    x_lr = x_lr.to(latents.device)  # ensure correct device once, before the loop
+    _t_net_forward = 0.0
+    _n_net_forward = 0
+    _t_loop_start = _t()
     x_next = latents.to(torch.float64) * t_steps[0]
     for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):  # 0, ..., N-1
         x_cur = x_next
@@ -242,7 +259,11 @@ def stochastic_sampler(
         gamma = S_churn / num_steps if S_min <= t_cur <= S_max else 0
         t_hat = net.module.round_sigma(t_cur + gamma * t_cur) if hasattr(net, "module") else net.round_sigma(t_cur + gamma * t_cur)
 
-        x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
+        # Only generate noise when it will actually be used (gamma > 0).
+        if gamma > 0:
+            x_hat = x_cur + (t_hat**2 - t_cur**2).sqrt() * S_noise * randn_like(x_cur)
+        else:
+            x_hat = x_cur
 
         # Euler step. Perform patching operation on score tensor if patch-based
         # generation is used denoised = net(x_hat, t_hat,
@@ -251,8 +272,8 @@ def stochastic_sampler(
         x_hat_batch = (patching.apply(input=x_hat) if patching else x_hat).to(
             latents.device
         )
-        x_lr = x_lr.to(latents.device)
 
+        _tn0 = _t()
         if lead_time_label is not None:
             denoised = net(
                 x_hat_batch,
@@ -276,6 +297,9 @@ def stochastic_sampler(
                 class_labels,
                 embedding_selector=patch_embedding_selector,
             ).to(torch.float64)
+        _t_net_forward += _t() - _tn0
+        _n_net_forward += 1
+
         if patching:
             # Un-patch the denoised image
             # (batch_size, C_out, img_shape_y, img_shape_x)
@@ -292,6 +316,7 @@ def stochastic_sampler(
                 latents.device
             )
 
+            _tn0 = _t()
             if lead_time_label is not None:
                 denoised = net(
                     x_next_batch,
@@ -309,6 +334,9 @@ def stochastic_sampler(
                     class_labels,
                     embedding_selector=patch_embedding_selector,
                 ).to(torch.float64)
+            _t_net_forward += _t() - _tn0
+            _n_net_forward += 1
+
             if patching:
                 # Un-patch the denoised image
                 # (batch_size, C_out, img_shape_y, img_shape_x)
@@ -316,4 +344,13 @@ def stochastic_sampler(
 
             d_prime = (x_next - denoised) / t_next
             x_next = x_hat + (t_next - t_hat) * (0.5 * d_cur + 0.5 * d_prime)
+
+    _t_loop_total = _t() - _t_loop_start
+
+    if _timings is not None:
+        _timings["diff_sampler_preproc"] = _timings.get("diff_sampler_preproc", 0.0) + (_t_preproc_end - _t_preproc_start)
+        _timings["diff_net_forward"] = _timings.get("diff_net_forward", 0.0) + _t_net_forward
+        _timings["diff_net_forward_calls"] = _timings.get("diff_net_forward_calls", 0) + _n_net_forward
+        _timings["diff_loop_overhead"] = _timings.get("diff_loop_overhead", 0.0) + (_t_loop_total - _t_net_forward)
+
     return x_next

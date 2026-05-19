@@ -146,7 +146,31 @@ class GridData():
         self._lambda3 = 1 - self._lambda1 - self._lambda2
 
 
-    def to_torch(self, device: torch.device ='cpu') -> None:
+    def to(self, device: str | torch.device) -> None:
+        """
+        Prepare barycentric coordinates and simplex indices for PyTorch operations.
+        
+        This method converts the precomputed numpy arrays to PyTorch tensors
+        and moves them to the specified device.
+        
+        Args:
+            device: The torch device to move tensors to (e.g., 'cpu' or 'cuda').
+        """
+        if isinstance(device, str):
+            device = torch.device(device)
+        if self.is_torch and self.device == device:
+            return  # Already on the correct device
+        elif self.is_torch and self.device != device:
+            self.device = device
+            self._lambda1 = self._lambda1.to(device)
+            self._lambda2 = self._lambda2.to(device)
+            self._lambda3 = self._lambda3.to(device)
+            self._simplex_id = self._simplex_id.to(device)
+            self._tri.simplices = self._tri.simplices.to(device)
+        elif not self.is_torch:
+            self.to_torch(device)
+
+    def to_torch(self, device: torch.device | str ='cpu') -> None:
         """
         Prepare barycentric coordinates and simplex indices for PyTorch operations.
         

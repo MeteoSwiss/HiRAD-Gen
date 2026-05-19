@@ -36,13 +36,17 @@ perf:
   force_fp16: False
     # Whether to force fp16 precision for the model. If false, it'll use the precision
     # specified upon training.
-  use_torch_compile: False
+  use_torch_compile: True
     # whether to use torch.compile on the diffusion model
     # this will make the first time stamp generation very slow due to compilation overheads
     # but will significantly speed up subsequent inference runs
   num_writer_workers: 8
     # number of workers to use for writing file
     # To support multiple workers a threadsafe version of the netCDF library must be used
+  enable_timing: True
+    # Whether to collect and log detailed per-step timing breakdowns.
+    # Disabling removes all torch.cuda.synchronize() calls from the hot path,
+    # which improves throughput for production runs.
 
 io:
   res_ckpt_path: /path/to/diffusion/checkpoint

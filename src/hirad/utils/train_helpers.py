@@ -20,9 +20,36 @@ import warnings
 import mlflow
 from omegaconf import DictConfig, OmegaConf
 import os
+import psutil
+import time
 
 from hirad.distributed import DistributedManager
 from hirad.utils.env_info import get_env_info, flatten_dict
+
+# Define safe CUDA profiler tools that fallback to no-ops when CUDA is not available
+def cuda_profiler():
+    if torch.cuda.is_available():
+        return torch.cuda.profiler.profile()
+    else:
+        return nullcontext()
+
+
+def cuda_profiler_start():
+    if torch.cuda.is_available():
+        torch.cuda.profiler.start()
+
+
+def cuda_profiler_stop():
+    if torch.cuda.is_available():
+        torch.cuda.profiler.stop()
+
+
+def profiler_emit_nvtx():
+    if torch.cuda.is_available():
+        return torch.autograd.profiler.emit_nvtx()
+    else:
+        return nullcontext()
+
 
 def set_patch_shape(img_shape, patch_shape):
     img_shape_y, img_shape_x = img_shape
@@ -46,6 +73,27 @@ def set_patch_shape(img_shape, patch_shape):
         if patch_shape_x % 32 != 0 or patch_shape_y % 32 != 0:
             raise ValueError("Patch shape needs to be a multiple of 32")
     return use_patching, (img_shape_y, img_shape_x), (patch_shape_y, patch_shape_x)
+
+
+def calculate_patch_per_iter(patch_num, max_patch_per_gpu, batch_size_per_gpu):
+    if max_patch_per_gpu:
+        if max_patch_per_gpu // batch_size_per_gpu < 1:
+            raise ValueError(
+                f"max_patch_per_gpu ({max_patch_per_gpu}) must be greater or equal to batch_size_per_gpu ({batch_size_per_gpu})."
+            )
+        max_patch_num_per_iter = min(
+            patch_num, (max_patch_per_gpu // batch_size_per_gpu)
+        )
+        patch_iterations = (
+            patch_num + max_patch_num_per_iter - 1
+        ) // max_patch_num_per_iter
+        patch_nums_iter = [
+            min(max_patch_num_per_iter, patch_num - i * max_patch_num_per_iter)
+            for i in range(patch_iterations)
+        ]
+    else:
+        patch_nums_iter = [patch_num]
+    return patch_nums_iter
 
 
 def set_seed(rank):
@@ -82,6 +130,20 @@ def compute_num_accumulation_rounds(total_batch_size, batch_size_per_gpu, world_
             "total_batch_size must be equal to batch_size_per_gpu * num_accumulation_rounds * world_size"
         )
     return batch_gpu_total, num_accumulation_rounds
+
+
+def update_learning_rate(optimizer, lr, lr_rampup, lr_decay, lr_decay_rate, cur_nimg):
+    """Apply learning rate rampup and decay schedule."""
+    current_lr = None
+    for g in optimizer.param_groups:
+        if lr_rampup > 0:
+            g["lr"] = lr * min(cur_nimg / lr_rampup, 1)
+        if cur_nimg >= lr_rampup:
+            g["lr"] *= lr_decay ** (
+                (cur_nimg - lr_rampup) // lr_decay_rate
+            )
+        current_lr = g["lr"]
+    return current_lr
 
 
 def handle_and_clip_gradients(model, grad_clip_threshold=None):
@@ -178,3 +240,32 @@ def init_mlflow(cfg: DictConfig, dist: DistributedManager, write_dir: str=".") -
             with open(os.path.join(write_dir, "run_id.txt"), 'r') as f:
                 run_id = f.read()
             mlflow.start_run(run_id=run_id, log_system_metrics=True)
+
+
+def log_training_progress(logger0, logging_method, dist, cur_nimg, tick_start_nimg, tick_start_time,
+                          tick_read_time, start_time, average_loss, average_loss_running_mean,
+                          current_lr):
+    """Log training progress metrics."""
+    torch.cuda.synchronize()
+    tick_end_time = time.time()
+    fields = [
+        f"samples {cur_nimg:<9.1f}",
+        f"training_loss {average_loss:<7.2f}",
+        f"training_loss_running_mean {average_loss_running_mean:<7.2f}",
+        f"learning_rate {current_lr:<7.8f}",
+        f"sec_per_tick {(tick_end_time - tick_start_time):<7.1f}",
+        f"sec_per_sample {((tick_end_time - tick_start_time) / (cur_nimg - tick_start_nimg)):<7.4f}",
+        f"sec_for_reading {tick_read_time:<7.4f}",
+        f"total_sec {(tick_end_time - start_time):<7.1f}",
+        f"cpu_mem_gb {(psutil.Process(os.getpid()).memory_info().rss / 2**30):<6.2f}",
+    ]
+    if torch.cuda.is_available():
+        fields.append(f"peak_gpu_mem_gb {(torch.cuda.max_memory_allocated(dist.device) / 2**30):<6.2f}")
+        fields.append(f"peak_gpu_mem_reserved_gb {(torch.cuda.max_memory_reserved(dist.device) / 2**30):<6.2f}")
+        torch.cuda.reset_peak_memory_stats()
+    logger0.info(" ".join(fields))
+
+    if logging_method == "mlflow":
+        mlflow.log_metric("training_loss", average_loss, cur_nimg)
+        mlflow.log_metric("training_loss_running_mean", average_loss_running_mean, cur_nimg)
+        mlflow.log_metric("learning_rate", current_lr, cur_nimg)

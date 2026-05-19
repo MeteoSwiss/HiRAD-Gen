@@ -18,11 +18,9 @@ build_job:
 
 test_job:
   stage: test
-  extends: .container-runner-clariden-gh200
+  extends: .container-runner-santis-gh200
   image: $PERSIST_IMAGE_NAME
   script:
-    # - echo 'hello world'
-    - ls /opt
     - pytest /opt/hirad-gen/tests -v
   variables:
     USE_MPI: NO
