@@ -1,7 +1,6 @@
 from .base import DownscalingDataset, ChannelMetadata
 
 from anemoi.datasets import open_dataset
-from anemoi.datasets.data.dataset import Dataset
 import datetime
 import os
 import numpy as np
