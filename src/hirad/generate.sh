@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-# Optional Hydra overrides for monthly array mode.
+# Optional Hydra overrides for monthly array mode. 
 EXTRA_ARGS=()
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" && -n "${START_MONTH:-}" ]]; then
     MONTH="${START_MONTH}-01 +${SLURM_ARRAY_TASK_ID} months"
