@@ -94,6 +94,7 @@ def main(cfg: DictConfig) -> None:
         load_net_reg, load_net_res, load_model = False, False, True
     else:
         raise ValueError(f"Invalid inference mode {cfg.generation.inference_mode}")
+    use_apex_gn = False
 
     # Load diffusion network, move to device, change precision
     if load_net_res:

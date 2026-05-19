@@ -215,10 +215,13 @@ class GeneratorDiT(GeneratorBase):
         )
         self.model = model
 
-    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=True):
+    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=True, skip_timing=False):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
+
+            _step_timings: dict = {} if not skip_timing else None
+            _t = _sync_t if not skip_timing else (lambda: 0.0)
 
             if randomize:
                 # Set random seed for numpy
@@ -232,6 +235,7 @@ class GeneratorDiT(GeneratorBase):
                 model_args = {"condition": date_embedding}
 
             with nvtx.annotate("DiT model", color="purple"):
+                _t0 = _t()
                 image_out = diffusion_step(
                     net=self.model,
                     sampler_fn=self.sampler,
@@ -247,7 +251,16 @@ class GeneratorDiT(GeneratorBase):
                     static_channels=static_channels,
                     use_apex_gn=use_apex_gn,
                     additional_model_args=model_args,
+                    _timings=_step_timings,
                 )
+                if not skip_timing:
+                    self._timings["diffusion"] += _t() - _t0
+                    self._timing_counts["diffusion"] += 1
+
+            if not skip_timing and _step_timings:
+                for k, v in _step_timings.items():
+                    self._timings[k] += v
+                    self._timing_counts[k] += 1
 
             # Gather tensors on rank 0
             if self.dist.world_size > 1:
@@ -261,12 +274,16 @@ class GeneratorDiT(GeneratorBase):
                 else:
                     gathered_tensors = None
 
+                _t0 = _t()
                 torch.distributed.barrier()
                 gather(
                     image_out,
                     gather_list=gathered_tensors if self.dist.rank == 0 else None,
                     dst=0,
                 )
+                if not skip_timing:
+                    self._timings["gather"] += _t() - _t0
+                    self._timing_counts["gather"] += 1
 
                 if self.dist.rank == 0:
                     return torch.cat(gathered_tensors), None
