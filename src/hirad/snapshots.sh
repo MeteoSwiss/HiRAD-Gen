@@ -3,7 +3,7 @@
 #SBATCH --job-name="snapshots"
 
 ### HARDWARE ###
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
@@ -16,9 +16,9 @@
 #SBATCH --output=/capstor/scratch/cscs/pstamenk/logs/snapshot.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A c38
 
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e .
+    source ../hirad_new_env/bin/activate
     python src/hirad/eval/snapshots.py --config-name=src/hirad/conf/eval_real.yaml
 "

@@ -14,7 +14,7 @@ from hydra.utils import to_absolute_path
 # from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
 import mlflow
-# from torchinfo import summary
+from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -225,9 +225,11 @@ def main(cfg: DictConfig) -> None:
     # Create the model and move it to the appropriate device and memory format based on the optimization configuration
     model, model_args = training_manager.create_model(cfg.model.name, cfg.model.get("model_args", None))
 
-    # # Print the model summary
-    # if dist.rank == 0:
-    #     summary(model, input_size=[(1, 4, *img_shape), (1, 13+1, *img_shape), (1,1)], device=dist.device)
+    logger0.info(f"Model attention backend: {model.model.attn_kwargs_forward}")
+
+    # Print the model summary
+    if dist.rank == 0:
+        summary(model, input_size=[(1, 4, *img_shape), (1, 13+1, *img_shape), (1,1)], device=dist.device)
 
     # raise NotImplementedError("Check if model_args are correct when using patching - img_in_channels should include global channels and lead time channels if applicable")
 

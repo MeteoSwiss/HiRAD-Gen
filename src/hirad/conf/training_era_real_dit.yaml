@@ -1,7 +1,7 @@
 hydra:
   job:
     chdir: true
-    name: dit_era_real
+    name: dit_era_real_cosine_lr_decay
   run:
     dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
 

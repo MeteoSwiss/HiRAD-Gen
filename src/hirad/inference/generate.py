@@ -24,6 +24,29 @@ from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
 
+
+def _log_model_summary(label: str, model: torch.nn.Module, logger, max_depth: int = 2) -> None:
+    """Log a concise module-tree summary with per-node parameter counts."""
+    def _param_count(m: torch.nn.Module) -> int:
+        return sum(p.numel() for p in m.parameters())
+
+    def _walk(m: torch.nn.Module, depth: int) -> list[str]:
+        lines = []
+        indent = "  " * (depth + 1)
+        for name, p in m.named_parameters(recurse=False):
+            lines.append(f"{indent}[{name}] nn.Parameter{' ' * 28} {p.numel():>15,} params  shape={list(p.shape)}")
+        for name, child in m.named_children():
+            n = _param_count(child)
+            lines.append(f"{indent}[{name}] {type(child).__name__:<40s} {n:>15,} params")
+            if depth < max_depth - 1:
+                lines.extend(_walk(child, depth + 1))
+        return lines
+
+    total = _param_count(model)
+    lines = [f"{label} ({type(model).__name__}): {total:,} params"] + _walk(model, 0)
+    for line in lines:
+        logger.info(line)
+
 def _sync_t() -> float:
     """Return wall-clock time after synchronizing all pending CUDA ops."""
     if torch.cuda.is_available():
@@ -186,6 +209,7 @@ def main(cfg: DictConfig) -> None:
             net_dit = net_dit.to(memory_format=torch.channels_last)
         if cfg.generation.perf.force_fp16:
             net_dit.use_fp16 = True
+        _log_model_summary("DiT network", net_dit, logger0)
     else:
         net_dit = None
 

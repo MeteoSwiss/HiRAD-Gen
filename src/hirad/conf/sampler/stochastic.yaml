@@ -1,3 +1,6 @@
 # Stochastic sampler is slower, but should give better results than deterministic sampler.
 
 type: stochastic
+
+params:
+  num_steps: 18

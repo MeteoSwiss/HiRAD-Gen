@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name="corrdiff-second-stage"
+#SBATCH --job-name="dit-downscaling-era-real"
 
 ### HARDWARE ###
 #SBATCH --partition=normal
-#SBATCH --nodes=4
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
@@ -30,6 +30,8 @@ export MASTER_ADDR
 export MASTER_PORT=29500
 
 export OMP_NUM_THREADS=1
+
+# export NATTEN_LOG_LEVEL=DEBUG
 
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     source ../hirad_new_env/bin/activate

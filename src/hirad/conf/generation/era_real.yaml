@@ -1,8 +1,8 @@
-num_ensembles: 8
+num_ensembles: 16
   # Number of ensembles to generate per input
 seed_batch_size: 4
   # Size of the batched inference
-inference_mode: all
+inference_mode: dit
   # Choose between "all" (regression + diffusion), "regression" or "diffusion"
   # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
   # img_shape_x and img_shape_y
@@ -15,7 +15,7 @@ random_seed: 2578458
   # random seed will be set for numpy random module to have reproducible randomized generative process.
 
 # Patching parameters
-patching: True
+patching: False
 patch_shape_x: 384
 patch_shape_y: 384
 overlap_pix: 4
@@ -24,9 +24,9 @@ boundary_pix: 2
 #   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
 #   # artifact.
 
-hr_mean_conditioning: True
+# hr_mean_conditioning: True
 
-times_range: ['20211015-0000','20211015-2300',1]
+times_range: ['20230726-1600','20230726-2000',1]
   # Start date, end date and time interval (in hours) for the generation
 
 times: null
@@ -49,8 +49,9 @@ perf:
     # which improves throughput for production runs.
 
 io:
-  res_ckpt_path: /path/to/diffusion/checkpoint
+  # res_ckpt_path: /path/to/diffusion/checkpoint
   # Checkpoint filename for the residual predictor model
-  reg_ckpt_path: /path/to/regression/checkpoint
+  # reg_ckpt_path: /path/to/regression/checkpoint
   # Checkpoint filename for the mean predictor model
+  dit_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/dit_era_real_cosine_lr_decay/checkpoints_diffusion_transformer
   output_path: .

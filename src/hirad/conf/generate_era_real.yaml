@@ -1,7 +1,7 @@
 hydra:
   job:
     chdir: true
-    name: generation_era_real_results
+    name: generation_era_real_dit_test_optim
   run:
     dir: ./outputs/generation/${hydra:job.name}
 

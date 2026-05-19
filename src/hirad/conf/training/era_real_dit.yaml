@@ -1,21 +1,22 @@
 # Hyperparameters
 hp:
-    training_duration: 4000000
+    training_duration: 20000000
     # Training duration based on the number of processed samples
     total_batch_size: "auto"
     # Total batch size
-    batch_size_per_gpu: 64
+    batch_size_per_gpu: 4
     # Batch size per GPU
     lr: 0.0001
     # Learning rate
-    grad_clip_threshold: 1e6
-    # no gradient clipping for defualt non-patch-based training
-    lr_decay: 0.95
+    # grad_clip_threshold: 1e6
+    # no gradient clipping for default non-patch-based training
+    lr_decay: 0.7
     # LR decay rate
-    lr_rampup: 250000
+    lr_rampup: 5e5
     # Rampup for learning rate, in number of samples
     lr_decay_rate: 5e5
     # Learning rate decay threshold in number of samples, applied every lr_decay_rate samples.
+    grad_clip_threshold: 5.0
 
 # Performance
 perf:
@@ -28,12 +29,12 @@ perf:
 
 # I/O
 io:
-    print_progress_freq: 2000
+    print_progress_freq: 1000
     # How often to print progress
     save_checkpoint_freq: 250000
     # How often to save the checkpoints, measured in number of processed samples
     validation_freq: 100000
     # how often to record the validation loss, measured in number of processed samples
-    validation_steps: 9
+    validation_steps: 68
     # how many loss evaluations are used to compute the validation loss per checkpoint
     checkpoint_dir: .

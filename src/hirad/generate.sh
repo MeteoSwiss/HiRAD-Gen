@@ -5,18 +5,18 @@
 ### HARDWARE ###
 #SBATCH --partition=normal
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2
-#SBATCH --gpus-per-node=2
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=72
 #SBATCH --time=00:30:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/regression_generation.log
+#SBATCH --output=./logs/dit_generation.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A c38
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -33,6 +33,6 @@ echo "Master port: $MASTER_PORT"
 export OMP_NUM_THREADS=1
 
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e .
+    source ../hirad_new_env/bin/activate
     python src/hirad/inference/generate.py --config-name=generate_era_real.yaml
 "
