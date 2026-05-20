@@ -27,18 +27,15 @@
 
 set -euo pipefail
 
-# Optional Hydra overrides for monthly array mode. 
+# Optional Hydra overrides for monthly array mode.
 EXTRA_ARGS=()
 if [[ -n "${SLURM_ARRAY_TASK_ID:-}" && -n "${START_MONTH:-}" ]]; then
-    MONTH="${START_MONTH}-01 +${SLURM_ARRAY_TASK_ID} months"
-    NEXT_MONTH="${START_MONTH}-01 +$((SLURM_ARRAY_TASK_ID + 1)) months"
-    START=$(date -u -d "$MONTH" +%Y%m%d-%H%M)
-    END=$(date -u -d "$NEXT_MONTH" +%Y%m%d-%H%M)
-    TAG=$(date -u -d "$MONTH" +%Y_%m)
-    echo "Generating ${TAG}: ${START} -> ${END}"
+    START=$(date -u -d "${START_MONTH}-01 +${SLURM_ARRAY_TASK_ID} months" +%Y%m%d-%H%M)
+    END=$(date -u -d "${START_MONTH}-01 +$((SLURM_ARRAY_TASK_ID + 1)) months" +%Y%m%d-%H%M)
+    echo "Generating ${START:0:4}_${START:4:2}: ${START} -> ${END}"
     EXTRA_ARGS+=(
         "generation.times_range=[${START},${END},1]"
-        "hydra.run.dir=./outputs/generation/era_real_${TAG}"
+        "hydra.run.dir=./outputs/generation/era_real_${START:0:4}"
     )
 fi
 
