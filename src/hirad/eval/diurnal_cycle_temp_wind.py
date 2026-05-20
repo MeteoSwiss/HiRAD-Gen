@@ -10,9 +10,8 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
-from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import resolve_times
+from hirad.datasets import known_datasets
+from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
 
 def main(cfg: dict):
@@ -29,9 +28,9 @@ def main(cfg: dict):
         logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
+    generation_config_path = find_generation_config(generation_dir)
+    if generation_config_path is None:
+        logger.error(f"No generation config file found in {generation_dir}.")
         return
 
     with open(generation_config_path, "r") as f:
@@ -70,7 +69,7 @@ def main(cfg: dict):
     # Output path
     out_root = Path(generation_dir)
     def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False)
+        return torch.load(resolve_ts_dir(out_root, ts) / ts / fn, weights_only=False)
 
     # Land-sea mask
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))

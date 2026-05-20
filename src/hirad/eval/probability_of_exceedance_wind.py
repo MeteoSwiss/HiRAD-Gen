@@ -12,7 +12,7 @@ import xarray as xr
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import resolve_times
+from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
 from hirad.eval.plotting import get_channel_indices
 from hirad.eval.eval_utils import percentiles_from_histogram
 
@@ -136,9 +136,9 @@ def main(cfg: dict):
         logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
+    generation_config_path = find_generation_config(generation_dir)
+    if generation_config_path is None:
+        logger.error(f"No generation config file found in {generation_dir}.")
         return
 
     with open(generation_config_path, "r") as f:
@@ -208,7 +208,7 @@ def main(cfg: dict):
                 if i % cfg.get("log_interval") == 0:
                     logger.info(f"Processing timestep {i+1}/{len(times)}")
                 
-                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
+                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)
                 
                 # Extract wind components
                 if mode in ['target', 'regression-prediction']:
@@ -260,7 +260,7 @@ def main(cfg: dict):
         if i % cfg.get("log_interval") == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
-        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
         
         if n_members is None:
             n_members = preds.shape[0]

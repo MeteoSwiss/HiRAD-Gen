@@ -1,7 +1,23 @@
 import numpy as np
+from pathlib import Path
 from typing import Optional
 
 from hirad.utils.function_utils import get_time_from_range
+
+
+def find_generation_config(generation_dir: str) -> Optional[Path]:
+    """Return the first `.hydra/config.yaml` found under *generation_dir*, or None."""
+    return min(Path(generation_dir).glob("**/.hydra/config.yaml"), default=None)
+
+
+def resolve_ts_dir(out_root: Path, ts: str) -> Path:
+    """Return the directory under *out_root* that contains the timestamp folder *ts*."""
+    if (out_root / ts).is_dir():
+        return out_root
+    matches = [p.parent for p in out_root.glob(f"*/{ts}") if p.is_dir()]
+    if matches:
+        return matches[0]
+    raise FileNotFoundError(f"Timestamp directory {ts} not found under {out_root}")
 
 
 def resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -> Optional[list]:

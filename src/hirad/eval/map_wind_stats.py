@@ -9,7 +9,7 @@ import torch
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import resolve_times
+from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
 from hirad.eval.plotting import plot_map, get_channel_indices, GridConfig
 
 
@@ -47,7 +47,7 @@ def apply_all_wind_statistics_streaming(times, out_root, mode, u_channel, v_chan
         if logger and i % log_interval == 0:
             logger.info(f"  Streaming {mode} timestep {i+1}/{len(times)}: {ts}")
 
-        data = torch.load(out_root / ts / f"{ts}-{mode}", weights_only=False)
+        data = torch.load(resolve_ts_dir(out_root, ts) / ts / f"{ts}-{mode}", weights_only=False)
         u = data[u_channel].cpu().numpy() if torch.is_tensor(data[u_channel]) else data[u_channel]
         v = data[v_channel].cpu().numpy() if torch.is_tensor(data[v_channel]) else data[v_channel]
         del data
@@ -222,9 +222,9 @@ def main(cfg: dict):
         logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
+    generation_config_path = find_generation_config(generation_dir)
+    if generation_config_path is None:
+        logger.error(f"No generation config file found in {generation_dir}.")
         return
 
     with open(generation_config_path, "r") as f:
@@ -327,7 +327,7 @@ def main(cfg: dict):
         u_channel, v_channel = wind_channels
         
         try:
-            test_data = torch.load(out_root/times[0]/f"{times[0]}-{mode}", weights_only=False)
+            test_data = torch.load(resolve_ts_dir(out_root, times[0])/times[0]/f"{times[0]}-{mode}", weights_only=False)
             del test_data
         except Exception as e:
             logger.warning(f"{mode} not available: {e}")
@@ -358,7 +358,7 @@ def main(cfg: dict):
 
     logger.info("Processing predictions mode...")
     try:
-        data = torch.load(out_root/times[0]/f"{times[0]}-predictions", weights_only=False)
+        data = torch.load(resolve_ts_dir(out_root, times[0])/times[0]/f"{times[0]}-predictions", weights_only=False)
         n_members = data.shape[0]
         del data
         logger.info(f"Found {n_members} ensemble members")
@@ -385,7 +385,7 @@ def main(cfg: dict):
             if i % log_interval == 0:
                 logger.info(f"Loading predictions timestep {i+1}/{len(times)}: {ts}")
             
-            pred_data = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)
+            pred_data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)
             
             for member_idx in range(n_members):
                 u_data = pred_data[member_idx, u10_out]

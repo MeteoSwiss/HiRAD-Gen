@@ -17,9 +17,8 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
-from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import resolve_times
+from hirad.datasets import known_datasets
+from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask
 
 
@@ -61,9 +60,9 @@ def main(cfg: dict):
         logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
+    generation_config_path = find_generation_config(generation_dir)
+    if generation_config_path is None:
+        logger.error(f"No generation config file found in {generation_dir}.")
         return
 
     with open(generation_config_path, "r") as f:
@@ -105,7 +104,7 @@ def main(cfg: dict):
         data_list = []
         try:
             for ts in times:
-                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * cfg.get("conv_factor")
+                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target','regression-prediction'] else tp_in] * cfg.get("conv_factor")
                 data_list.append(data)
         except:
             logger.error(f"Error loading data for mode {mode}. Skipping.")
@@ -132,7 +131,7 @@ def main(cfg: dict):
     # Load all prediction data at once into xarray
     pred_data_list = []
     for ts in times:
-        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False) * cfg.get("conv_factor")  # [n_members, n_channels, lat, lon]
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False) * cfg.get("conv_factor")  # [n_members, n_channels, lat, lon]
         tp_data = preds[:, tp_out]  # [n_members, lat, lon]
         tp_da = xr.DataArray(tp_data, dims=['member', 'lat', 'lon'],
                              coords={'lat': land_mask.coords['lat'], 'lon': land_mask.coords['lon']})
