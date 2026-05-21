@@ -1,10 +1,11 @@
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Tuple
+
 import numpy as np
 import xarray as xr
 import yaml
-from pathlib import Path
-from typing import Optional, Tuple
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
@@ -28,17 +29,8 @@ DEFAULT_GRID_CONFIG = GridConfig(
 )
 
 
-# Constants for data processing
-CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
-CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from meters to mm/day
-WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
-LOG_INTERVAL = 24    # Log progress every N timesteps
-
-LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
-
-
 def grid_cfg_from_cfg(cfg) -> GridConfig:
-    """Build a :class:`GridConfig` from the ``lat_*``/``lon_*``/``height``/``width``/``relax_zone`` fields of *cfg*."""
+    """Build a :class:`GridConfig` from ``lat_*``/``lon_*``/``height``/``width``/``relax_zone`` fields of *cfg*."""
     return GridConfig(
         lat=np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
         lon=np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
@@ -48,18 +40,18 @@ def grid_cfg_from_cfg(cfg) -> GridConfig:
     )
 
 
-def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
+def load_land_sea_mask(path, height=352, width=544):
     """Load and return a land-sea mask as xarray DataArray."""
     lsm_data = np.load(path).reshape(height, width)
     return xr.DataArray(
         np.where(lsm_data >= 0.5, 1.0, np.nan),
         dims=['lat', 'lon'],
-        coords={"lat": np.arange(height), "lon": np.arange(width)}
+        coords={"lat": np.arange(height), "lon": np.arange(width)},
     )
 
 
 def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
-    """Helper to concatenate DataArrays and compute diurnal statistics."""
+    """Concatenate DataArrays along ``time`` and compute diurnal mean (and member std)."""
     da = xr.concat(list_of_da, dim="time")
     if is_member:
         mean = da.groupby("time.hour").mean(dim="time").mean(dim="member") * scale
@@ -70,11 +62,48 @@ def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
     return mean, std
 
 
+def percentiles_from_histogram(hist_counts, bin_edges, percentiles_dict):
+    """Estimate percentiles from a histogram via linear interpolation on the CDF.
+
+    Parameters
+    ----------
+    hist_counts : np.ndarray
+        Raw (unnormalized) histogram counts per bin.
+    bin_edges : np.ndarray
+        Bin edges (length = ``len(hist_counts) + 1``).
+    percentiles_dict : dict
+        Mapping ``label -> fractional percentile`` (e.g. ``{99: 0.99}``).
+
+    Returns
+    -------
+    dict
+        Mapping ``label -> estimated value``.
+    """
+    cumulative = np.cumsum(hist_counts)
+    total = cumulative[-1]
+    if total == 0:
+        return {key: np.nan for key in percentiles_dict}
+
+    cdf = cumulative / total  # CDF at upper bin edges
+    results = {}
+    for key, p in percentiles_dict.items():
+        idx = np.searchsorted(cdf, p)
+        if idx >= len(cdf):
+            results[key] = bin_edges[-1]
+        elif idx == 0:
+            frac = p / cdf[0] if cdf[0] > 0 else 0.0
+            results[key] = bin_edges[0] + frac * (bin_edges[1] - bin_edges[0])
+        else:
+            cdf_low, cdf_high = cdf[idx - 1], cdf[idx]
+            frac = (p - cdf_low) / (cdf_high - cdf_low) if (cdf_high - cdf_low) > 0 else 0.0
+            results[key] = bin_edges[idx] + frac * (bin_edges[idx + 1] - bin_edges[idx])
+    return results
+
+
 def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
     """Validate ``cfg['inference_output_dir']``, load its generation config, and resolve times.
 
-    Returns ``(generation_dir, gen_cfg, times)``. Raises :class:`ValueError` with a
-    descriptive message when validation fails.
+    Returns ``(generation_dir, gen_cfg, times)``. Raises :class:`ValueError` on failure.
     """
     generation_dir = cfg.get("inference_output_dir")
     if generation_dir is None:
@@ -82,24 +111,35 @@ def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
 
     generation_dir = Path(generation_dir)
     if not generation_dir.is_dir():
-        raise ValueError(
-            f"Inference output directory {generation_dir} does not exist or is not a directory."
-        )
+        raise ValueError(f"Inference output directory {generation_dir} does not exist or is not a directory.")
 
-    generation_config_path = find_generation_config(str(generation_dir))
+    generation_config_path = min(generation_dir.glob("**/.hydra/config.yaml"), default=None)
     if generation_config_path is None:
         raise ValueError(f"No generation config file found in {generation_dir}.")
 
     with open(generation_config_path, "r") as f:
         gen_cfg = yaml.safe_load(f)
 
-    times = resolve_times(cfg, gen_cfg)
+    times = _resolve_times(cfg, gen_cfg)
     if times is None:
-        raise ValueError(
-            "No times, times_range, or times_ranges specified in config or generation config."
-        )
+        raise ValueError("No times, times_range, or times_ranges specified in config or generation config.")
 
     return generation_dir, gen_cfg, times
+
+
+def _resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -> Optional[list]:
+    """Resolve timestep strings from eval cfg, falling back to ``gen_cfg['generation']``.
+
+    Priority (in each source): ``times_ranges`` > ``times_range`` > ``times``.
+    """
+    def _from(source: dict) -> Optional[list]:
+        if source.get("times_ranges"):
+            return [t for tr in source["times_ranges"] for t in get_time_from_range(tr, time_format=time_format)]
+        if source.get("times_range"):
+            return get_time_from_range(source["times_range"], time_format=time_format)
+        return source.get("times")
+
+    return _from(cfg) or _from(gen_cfg.get("generation", {}))
 
 
 def resolve_io_channels(gen_cfg: dict) -> Tuple[list, list]:
@@ -119,15 +159,9 @@ def resolve_io_channels(gen_cfg: dict) -> Tuple[list, list]:
 
 
 def get_channel_indices(gen_cfg: dict, channels=None) -> dict:
-    """Return ``{'input': {name: idx, ...}, 'output': {name: idx, ...}}`` from a generation config.
+    """Return ``{'input': {name: idx}, 'output': {name: idx}}`` from a generation config.
 
-    When *channels* is provided, the returned mappings are filtered to only those names.
-
-    Example::
-
-        indices = get_channel_indices(gen_cfg, ['tp', '2t', '10u', '10v'])
-        tp_out = indices['output']['tp']
-        tp_in = indices['input'].get('tp', tp_out)
+    When *channels* is given, the mappings are filtered to only those names.
     """
     input_channels, output_channels = resolve_io_channels(gen_cfg)
     in_ch = {get_strings_from_channels(c): i for i, c in enumerate(input_channels)}
@@ -140,11 +174,6 @@ def get_channel_indices(gen_cfg: dict, channels=None) -> dict:
     }
 
 
-def find_generation_config(generation_dir: str) -> Optional[Path]:
-    """Return the first `.hydra/config.yaml` found under *generation_dir*, or None."""
-    return min(Path(generation_dir).glob("**/.hydra/config.yaml"), default=None)
-
-
 def resolve_ts_dir(out_root: Path, ts: str) -> Path:
     """Return the directory under *out_root* that contains the timestamp folder *ts*."""
     if (out_root / ts).is_dir():
@@ -154,14 +183,6 @@ def resolve_ts_dir(out_root: Path, ts: str) -> Path:
         return matches[0]
     raise FileNotFoundError(f"Timestamp directory {ts} not found under {out_root}")
 
-
-def load_timestep_tensor(out_root: Path, ts: str, name: str):
-    """Load ``<out_root>/<ts>/<ts>-<name>`` as a torch tensor (``weights_only=False``)."""
-    import torch
-    return torch.load(
-        resolve_ts_dir(out_root, ts) / ts / f"{ts}-{name}",
-        weights_only=False,
-    )
 
 
 def parse_eval_cli(allow_times: bool = False) -> dict:
@@ -175,8 +196,7 @@ def parse_eval_cli(allow_times: bool = False) -> dict:
     if allow_times:
         parser.add_argument(
             "--times", nargs="+",
-            help="One or more timesteps to plot (format: YYYYMMDD-HHMM). "
-                 "Overrides times/times_range/times_ranges in the config.",
+            help="One or more timesteps (YYYYMMDD-HHMM) overriding times/times_range/times_ranges.",
         )
     args = parser.parse_args()
 
@@ -189,75 +209,3 @@ def parse_eval_cli(allow_times: bool = False) -> dict:
         cfg["times"] = args.times
 
     return cfg
-
-
-def resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -> Optional[list]:
-    """Resolve the list of timestep strings from eval or generation config.
-
-    Priority order (both in eval cfg and generation cfg fallback):
-      1. ``times_ranges`` – list of [start, end, step] ranges, concatenated.
-      2. ``times_range``  – single [start, end, step] range.
-      3. ``times``        – explicit list of strings.
-
-    Returns ``None`` when no time specification is found in either config.
-    """
-    def _from_cfg(source: dict) -> Optional[list]:
-        if source.get("times_ranges"):
-            times = []
-            for tr in source["times_ranges"]:
-                times.extend(get_time_from_range(tr, time_format=time_format))
-            return times
-        if source.get("times_range"):
-            return get_time_from_range(source["times_range"], time_format=time_format)
-        if source.get("times"):
-            return source["times"]
-        return None
-
-    return _from_cfg(cfg) or _from_cfg(gen_cfg.get("generation", {}))
-
-
-def percentiles_from_histogram(hist_counts, bin_edges, percentiles_dict):
-    """
-    Estimate percentiles from a pre-computed histogram using linear interpolation
-    on the cumulative distribution.
-    
-    Parameters
-    ----------
-    hist_counts : np.ndarray
-        Raw (unnormalized) histogram counts per bin.
-    bin_edges : np.ndarray
-        Bin edges (length = len(hist_counts) + 1).
-    percentiles_dict : dict
-        Mapping of label -> fractional percentile, e.g. {99: 0.99, 99.9: 0.999}.
-    
-    Returns
-    -------
-    dict
-        Mapping of label -> estimated percentile value.
-    """
-    cumulative = np.cumsum(hist_counts)
-    total = cumulative[-1]
-    if total == 0:
-        return {key: np.nan for key in percentiles_dict}
-    
-    cdf = cumulative / total  # CDF at upper bin edges
-    
-    results = {}
-    for key, p in percentiles_dict.items():
-        # Find the bin where CDF crosses p
-        idx = np.searchsorted(cdf, p)
-        if idx >= len(cdf):
-            # Beyond last bin — return upper edge
-            results[key] = bin_edges[-1]
-        elif idx == 0:
-            # Within first bin — linearly interpolate from 0
-            frac = p / cdf[0] if cdf[0] > 0 else 0.0
-            results[key] = bin_edges[0] + frac * (bin_edges[1] - bin_edges[0])
-        else:
-            # Linearly interpolate within the bin
-            cdf_low = cdf[idx - 1]
-            cdf_high = cdf[idx]
-            frac = (p - cdf_low) / (cdf_high - cdf_low) if (cdf_high - cdf_low) > 0 else 0.0
-            results[key] = bin_edges[idx] + frac * (bin_edges[idx + 1] - bin_edges[idx])
-    
-    return results
