@@ -376,9 +376,15 @@ def main(cfg: dict) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    parser.add_argument("--times", nargs="+", help="One or more timesteps to plot (format: YYYYMMDD-HHMM). Overrides times/times_range/times_ranges in the config.")
     args = parser.parse_args()
 
     with open(args.config_name, "r") as f:
         cfg = yaml.safe_load(f)
+
+    if args.times:
+        for k in ("times", "times_range", "times_ranges"):
+            cfg.pop(k, None)
+        cfg["times"] = args.times
 
     main(cfg)
