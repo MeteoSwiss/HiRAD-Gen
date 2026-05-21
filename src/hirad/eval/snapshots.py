@@ -12,8 +12,8 @@ import torch
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.eval import compute_mae, plot_map
-from hirad.eval.plotting import plot_map_precipitation, wind_direction, GridConfig, DEFAULT_GRID_CONFIG
-from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.eval_utils import find_generation_config, resolve_times, resolve_ts_dir
+from hirad.eval.plotting import plot_map_precipitation, plot_map_wind_precip, wind_direction, GridConfig, DEFAULT_GRID_CONFIG
 from hirad.utils.inference_utils import calculate_bounds
 
 @dataclass
@@ -56,7 +56,7 @@ class FileRepository:
         self.root = Path(root_path)
 
     def load(self, time, filename):
-        return torch.load(self.root / time / filename, weights_only=False)
+        return torch.load(resolve_ts_dir(self.root, time) / time / filename, weights_only=False)
 
     def _ensure_dir(self, *subdirs):
         """Make (and return) root_path/subdir1/subdir2/…."""
@@ -128,23 +128,16 @@ def main(cfg: dict) -> None:
         logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
+    generation_config_path = find_generation_config(generation_dir)
+    if generation_config_path is None:
+        logger.error(f"No generation config file found in {generation_dir}.")
         return
 
     with open(generation_config_path, "r") as f:
         gen_cfg = yaml.safe_load(f)
 
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
+    times = resolve_times(cfg, gen_cfg)
+    if times is None:
         logger.error("No times or times_range specified in config or generation config.")
         return
         
@@ -163,9 +156,10 @@ def main(cfg: dict) -> None:
     else:
         plot_channels = output_channels
 
-    logger.info(get_strings_from_channels(plot_channels))
-    logger.info(get_strings_from_channels(input_channels))
-    logger.info(get_strings_from_channels(output_channels))
+    logger.info(f"Processing {len(times)} timestep(s): {times}")
+    logger.info(f"Plot channels  : {get_strings_from_channels(plot_channels)}")
+    logger.info(f"Input channels : {get_strings_from_channels(input_channels)}")
+    logger.info(f"Output channels: {get_strings_from_channels(output_channels)}")
     
     input_channel_indices = []
     output_channel_indices = []
@@ -173,12 +167,14 @@ def main(cfg: dict) -> None:
         input_channel_indices.append(input_channels.index(channel) if channel in input_channels else -1)
         output_channel_indices.append(output_channels.index(channel) if channel in output_channels else -1)
 
-    output_path = Path(generation_dir) / cfg.get("results_dir_name", "evaluation_maps")
+    output_path = Path(generation_dir) / cfg.get("results_dir_name", "evaluation_maps") / "snapshots"
     output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {output_path}")
     input_files = FileRepository(generation_dir)
     output_files = FileRepository(output_path)
 
     for curr_time in times:
+        logger.info(f"Plotting timestep: {curr_time}")
         prediction = input_files.load(curr_time, f'{curr_time}-predictions')
         baseline = input_files.load(curr_time, f'{curr_time}-baseline')
         target = input_files.load(curr_time, f'{curr_time}-target')
@@ -371,7 +367,47 @@ def main(cfg: dict) -> None:
                     plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
                 )
 
-    logger.info("Image loading and plotting completed.")
+            # Combined wind-speed + precipitation maps
+            tp_channels_out = {ch.name: idx for idx, ch in enumerate(output_channels) if ch.name == "tp"}
+            tp_channels_in  = {ch.name: idx for idx, ch in enumerate(input_channels)  if ch.name == "tp"}
+            if "tp" in tp_channels_out:
+                idx_tp_out = tp_channels_out["tp"]
+                idx_tp_in  = tp_channels_in.get("tp", idx_tp_out)
+                plot_title_wp = f"{format_time_str(curr_time)}: FF10m + Precipitation"
+                wind_precip_dir = output_files._ensure_dir("wind_precip")
+
+                plot_map_wind_precip(
+                    target[idx_10u, :, :], target[idx_10v, :, :], target[idx_tp_out, :, :],
+                    str(wind_precip_dir / f"{curr_time}-wind_precip-target"),
+                    title=plot_title_wp, grid_cfg=grid_cfg,
+                )
+                plot_map_wind_precip(
+                    baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :], baseline[idx_tp_in, :, :],
+                    str(wind_precip_dir / f"{curr_time}-wind_precip-baseline"),
+                    title=plot_title_wp, grid_cfg=grid_cfg,
+                )
+                if mean_pred is not None:
+                    plot_map_wind_precip(
+                        mean_pred[idx_10u, :, :], mean_pred[idx_10v, :, :], mean_pred[idx_tp_out, :, :],
+                        str(wind_precip_dir / f"{curr_time}-wind_precip-mean-prediction"),
+                        title=plot_title_wp, grid_cfg=grid_cfg,
+                    )
+                if prediction.ndim > 3:
+                    for member_idx in range(prediction.shape[0]):
+                        plot_map_wind_precip(
+                            prediction[member_idx, idx_10u, :, :], prediction[member_idx, idx_10v, :, :],
+                            prediction[member_idx, idx_tp_out, :, :],
+                            str(wind_precip_dir / f"{curr_time}-wind_precip-prediction_{member_idx:02d}"),
+                            title=plot_title_wp, grid_cfg=grid_cfg,
+                        )
+                else:
+                    plot_map_wind_precip(
+                        prediction[idx_10u, :, :], prediction[idx_10v, :, :], prediction[idx_tp_out, :, :],
+                        str(wind_precip_dir / f"{curr_time}-wind_precip-prediction"),
+                        title=plot_title_wp, grid_cfg=grid_cfg,
+                    )
+
+    logger.info(f"Snapshots saved to: {output_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -185,6 +185,86 @@ def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000
         grid_cfg=grid_cfg,
     )
 
+def plot_map_wind_precip(
+    u: np.ndarray,
+    v: np.ndarray,
+    tp: np.ndarray,
+    filename: str,
+    title: str = '',
+    tp_threshold: float = 0.1,
+    tp_rfac: float = 1000.0,
+    wind_vmax: float = 15.0,
+    grid_cfg: GridConfig = DEFAULT_GRID_CONFIG,
+):
+    """Plot surface windspeed as filled background with precipitation overlaid.
+
+    Parameters
+    ----------
+    u, v      : wind component arrays (H, W), in m/s
+    tp        : total precipitation array (H, W), in m/h (ERA5 units)
+    filename  : output path without extension
+    tp_threshold : minimum precipitation to show in mm/h (after rfac scaling)
+    tp_rfac   : conversion factor applied to tp before plotting (default 1000 → m/h → mm/h)
+    wind_vmax : upper end of the wind-speed colorbar [m/s]
+    """
+    logging.info(f'Creating wind+precip map: {filename}')
+
+    wind_speed = np.hypot(u, v)
+
+    precip = tp_rfac * tp
+    precip_masked = np.ma.masked_where(precip <= tp_threshold, precip)
+
+    precip_colors = ['powderblue', 'dodgerblue', 'mediumblue',
+                     'forestgreen', 'limegreen', 'lawngreen',
+                     'yellow', 'gold', 'darkorange', 'red']
+    precip_bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200]
+    precip_cmap = ListedColormap(precip_colors)
+    precip_norm = BoundaryNorm(precip_bounds, ncolors=len(precip_colors), clip=False)
+
+    latitudes  = grid_cfg.lat[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.height]
+    longitudes = grid_cfg.lon[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.width]
+    lon2d, lat2d = np.meshgrid(longitudes, latitudes)
+
+    fig, ax = plt.subplots(
+        figsize=(10, 6),
+        subplot_kw={"projection": ccrs.RotatedPole(pole_longitude=-170.0, pole_latitude=43.0)},
+    )
+
+    # Background: wind speed
+    wind_mesh = ax.pcolormesh(
+        lon2d, lat2d, wind_speed,
+        cmap='inferno', shading='auto', vmin=0, vmax=wind_vmax,
+    )
+
+    # Overlay: precipitation (semi-transparent so wind field remains visible)
+    precip_mesh = ax.pcolormesh(
+        lon2d, lat2d, precip_masked,
+        cmap=precip_cmap, norm=precip_norm, shading='auto', alpha=0.75,
+    )
+
+    ax.coastlines()
+    ax.add_feature(cfeature.BORDERS, linewidth=1)
+    ax.gridlines(visible=False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(title)
+
+    _ = fig.colorbar(
+        wind_mesh, ax=ax, label='Wind Speed [m/s]',
+        orientation='horizontal', shrink=0.7, pad=0.04, extend='max',
+    )
+
+    cbar_precip = fig.colorbar(
+        precip_mesh, ax=ax, label='Precipitation [mm/h]',
+        orientation='vertical', shrink=0.6, pad=0.02, extend='max',
+    )
+    cbar_precip.set_ticks(precip_bounds)
+    cbar_precip.set_ticklabels([f'{b:g}' for b in precip_bounds])
+
+    fig.savefig(f'{filename}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
+
 def wind_direction(u, v):
     """Compute wind direction from u and v components."""
     return(np.arctan2(-u, -v) * 180 / np.pi) % 360
