@@ -2,7 +2,7 @@
 name: aifs-ea-an-oper-0001-mars-n320crop2cosmo-1979-2024-1h-v2-with-era51.yaml
 
 description: |
-  This recipe subsamples the 1h full-resolution ERA5 dataset and crops it to the COSMO region + 100km buffer, for the purposes of downscaling.
+  This recipe takes the 1h full-resolution ERA5 dataset and crops it to the COSMO approx time period and region + 100km buffer, for the purposes of downscaling.
 
 dates:
   end: '2020-12-31T23:59:00'
@@ -37,5 +37,7 @@ input:
                     - cos_local_time
                     - cos_longitude
                     - insolation
+                    - lsm
+                    - z
         - regrid:
             mask: /capstor/store/cscs/pasc/c38/anemoi-downscaling-data/era2cosmo_mask_100km.npz
