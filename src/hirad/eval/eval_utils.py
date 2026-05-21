@@ -1,8 +1,59 @@
+import argparse
 import numpy as np
+import yaml
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
+from hirad.datasets import get_channels_from_strings, known_datasets
 from hirad.utils.function_utils import get_time_from_range
+
+
+def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
+    """Validate ``cfg['inference_output_dir']``, load its generation config, and resolve times.
+
+    Returns ``(generation_dir, gen_cfg, times)``. Raises :class:`ValueError` with a
+    descriptive message when validation fails.
+    """
+    generation_dir = cfg.get("inference_output_dir")
+    if generation_dir is None:
+        raise ValueError("No inference_output_dir specified in config.")
+
+    generation_dir = Path(generation_dir)
+    if not generation_dir.is_dir():
+        raise ValueError(
+            f"Inference output directory {generation_dir} does not exist or is not a directory."
+        )
+
+    generation_config_path = find_generation_config(str(generation_dir))
+    if generation_config_path is None:
+        raise ValueError(f"No generation config file found in {generation_dir}.")
+
+    with open(generation_config_path, "r") as f:
+        gen_cfg = yaml.safe_load(f)
+
+    times = resolve_times(cfg, gen_cfg)
+    if times is None:
+        raise ValueError(
+            "No times, times_range, or times_ranges specified in config or generation config."
+        )
+
+    return generation_dir, gen_cfg, times
+
+
+def resolve_io_channels(gen_cfg: dict) -> Tuple[list, list]:
+    """Resolve ``(input_channels, output_channels)`` from a generation config.
+
+    Uses ``input_channel_names`` / ``output_channels_names`` from ``gen_cfg['dataset']``
+    when available; otherwise instantiates the dataset and queries it.
+    """
+    dataset_cfg = gen_cfg.get("dataset", {})
+    input_channels = get_channels_from_strings(dataset_cfg.get("input_channel_names", []))
+    output_channels = get_channels_from_strings(dataset_cfg.get("output_channels_names", []))
+    if not input_channels or not output_channels:
+        dataset = known_datasets[dataset_cfg.get("type")](**dataset_cfg)
+        input_channels = dataset.input_channels()
+        output_channels = dataset.output_channels()
+    return input_channels, output_channels
 
 
 def find_generation_config(generation_dir: str) -> Optional[Path]:
@@ -18,6 +69,42 @@ def resolve_ts_dir(out_root: Path, ts: str) -> Path:
     if matches:
         return matches[0]
     raise FileNotFoundError(f"Timestamp directory {ts} not found under {out_root}")
+
+
+def load_timestep_tensor(out_root: Path, ts: str, name: str):
+    """Load ``<out_root>/<ts>/<ts>-<name>`` as a torch tensor (``weights_only=False``)."""
+    import torch
+    return torch.load(
+        resolve_ts_dir(out_root, ts) / ts / f"{ts}-{name}",
+        weights_only=False,
+    )
+
+
+def parse_eval_cli(allow_times: bool = False) -> dict:
+    """Parse standard eval CLI args (``--config-name``) and return the loaded YAML config.
+
+    When ``allow_times=True``, also accepts ``--times YYYYMMDD-HHMM ...`` to override
+    ``times`` / ``times_range`` / ``times_ranges`` in the config.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    if allow_times:
+        parser.add_argument(
+            "--times", nargs="+",
+            help="One or more timesteps to plot (format: YYYYMMDD-HHMM). "
+                 "Overrides times/times_range/times_ranges in the config.",
+        )
+    args = parser.parse_args()
+
+    with open(args.config_name, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    if allow_times and getattr(args, "times", None):
+        for k in ("times", "times_range", "times_ranges"):
+            cfg.pop(k, None)
+        cfg["times"] = args.times
+
+    return cfg
 
 
 def resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -> Optional[list]:

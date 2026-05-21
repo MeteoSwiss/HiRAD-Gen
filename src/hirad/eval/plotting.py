@@ -30,6 +30,17 @@ DEFAULT_GRID_CONFIG = GridConfig(
     relax_zone=19
 )
 
+
+def grid_cfg_from_cfg(cfg) -> GridConfig:
+    """Build a :class:`GridConfig` from the ``lat_*``/``lon_*``/``height``/``width``/``relax_zone`` fields of *cfg*."""
+    return GridConfig(
+        lat=np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
+        lon=np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
+        height=cfg.get("height"),
+        width=cfg.get("width"),
+        relax_zone=cfg.get("relax_zone"),
+    )
+
 # Constants for data processing
 CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
 CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day

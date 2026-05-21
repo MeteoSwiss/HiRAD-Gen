@@ -1,6 +1,4 @@
 import logging
-import argparse
-import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +9,7 @@ import torch
 import xarray as xr
 
 from hirad.datasets import known_datasets
-from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
+from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
 from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
 
 def main(cfg: dict):
@@ -19,28 +17,11 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-    
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
-        return
-
-    generation_config_path = find_generation_config(generation_dir)
-    if generation_config_path is None:
-        logger.error(f"No generation config file found in {generation_dir}.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
-
-    # Load times
     logger.info("Starting computation for diurnal cycles of 2m temperature and windspeed")
-    times = resolve_times(cfg, gen_cfg)
-    if times is None:
-        logger.error("No times, times_range, or times_ranges specified in config or generation config.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
@@ -191,11 +172,4 @@ def main(cfg: dict):
     logger.info("Plots saved.")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli())
