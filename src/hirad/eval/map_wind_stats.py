@@ -5,10 +5,10 @@ import hydra
 import numpy as np
 import torch
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.plotting import plot_map, get_channel_indices, GridConfig, grid_cfg_from_cfg
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.plotting import plot_map
 
 
 def compute_wind_speed(u, v):
@@ -213,13 +213,10 @@ def main(cfg: dict):
         return
     logger.info(f"Processing {len(times)} timesteps")
 
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
     out_root = Path(generation_dir)
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     
     u10_out = indices['output'].get('10u')
     v10_out = indices['output'].get('10v')

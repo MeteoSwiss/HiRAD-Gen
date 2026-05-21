@@ -7,10 +7,9 @@ import torch
 import xarray as xr
 import numba
 
-from hirad.datasets import known_datasets
-from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
 from hirad.eval.plotting import (
-    plot_map_precipitation, plot_map, get_channel_indices, GridConfig, grid_cfg_from_cfg
+    plot_map_precipitation, plot_map
 )
 
 
@@ -150,15 +149,10 @@ def main(cfg: dict):
 
     times_dt = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
 
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
-
     out_root = Path(generation_dir)
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     conv_factor = cfg.get("conv_factor")

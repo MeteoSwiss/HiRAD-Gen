@@ -1,11 +1,73 @@
 import argparse
+from dataclasses import dataclass
 import numpy as np
+import xarray as xr
 import yaml
 from pathlib import Path
 from typing import Optional, Tuple
 
-from hirad.datasets import get_channels_from_strings, known_datasets
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
 from hirad.utils.function_utils import get_time_from_range
+
+
+@dataclass
+class GridConfig:
+    lat: np.ndarray
+    lon: np.ndarray
+    height: int
+    width: int
+    relax_zone: int
+
+
+DEFAULT_GRID_CONFIG = GridConfig(
+    lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
+    lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
+    height=352,
+    width=544,
+    relax_zone=19,
+)
+
+
+# Constants for data processing
+CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
+CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from meters to mm/day
+WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
+LOG_INTERVAL = 24    # Log progress every N timesteps
+
+LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
+
+
+def grid_cfg_from_cfg(cfg) -> GridConfig:
+    """Build a :class:`GridConfig` from the ``lat_*``/``lon_*``/``height``/``width``/``relax_zone`` fields of *cfg*."""
+    return GridConfig(
+        lat=np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
+        lon=np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
+        height=cfg.get("height"),
+        width=cfg.get("width"),
+        relax_zone=cfg.get("relax_zone"),
+    )
+
+
+def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
+    """Load and return a land-sea mask as xarray DataArray."""
+    lsm_data = np.load(path).reshape(height, width)
+    return xr.DataArray(
+        np.where(lsm_data >= 0.5, 1.0, np.nan),
+        dims=['lat', 'lon'],
+        coords={"lat": np.arange(height), "lon": np.arange(width)}
+    )
+
+
+def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
+    """Helper to concatenate DataArrays and compute diurnal statistics."""
+    da = xr.concat(list_of_da, dim="time")
+    if is_member:
+        mean = da.groupby("time.hour").mean(dim="time").mean(dim="member") * scale
+        std = da.std(dim="member").groupby("time.hour").mean(dim="time") * scale
+    else:
+        mean = da.groupby("time.hour").mean(dim="time") * scale
+        std = None
+    return mean, std
 
 
 def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
@@ -54,6 +116,28 @@ def resolve_io_channels(gen_cfg: dict) -> Tuple[list, list]:
         input_channels = dataset.input_channels()
         output_channels = dataset.output_channels()
     return input_channels, output_channels
+
+
+def get_channel_indices(gen_cfg: dict, channels=None) -> dict:
+    """Return ``{'input': {name: idx, ...}, 'output': {name: idx, ...}}`` from a generation config.
+
+    When *channels* is provided, the returned mappings are filtered to only those names.
+
+    Example::
+
+        indices = get_channel_indices(gen_cfg, ['tp', '2t', '10u', '10v'])
+        tp_out = indices['output']['tp']
+        tp_in = indices['input'].get('tp', tp_out)
+    """
+    input_channels, output_channels = resolve_io_channels(gen_cfg)
+    in_ch = {get_strings_from_channels(c): i for i, c in enumerate(input_channels)}
+    out_ch = {get_strings_from_channels(c): i for i, c in enumerate(output_channels)}
+    if channels is None:
+        return {'input': in_ch, 'output': out_ch}
+    return {
+        'input': {ch: in_ch[ch] for ch in channels if ch in in_ch},
+        'output': {ch: out_ch[ch] for ch in channels if ch in out_ch},
+    }
 
 
 def find_generation_config(generation_dir: str) -> Optional[Path]:

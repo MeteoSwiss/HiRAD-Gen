@@ -13,10 +13,9 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 from hirad.eval.eval_utils import percentiles_from_histogram
 
 
@@ -110,17 +109,11 @@ def main(cfg: dict):
         return
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    # Initialize dataset
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
-
     # Output root
     out_root = Path(generation_dir)
 
     # Find channel indices
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")

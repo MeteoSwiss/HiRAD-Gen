@@ -11,13 +11,20 @@ import torch
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.eval import compute_mae, plot_map
 from hirad.eval.eval_utils import (
+    DEFAULT_GRID_CONFIG,
+    grid_cfg_from_cfg,
     load_generation_setup,
     parse_eval_cli,
     resolve_io_channels,
     resolve_ts_dir,
 )
-from hirad.eval.plotting import plot_map_precipitation, plot_map_wind_precip, wind_direction, DEFAULT_GRID_CONFIG, grid_cfg_from_cfg
+from hirad.eval.plotting import plot_map_precipitation, plot_map_wind_precip
 from hirad.utils.inference_utils import calculate_bounds
+
+
+def wind_direction(u, v):
+    """Compute wind direction from u and v components."""
+    return (np.arctan2(-u, -v) * 180 / np.pi) % 360
 
 @dataclass
 class ChannelMeta:

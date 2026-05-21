@@ -8,9 +8,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import known_datasets
-from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 
 def main(cfg: dict):
     # Initialize
@@ -26,14 +24,8 @@ def main(cfg: dict):
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    # Dataset
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
-
     # Indices for channels
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     out_ch = indices['output']
     in_ch = indices['input']
     

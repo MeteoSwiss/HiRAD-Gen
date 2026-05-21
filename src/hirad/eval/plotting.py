@@ -1,102 +1,12 @@
 import logging
-from dataclasses import dataclass
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
-from pathlib import Path
-from datetime import datetime
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 
-
-
-@dataclass
-class GridConfig:
-    lat: np.ndarray
-    lon: np.ndarray
-    height: int
-    width: int
-    relax_zone: int
-
-DEFAULT_GRID_CONFIG = GridConfig(
-    lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
-    lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
-    height=352,
-    width=544,
-    relax_zone=19
-)
-
-
-def grid_cfg_from_cfg(cfg) -> GridConfig:
-    """Build a :class:`GridConfig` from the ``lat_*``/``lon_*``/``height``/``width``/``relax_zone`` fields of *cfg*."""
-    return GridConfig(
-        lat=np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
-        lon=np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
-        height=cfg.get("height"),
-        width=cfg.get("width"),
-        relax_zone=cfg.get("relax_zone"),
-    )
-
-# Constants for data processing
-CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
-CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day
-WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
-LOG_INTERVAL = 24    # Log progress every N timesteps
-
-LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
-
-
-def get_channel_indices(dataset, channels=None):
-    """
-    Get channel indices for input and output channels from dataset.
-    
-    Args:
-        dataset: Dataset object with input_channels() and output_channels() methods
-        channels: Optional list of channel names to look up. If None, returns all channel mappings.
-        
-    Returns:
-        dict: Dictionary with 'input' and 'output' keys, each containing channel name -> index mapping
-        
-    Example:
-        indices = get_channel_indices(dataset, ['tp', '2t', '10u', '10v'])
-        tp_out = indices['output']['tp']
-        tp_in = indices['input'].get('tp', tp_out)  # Fallback to output index if not in input
-    """
-    out_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.output_channels())}
-    in_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.input_channels())}
-    
-    if channels is None:
-        return {'input': in_ch, 'output': out_ch}
-    
-    # Filter to requested channels only
-    filtered_out = {ch: out_ch[ch] for ch in channels if ch in out_ch}
-    filtered_in = {ch: in_ch[ch] for ch in channels if ch in in_ch}
-    
-    return {'input': filtered_in, 'output': filtered_out}
-
-def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
-    """Load and retrun a land-sea mask as xarray DataArray."""
-    lsm_data = np.load(path).reshape(height, width)
-    return xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
-        dims=['lat', 'lon'],
-        coords={"lat": np.arange(height), "lon": np.arange(width)}
-    )
-
-def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
-    """Helper to concatenate DataArrays and compute diurnal statistics."""
-    da = xr.concat(list_of_da, dim="time")
-    if is_member:
-        mean = da.groupby("time.hour").mean(dim="time").mean(dim="member") * scale
-        std = da.std(dim="member").groupby("time.hour").mean(dim="time") * scale
-    else:
-        mean = da.groupby("time.hour").mean(dim="time") * scale
-        std = None
-    return mean, std
+from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG
 
 
 def plot_map(values: np.array,
@@ -275,10 +185,6 @@ def plot_map_wind_precip(
     fig.savefig(f'{filename}.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
 
-
-def wind_direction(u, v):
-    """Compute wind direction from u and v components."""
-    return(np.arctan2(-u, -v) * 180 / np.pi) % 360
 
 @DeprecationWarning
 def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):

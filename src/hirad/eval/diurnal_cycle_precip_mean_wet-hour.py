@@ -8,9 +8,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import known_datasets
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
-from hirad.eval.eval_utils import load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     hrs = np.concatenate([hour.values, [24]])
@@ -47,16 +45,13 @@ def main(cfg: dict):
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
+    indices = get_channel_indices(gen_cfg)
 
     # Location of the output from inference
     out_root = Path(generation_dir)
 
     # Find channel indices
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
