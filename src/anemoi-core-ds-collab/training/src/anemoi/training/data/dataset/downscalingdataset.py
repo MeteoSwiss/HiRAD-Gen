@@ -86,8 +86,8 @@ class DownscalingDataset(NativeGridDataset):
             shuffled_chunk_indices[:10],
         )
 
-        for i in  [0]: # single sample, to test overfitting
-        #for i in shuffled_chunk_indices:
+        #for i in  [0]: # single sample, to test overfitting
+        for i in shuffled_chunk_indices:
             import time
 
             time_start = time.time()
