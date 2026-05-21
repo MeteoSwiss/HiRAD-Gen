@@ -29,9 +29,6 @@ class AnemoiDataset(DownscalingDataset):
                 type: str,
                 input_anemoi_dataset_path: str,
                 target_anemoi_dataset_path: str,
-                target_grid_path: str = '', # only regrid REAL dataset; COSMO is already on a rotated lat/lon grid.
-                remap_indices_path: str = '', # only regrid REAL dataset; COSMO is already on a rotated lat/lon grid.
-                remap_weights_path: str = '', # only regrid REAL dataset; COSMO is already on a rotated lat/lon grid.
                 start_date: datetime.datetime = None,
                 end_date: datetime.datetime = None,
                 input_channel_names: List[str] = [], 
@@ -49,10 +46,7 @@ class AnemoiDataset(DownscalingDataset):
 
         input_dataset = type.split('_')[-2]
         target_dataset = type.split('_')[-1]
-        # 'real' or 'real2cosmo' will mostly be treated the same.
-        self.real_target = target_dataset.startswith('real')
-        # in certain cases we will want to know whether we are also regridding to COSMO.
-        self.real2cosmo_target = target_dataset == 'real2cosmo'
+        self.real_target = target_dataset == 'real'
         self.trim_edge = trim_edge
 
         if input_dataset != 'era5':
@@ -63,10 +57,9 @@ class AnemoiDataset(DownscalingDataset):
         if self.real_target:
             # Map output channel names from real to era5
             output_channel_names_real = [ERA_TO_REAL_CHANNEL_MAP[name] for name in output_channel_names]
-            self.lat_lon_real = torch.load(target_grid_path, weights_only=False)
-            self.regrid_indices_real = torch.from_numpy(np.load(remap_indices_path)).long()
-            self.regrid_weights_real = torch.from_numpy(np.load(remap_weights_path))
-
+            self.lat_lon_real = torch.load("/capstor/store/cscs/pasc/c38/real_grid_info/realch1-lat-lon", weights_only=False)
+            self.regrid_indices_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_indices.npy")).long()
+            self.regrid_weights_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_weights.npy"))
 
         #TODO switch hanbdling paths to Path rather than pure strings
         self._n_month_hour_channels = n_month_hour_channels
@@ -247,10 +240,6 @@ class AnemoiDataset(DownscalingDataset):
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data."""
         if self.real_target:
-            if self.real2cosmo_target:
-                # trimmed 2km rotated lat/lon
-                return 352,544
-            # trimmed 1km rotated lat/lon
             return 704,1088
         return self._output_dataset.field_shape
     
