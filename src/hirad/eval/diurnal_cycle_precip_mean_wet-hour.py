@@ -1,6 +1,4 @@
 import logging
-import argparse
-import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -10,9 +8,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import known_datasets
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
-from hirad.eval.eval_utils import resolve_times, find_generation_config, resolve_ts_dir
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     hrs = np.concatenate([hour.values, [24]])
@@ -40,41 +36,22 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-    
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
-        return
-
-    generation_config_path = find_generation_config(generation_dir)
-    if generation_config_path is None:
-        logger.error(f"No generation config file found in {generation_dir}.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
-
     logger.info("Starting computations for diurnal cycle of precipitation amount and wet-hours")
-    times = resolve_times(cfg, gen_cfg)
-    if times is None:
-        logger.error("No times, times_range, or times_ranges specified in config or generation config.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
+    indices = get_channel_indices(gen_cfg)
 
     # Location of the output from inference
     out_root = Path(generation_dir)
 
     # Find channel indices
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
@@ -166,11 +143,4 @@ def main(cfg: dict):
     logger.info("Plots saved.")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli())
