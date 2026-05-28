@@ -1,90 +1,12 @@
 import logging
-from dataclasses import dataclass
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-import xarray as xr
 from matplotlib.colors import BoundaryNorm, ListedColormap
-from pathlib import Path
-from datetime import datetime
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 
-
-
-@dataclass
-class GridConfig:
-    lat: np.ndarray
-    lon: np.ndarray
-    height: int
-    width: int
-    relax_zone: int
-
-DEFAULT_GRID_CONFIG = GridConfig(
-    lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
-    lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
-    height=352,
-    width=544,
-    relax_zone=19
-)
-
-# Constants for data processing
-CONV_FACTOR_HOURLY = 1000  # Convert precip of ERA5 from meters to mm/h
-CONV_FACTOR = CONV_FACTOR_HOURLY * 24   # Convert precip of ERA5 from from meters to mm/day
-WET_THRESHOLD = 0.1  # Threshold for wet-hour in mm/h
-LOG_INTERVAL = 24    # Log progress every N timesteps
-
-LAND_SEA_MASK_PATH = '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy'
-
-def get_channel_indices(dataset, channels=None):
-    """
-    Get channel indices for input and output channels from dataset.
-    
-    Args:
-        dataset: Dataset object with input_channels() and output_channels() methods
-        channels: Optional list of channel names to look up. If None, returns all channel mappings.
-        
-    Returns:
-        dict: Dictionary with 'input' and 'output' keys, each containing channel name -> index mapping
-        
-    Example:
-        indices = get_channel_indices(dataset, ['tp', '2t', '10u', '10v'])
-        tp_out = indices['output']['tp']
-        tp_in = indices['input'].get('tp', tp_out)  # Fallback to output index if not in input
-    """
-    out_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.output_channels())}
-    in_ch = {get_strings_from_channels(c): i for i, c in enumerate(dataset.input_channels())}
-    
-    if channels is None:
-        return {'input': in_ch, 'output': out_ch}
-    
-    # Filter to requested channels only
-    filtered_out = {ch: out_ch[ch] for ch in channels if ch in out_ch}
-    filtered_in = {ch: in_ch[ch] for ch in channels if ch in in_ch}
-    
-    return {'input': filtered_in, 'output': filtered_out}
-
-def load_land_sea_mask(path=LAND_SEA_MASK_PATH, height=352, width=544):
-    """Load and retrun a land-sea mask as xarray DataArray."""
-    lsm_data = np.load(path).reshape(height, width)
-    return xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
-        dims=['lat', 'lon'],
-        coords={"lat": np.arange(height), "lon": np.arange(width)}
-    )
-
-def concat_and_group_diurnal(list_of_da, is_member=False, scale=1.0):
-    """Helper to concatenate DataArrays and compute diurnal statistics."""
-    da = xr.concat(list_of_da, dim="time")
-    if is_member:
-        mean = da.groupby("time.hour").mean(dim="time").mean(dim="member") * scale
-        std = da.std(dim="member").groupby("time.hour").mean(dim="time") * scale
-    else:
-        mean = da.groupby("time.hour").mean(dim="time") * scale
-        std = None
-    return mean, std
+from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG
 
 
 def plot_map(values: np.array,
@@ -184,9 +106,85 @@ def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000
         grid_cfg=grid_cfg,
     )
 
-def wind_direction(u, v):
-    """Compute wind direction from u and v components."""
-    return(np.arctan2(-u, -v) * 180 / np.pi) % 360
+def plot_map_wind_precip(
+    u: np.ndarray,
+    v: np.ndarray,
+    tp: np.ndarray,
+    filename: str,
+    title: str = '',
+    tp_threshold: float = 0.1,
+    tp_rfac: float = 1000.0,
+    wind_vmax: float = 15.0,
+    grid_cfg: GridConfig = DEFAULT_GRID_CONFIG,
+):
+    """Plot surface windspeed as filled background with precipitation overlaid.
+
+    Parameters
+    ----------
+    u, v      : wind component arrays (H, W), in m/s
+    tp        : total precipitation array (H, W), in m/h (ERA5 units)
+    filename  : output path without extension
+    tp_threshold : minimum precipitation to show in mm/h (after rfac scaling)
+    tp_rfac   : conversion factor applied to tp before plotting (default 1000 → m/h → mm/h)
+    wind_vmax : upper end of the wind-speed colorbar [m/s]
+    """
+    logging.info(f'Creating wind+precip map: {filename}')
+
+    wind_speed = np.hypot(u, v)
+
+    precip = tp_rfac * tp
+    precip_masked = np.ma.masked_where(precip <= tp_threshold, precip)
+
+    precip_colors = ['powderblue', 'dodgerblue', 'mediumblue',
+                     'forestgreen', 'limegreen', 'lawngreen',
+                     'yellow', 'gold', 'darkorange', 'red']
+    precip_bounds = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200]
+    precip_cmap = ListedColormap(precip_colors)
+    precip_norm = BoundaryNorm(precip_bounds, ncolors=len(precip_colors), clip=False)
+
+    latitudes  = grid_cfg.lat[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.height]
+    longitudes = grid_cfg.lon[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.width]
+    lon2d, lat2d = np.meshgrid(longitudes, latitudes)
+
+    fig, ax = plt.subplots(
+        figsize=(10, 6),
+        subplot_kw={"projection": ccrs.RotatedPole(pole_longitude=-170.0, pole_latitude=43.0)},
+    )
+
+    # Background: wind speed
+    wind_mesh = ax.pcolormesh(
+        lon2d, lat2d, wind_speed,
+        cmap='inferno', shading='auto', vmin=0, vmax=wind_vmax,
+    )
+
+    # Overlay: precipitation (semi-transparent so wind field remains visible)
+    precip_mesh = ax.pcolormesh(
+        lon2d, lat2d, precip_masked,
+        cmap=precip_cmap, norm=precip_norm, shading='auto', alpha=0.75,
+    )
+
+    ax.coastlines()
+    ax.add_feature(cfeature.BORDERS, linewidth=1)
+    ax.gridlines(visible=False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(title)
+
+    _ = fig.colorbar(
+        wind_mesh, ax=ax, label='Wind Speed [m/s]',
+        orientation='horizontal', shrink=0.7, pad=0.04, extend='max',
+    )
+
+    cbar_precip = fig.colorbar(
+        precip_mesh, ax=ax, label='Precipitation [mm/h]',
+        orientation='vertical', shrink=0.6, pad=0.02, extend='max',
+    )
+    cbar_precip.set_ticks(precip_bounds)
+    cbar_precip.set_ticklabels([f'{b:g}' for b in precip_bounds])
+
+    fig.savefig(f'{filename}.png', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+
 
 @DeprecationWarning
 def plot_error_projection(values: np.array, latitudes: np.array, longitudes: np.array, filename: str, label='', title='', vmin=None, vmax=None):

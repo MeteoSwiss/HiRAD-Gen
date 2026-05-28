@@ -1,7 +1,5 @@
 """Generates maps of precipitation, temperature, and wind components/speed/direction."""
 import logging
-import argparse
-import yaml
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -10,11 +8,23 @@ import hydra
 import numpy as np
 import torch
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.eval import compute_mae, plot_map
-from hirad.eval.plotting import plot_map_precipitation, wind_direction, GridConfig, DEFAULT_GRID_CONFIG
-from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.eval_utils import (
+    DEFAULT_GRID_CONFIG,
+    grid_cfg_from_cfg,
+    load_generation_setup,
+    parse_eval_cli,
+    resolve_io_channels,
+    resolve_ts_dir,
+)
+from hirad.eval.plotting import plot_map_precipitation, plot_map_wind_precip
 from hirad.utils.inference_utils import calculate_bounds
+
+
+def wind_direction(u, v):
+    """Compute wind direction from u and v components."""
+    return (np.arctan2(-u, -v) * 180 / np.pi) % 360
 
 @dataclass
 class ChannelMeta:
@@ -56,7 +66,7 @@ class FileRepository:
         self.root = Path(root_path)
 
     def load(self, time, filename):
-        return torch.load(self.root / time / filename, weights_only=False)
+        return torch.load(resolve_ts_dir(self.root, time) / time / filename, weights_only=False)
 
     def _ensure_dir(self, *subdirs):
         """Make (and return) root_path/subdir1/subdir2/…."""
@@ -81,6 +91,15 @@ class FileRepository:
         # e.g. wind_type = "FF10m" or "DD10m"
         fname = self._make_fname(curr_time, wind_type, suffix, member_idx)
         return self._ensure_dir(wind_type) / fname
+
+
+def _pred_members(arr, *channel_idxs):
+    """Yield ``(member_idx_or_None, *2d_slices)`` for 3D or 4D ensemble arrays."""
+    if arr.ndim > 3:
+        for m in range(arr.shape[0]):
+            yield (m, *(arr[m, i, :, :] for i in channel_idxs))
+    else:
+        yield (None, *(arr[i, :, :] for i in channel_idxs))
 
 
 def save_field(name, data, meta, output_files, channel, t, member=None, kind=None, cmap=None, vmin=None, vmax=None, custom_path=None, plot_func=None, title=None, grid_cfg=DEFAULT_GRID_CONFIG, **plot_kwargs):
@@ -111,51 +130,15 @@ def main(cfg: dict) -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("plot_maps")
 
-    grid_cfg = GridConfig(
-        lat = np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
-        lon = np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
-        height = cfg.get("height"),
-        width = cfg.get("width"),
-        relax_zone = cfg.get("relax_zone")
-    )
+    grid_cfg = grid_cfg_from_cfg(cfg)
 
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-    
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
 
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
-
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
-        return
-        
-    dataset_cfg = gen_cfg.get("dataset")
-    input_channels = get_channels_from_strings(dataset_cfg.get("input_channel_names", []))
-    output_channels = get_channels_from_strings(dataset_cfg.get("output_channels_names", []))
-    if not input_channels or not output_channels:
-        dataset_type = dataset_cfg.get("type")
-        dataset = known_datasets[dataset_type](**dataset_cfg)
-        input_channels = dataset.input_channels()
-        output_channels = dataset.output_channels()
+    input_channels, output_channels = resolve_io_channels(gen_cfg)
 
     plot_channels = cfg.get("plot_channels", None)
     if plot_channels is not None:
@@ -163,9 +146,10 @@ def main(cfg: dict) -> None:
     else:
         plot_channels = output_channels
 
-    logger.info(get_strings_from_channels(plot_channels))
-    logger.info(get_strings_from_channels(input_channels))
-    logger.info(get_strings_from_channels(output_channels))
+    logger.info(f"Processing {len(times)} timestep(s): {times}")
+    logger.info(f"Plot channels  : {get_strings_from_channels(plot_channels)}")
+    logger.info(f"Input channels : {get_strings_from_channels(input_channels)}")
+    logger.info(f"Output channels: {get_strings_from_channels(output_channels)}")
     
     input_channel_indices = []
     output_channel_indices = []
@@ -173,212 +157,139 @@ def main(cfg: dict) -> None:
         input_channel_indices.append(input_channels.index(channel) if channel in input_channels else -1)
         output_channel_indices.append(output_channels.index(channel) if channel in output_channels else -1)
 
-    output_path = Path(generation_dir) / cfg.get("results_dir_name", "evaluation_maps")
+    output_path = Path(generation_dir) / cfg.get("results_dir_name", "evaluation_maps") / "snapshots"
     output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Output directory: {output_path}")
     input_files = FileRepository(generation_dir)
     output_files = FileRepository(output_path)
 
     for curr_time in times:
+        logger.info(f"Plotting timestep: {curr_time}")
         prediction = input_files.load(curr_time, f'{curr_time}-predictions')
         baseline = input_files.load(curr_time, f'{curr_time}-baseline')
         target = input_files.load(curr_time, f'{curr_time}-target')
         try:
             mean_pred = input_files.load(curr_time, f'{curr_time}-regression-prediction')
-        except:
+        except FileNotFoundError:
             mean_pred = None
-        
+
         for idx, channel in enumerate(plot_channels):
-            # input_channel_idx = output_to_input_channel_map[idx]
-            input_channel_idx = input_channel_indices[idx]
-            output_channel_idx = output_channel_indices[idx]
+            in_idx = input_channel_indices[idx]
+            out_idx = output_channel_indices[idx]
 
             # TODO Implement that it plots just output or just input channel if the other is missing
-            if input_channel_idx == -1 or output_channel_idx == -1:
+            if in_idx == -1 or out_idx == -1:
                 logger.warning(f"Channel {channel.name} not found in input or output channels. Skipping.")
                 continue
 
             plot_title = f"{format_time_str(curr_time)}: {getattr(channel, 'title', channel.name if channel.level == '' else f'{channel.name}_{channel.level}')}"
+            target_2d = target[out_idx, :, :]
+            baseline_2d = baseline[in_idx, :, :]
             vmin, vmax = calculate_bounds(
-                target[output_channel_idx,:,:],
-                prediction[:,output_channel_idx,:,:] if prediction.ndim>3 else prediction[idx,:,:],
-                baseline[input_channel_idx,:,:] if not channel.name == "tp" else None,
-                mean_pred[output_channel_idx,:,:] if mean_pred is not None else None
+                target_2d,
+                prediction[:, out_idx, :, :] if prediction.ndim > 3 else prediction[idx, :, :],
+                None if channel.name == "tp" else baseline_2d,
+                mean_pred[out_idx, :, :] if mean_pred is not None else None,
             )
-            metadata = ChannelMeta.get(channel, vmin=vmin, vmax=vmax)
+            meta = ChannelMeta.get(channel, vmin=vmin, vmax=vmax)
+
+            # Build sources to plot: (label, member_idx, 2D field).
+            sources: list = [("target", None, target_2d), ("baseline", None, baseline_2d)]
+            if mean_pred is not None:
+                sources.append(("mean-prediction", None, mean_pred[out_idx, :, :]))
+            for m, p in _pred_members(prediction, out_idx):
+                sources.append(("prediction", m, p))
 
             if channel.name == "tp":
-                save_field(
-                    "target", target[output_channel_idx, :, :], metadata, output_files, channel, curr_time,
-                    plot_func=plot_map_precipitation, title=plot_title, grid_cfg=grid_cfg
-                )
-                save_field(
-                    "baseline", baseline[input_channel_idx, :, :], metadata, output_files, channel, curr_time,
-                    plot_func=plot_map_precipitation, title=plot_title, grid_cfg=grid_cfg
-                )
-                if prediction.ndim>3:
-                    for member_idx in range(prediction.shape[0]):
-                        save_field(
-                            "prediction", prediction[member_idx, output_channel_idx, :, :], metadata, output_files, channel, curr_time,
-                            member=member_idx, plot_func=plot_map_precipitation, title=plot_title, grid_cfg=grid_cfg
-                        )
-                else:
-                    save_field(
-                        "prediction", prediction[output_channel_idx, :, :], metadata, output_files, channel, curr_time,
-                        plot_func=plot_map_precipitation, title=plot_title, grid_cfg=grid_cfg
-                    )
-                if mean_pred is not None:
-                    save_field(
-                        "mean-prediction", mean_pred[output_channel_idx, :, :], metadata, output_files, channel, curr_time,
-                        plot_func=plot_map_precipitation, title=plot_title, grid_cfg=grid_cfg
-                    )
+                for label, m, data in sources:
+                    save_field(label, data, meta, output_files, channel, curr_time,
+                               member=m, plot_func=plot_map_precipitation,
+                               title=plot_title, grid_cfg=grid_cfg)
                 continue
 
-            # Plot target and baseline and regression prediction if available
-            save_field("target", target[output_channel_idx, :, :], metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
-            save_field("baseline", baseline[input_channel_idx, :, :], metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
-            if mean_pred is not None:
-                save_field("mean-prediction", mean_pred[output_channel_idx, :, :], metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
+            err_cmap = meta.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis'
+            for label, m, data in sources:
+                save_field(label, data, meta, output_files, channel, curr_time,
+                           member=m, title=plot_title, grid_cfg=grid_cfg)
+                if label == "target":
+                    continue
+                _, mae = compute_mae(data, target_2d)
+                me = data - target_2d
+                save_field(label, mae.reshape(data.shape), meta, output_files, channel, curr_time,
+                           member=m, kind="mae", cmap=err_cmap, vmin=0, vmax=meta.err_vmax,
+                           title=plot_title, grid_cfg=grid_cfg)
+                save_field(label, me, meta, output_files, channel, curr_time,
+                           member=m, kind="me", cmap=meta.me_cmap,
+                           vmin=meta.err_vmin, vmax=meta.err_vmax,
+                           title=plot_title, grid_cfg=grid_cfg)
 
-            # Baseline MAE and ME
-            _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[output_channel_idx, :, :])
-            baseline_me = (baseline[input_channel_idx, :, :] - target[output_channel_idx, :, :])
-            save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-            save_field("baseline", baseline_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+        # Wind speed / direction (and combined wind+precip) plots
+        wind_out = {ch.name: i for i, ch in enumerate(output_channels) if ch.name in ("10u", "10v")}
+        wind_in  = {ch.name: i for i, ch in enumerate(input_channels)  if ch.name in ("10u", "10v")}
+        if "10u" not in wind_out or "10v" not in wind_out:
+            continue
 
-            # Regression prediction MAE and ME
-            if mean_pred is not None:
-                _, mean_mae = compute_mae(mean_pred[idx, :, :], target[output_channel_idx, :, :])
-                mean_me = (mean_pred[output_channel_idx, :, :] - target[output_channel_idx, :, :])
-                save_field("mean-prediction", mean_mae.reshape(mean_pred[output_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                save_field("mean-prediction", mean_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+        o_u, o_v = wind_out["10u"], wind_out["10v"]
+        i_u, i_v = wind_in["10u"], wind_in["10v"]
 
-            # Ensemble predictions
-            if prediction.ndim > 3:
-                for member_idx in range(prediction.shape[0]):
-                    member = prediction[member_idx, output_channel_idx, :, :]
-                    save_field("prediction", member, metadata, output_files, channel, curr_time, member=member_idx, title=plot_title, grid_cfg=grid_cfg)
-                    _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
-                    save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, member=member_idx, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                    prediction_me = (member - target[output_channel_idx, :, :])
-                    save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, member=member_idx, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-            else:
-                member = prediction[output_channel_idx, :, :]
-                save_field("prediction", member, metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
-                _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
-                save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                prediction_me = (member - target[output_channel_idx, :, :])
-                save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+        # Build wind sources: (label, member_idx, u_2d, v_2d).
+        wind_sources: list = [
+            ("target",   None, target[o_u, :, :],   target[o_v, :, :]),
+            ("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :]),
+        ]
+        if mean_pred is not None:
+            wind_sources.append(("mean-prediction", None, mean_pred[o_u, :, :], mean_pred[o_v, :, :]))
+        for m, pu, pv in _pred_members(prediction, o_u, o_v):
+            wind_sources.append(("prediction", m, pu, pv))
 
-        # Plot Windspeed and direction
-        wind_channels = {ch.name: idx for idx, ch in enumerate(output_channels) if ch.name in ("10u", "10v")}
-        wind_channels_input = {ch.name: idx for idx, ch in enumerate(input_channels) if ch.name in ("10u", "10v")}
-        if "10u" in wind_channels and "10v" in wind_channels:
-            idx_10u = wind_channels["10u"]
-            idx_10v = wind_channels["10v"]
-            input_idx_10u = wind_channels_input["10u"]
-            input_idx_10v = wind_channels_input["10v"]
+        title_speed = f"{format_time_str(curr_time)}: FF10m"
+        title_dir   = f"{format_time_str(curr_time)}: DD10m"
+        speed_meta  = ChannelMeta.get("10u", vmin=0, vmax=10)
+        dir_meta    = ChannelMeta.get("10u", vmin=0, vmax=360)
 
-            # Compute windspeed and direction for target, baseline, prediction and mean prediction
-            target_wind_speed = np.hypot(target[idx_10u, :, :], target[idx_10v, :, :])
-            target_wind_dir = wind_direction(target[idx_10u, :, :], target[idx_10v, :, :])
-            baseline_wind_speed = np.hypot(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
-            baseline_wind_dir = wind_direction(baseline[input_idx_10u, :, :], baseline[input_idx_10v, :, :])
-            if prediction.ndim > 3:
-                prediction_wind_speed = np.hypot(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
-                prediction_wind_dir = wind_direction(prediction[:, idx_10u, :, :], prediction[:, idx_10v, :, :])
-            else:
-                prediction_wind_speed = np.hypot(prediction[idx_10u, :, :], prediction[idx_10v, :, :])
-                prediction_wind_dir = wind_direction(prediction[idx_10u, :, :], prediction[idx_10v, :, :])
-            if mean_pred is not None:
-                mean_wind_speed = np.hypot(mean_pred[idx_10u, :, :], mean_pred[idx_10v, :, :])
-                mean_wind_dir = wind_direction(mean_pred[idx_10u, :, :], mean_pred[idx_10v, :, :])
-
-            plot_title_speed = f"{format_time_str(curr_time)}: FF10m"
-            plot_title_dir = f"{format_time_str(curr_time)}: DD10m"
-
-            wind_meta = ChannelMeta.get("10u", vmin=0, vmax=10)
-            dir_meta = ChannelMeta.get("10u", vmin=0, vmax=360)
-
-            # Save windspeed plots
-            save_field(
-                "FF10m-target", target_wind_speed, wind_meta, output_files, None, curr_time,
-                cmap="viridis", vmin=0, vmax=10, extend='max',
-                custom_path=output_files.wind_file("FF10m", curr_time, "FF10m-target"),
-                plot_func=plot_map, title=plot_title_speed, grid_cfg=grid_cfg
-            )
-            save_field(
-                "FF10m-baseline", baseline_wind_speed, wind_meta, output_files, None, curr_time,
-                cmap="viridis", vmin=0, vmax=10, extend='max',
-                custom_path=output_files.wind_file("FF10m", curr_time, "FF10m-baseline"),
-                plot_func=plot_map, title=plot_title_speed, grid_cfg=grid_cfg
-            )
-            if prediction.ndim > 3:
-                for member_idx in range(prediction.shape[0]):
-                    save_field(
-                        "FF10m-prediction", prediction_wind_speed[member_idx], wind_meta, output_files, None, curr_time,
-                        member=member_idx, cmap="viridis", vmin=0, vmax=10, extend='max',
-                        custom_path=output_files.wind_file("FF10m", curr_time, "FF10m-prediction", member_idx),
-                        plot_func=plot_map, title=plot_title_speed, grid_cfg=grid_cfg
-                    )
-            else:
+        wind_kinds = (
+            ("FF10m", speed_meta, "viridis", 0, 10,  "max",      title_speed),
+            ("DD10m", dir_meta,   "twilight", 0, 360, "neither", title_dir),
+        )
+        for label, m, u, v in wind_sources:
+            speed = np.hypot(u, v)
+            direction = wind_direction(u, v)
+            for kind, w_meta, w_cmap, w_vmin, w_vmax, w_extend, w_title in wind_kinds:
+                data = speed if kind == "FF10m" else direction
                 save_field(
-                    "FF10m-prediction", prediction_wind_speed, wind_meta, output_files, None, curr_time,
-                    cmap="viridis", vmin=0, vmax=10, extend='max',
-                    custom_path=output_files.wind_file("FF10m", curr_time, "FF10m-prediction"),
-                    plot_func=plot_map, title=plot_title_speed, grid_cfg=grid_cfg
-                )
-            if mean_pred is not None:
-                save_field(
-                    "FF10m-mean-prediction", mean_wind_speed, wind_meta, output_files, None, curr_time,
-                    cmap="viridis", vmin=0, vmax=10, extend='max',
-                    custom_path=output_files.wind_file("FF10m", curr_time, "FF10m-mean-prediction"),
-                    plot_func=plot_map, title=plot_title_speed, grid_cfg=grid_cfg
+                    f"{kind}-{label}", data, w_meta, output_files, None, curr_time,
+                    member=m, cmap=w_cmap, vmin=w_vmin, vmax=w_vmax, extend=w_extend,
+                    custom_path=output_files.wind_file(kind, curr_time, f"{kind}-{label}", m),
+                    plot_func=plot_map, title=w_title, grid_cfg=grid_cfg,
                 )
 
-            # Save wind direction plots
-            save_field(
-                "DD10m-target", target_wind_dir, dir_meta, output_files, None, curr_time,
-                cmap="twilight", vmin=0, vmax=360,
-                custom_path=output_files.wind_file("DD10m", curr_time, "DD10m-target"),
-                plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
-            )
-            save_field(
-                "DD10m-baseline", baseline_wind_dir, dir_meta, output_files, None, curr_time,
-                cmap="twilight", vmin=0, vmax=360,
-                custom_path=output_files.wind_file("DD10m", curr_time, "DD10m-baseline"),
-                plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
-            )
-            if prediction.ndim > 3:
-                for member_idx in range(prediction.shape[0]):
-                    save_field(
-                        "DD10m-prediction", prediction_wind_dir[member_idx], dir_meta, output_files, None, curr_time,
-                        member=member_idx, cmap="twilight", vmin=0, vmax=360,
-                        custom_path=output_files.wind_file("DD10m", curr_time, "DD10m-prediction", member_idx),
-                        plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
-                    )
-            else:
-                save_field(
-                    "DD10m-prediction", prediction_wind_dir, dir_meta, output_files, None, curr_time,
-                    cmap="twilight", vmin=0, vmax=360,
-                    custom_path=output_files.wind_file("DD10m", curr_time, "DD10m-prediction"),
-                    plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
-                )
-            if mean_pred is not None:
-                save_field(
-                    "DD10m-mean-prediction", mean_wind_dir, dir_meta, output_files, None, curr_time,
-                    cmap="twilight", vmin=0, vmax=360,
-                    custom_path=output_files.wind_file("DD10m", curr_time, "DD10m-mean-prediction"),
-                    plot_func=plot_map, title=plot_title_dir, grid_cfg=grid_cfg
-                )
+        # Combined wind-speed + precipitation maps
+        tp_out_idx = next((i for i, ch in enumerate(output_channels) if ch.name == "tp"), None)
+        if tp_out_idx is None:
+            continue
+        tp_in_idx = next((i for i, ch in enumerate(input_channels) if ch.name == "tp"), tp_out_idx)
+        title_wp = f"{format_time_str(curr_time)}: FF10m + Precipitation"
+        wp_dir = output_files._ensure_dir("wind_precip")
 
-    logger.info("Image loading and plotting completed.")
+        wp_sources: list = [
+            ("target",   None, target[o_u, :, :],   target[o_v, :, :],   target[tp_out_idx, :, :]),
+            ("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :], baseline[tp_in_idx, :, :]),
+        ]
+        if mean_pred is not None:
+            wp_sources.append(("mean-prediction", None,
+                               mean_pred[o_u, :, :], mean_pred[o_v, :, :], mean_pred[tp_out_idx, :, :]))
+        for m, pu, pv, ptp in _pred_members(prediction, o_u, o_v, tp_out_idx):
+            wp_sources.append(("prediction", m, pu, pv, ptp))
+
+        for label, m, u, v, tp in wp_sources:
+            suffix = f"{label}_{m:02d}" if m is not None else label
+            plot_map_wind_precip(
+                u, v, tp,
+                str(wp_dir / f"{curr_time}-wind_precip-{suffix}"),
+                title=title_wp, grid_cfg=grid_cfg,
+            )
+
+    logger.info(f"Snapshots saved to: {output_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli(allow_times=True))

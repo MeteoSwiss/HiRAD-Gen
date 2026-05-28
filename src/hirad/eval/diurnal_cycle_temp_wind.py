@@ -1,6 +1,4 @@
 import logging
-import argparse
-import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -10,56 +8,24 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
-from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices, load_land_sea_mask, concat_and_group_diurnal
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 
 def main(cfg: dict):
     # Initialize
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-    
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
-        return
-
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
-
-    # Load times
     logger.info("Starting computation for diurnal cycles of 2m temperature and windspeed")
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
 
-    # Dataset
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
-
     # Indices for channels
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     out_ch = indices['output']
     in_ch = indices['input']
     
@@ -76,7 +42,7 @@ def main(cfg: dict):
     # Output path
     out_root = Path(generation_dir)
     def load(ts, fn):
-        return torch.load(out_root/ts/fn, weights_only=False)
+        return torch.load(resolve_ts_dir(out_root, ts) / ts / fn, weights_only=False)
 
     # Land-sea mask
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
@@ -198,11 +164,4 @@ def main(cfg: dict):
     logger.info("Plots saved.")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli())

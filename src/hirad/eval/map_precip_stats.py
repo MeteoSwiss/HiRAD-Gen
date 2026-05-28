@@ -1,6 +1,4 @@
 import logging
-import argparse
-import yaml
 from datetime import datetime
 from pathlib import Path
 
@@ -9,10 +7,9 @@ import torch
 import xarray as xr
 import numba
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
-from hirad.utils.function_utils import get_time_from_range
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
 from hirad.eval.plotting import (
-    plot_map_precipitation, plot_map, get_channel_indices, GridConfig
+    plot_map_precipitation, plot_map
 )
 
 
@@ -140,56 +137,22 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    grid_cfg = GridConfig(
-        lat=np.arange(cfg.get("lat_start"), cfg.get("lat_end") + cfg.get("lat_step"), cfg.get("lat_step")),
-        lon=np.arange(cfg.get("lon_start"), cfg.get("lon_end") + cfg.get("lon_step"), cfg.get("lon_step")),
-        height=cfg.get("height"),
-        width=cfg.get("width"),
-        relax_zone=cfg.get("relax_zone")
-    )
-
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
-        return
-
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
+    grid_cfg = grid_cfg_from_cfg(cfg)
 
     logger.info("Starting precipitation statistics generation")
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
     logger.info(f"Processing {len(times)} timesteps")
 
     times_dt = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
 
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
-
     out_root = Path(generation_dir)
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     conv_factor = cfg.get("conv_factor")
@@ -227,7 +190,7 @@ def main(cfg: dict):
             for i, ts in enumerate(times):
                 if i % log_interval == 0:
                     logger.info(f"Loading {mode} timestep {i+1}/{len(times)}: {ts}")
-                data = torch.load(out_root / ts / f"{ts}-{mode}", weights_only=False) * conv_factor
+                data = torch.load(resolve_ts_dir(out_root, ts) / ts / f"{ts}-{mode}", weights_only=False) * conv_factor
                 data_list.append(data[tp_channel].numpy() if isinstance(data, torch.Tensor) else data[tp_channel])
         except Exception:
             logger.warning(f"{mode} not available, skipping")
@@ -246,7 +209,7 @@ def main(cfg: dict):
 
     # --- Predictions: load each file ONCE, distribute to all members ---
     logger.info("Processing predictions mode...")
-    sample_data = torch.load(out_root / times[0] / f"{times[0]}-predictions", weights_only=False)
+    sample_data = torch.load(resolve_ts_dir(out_root, times[0]) / times[0] / f"{times[0]}-predictions", weights_only=False)
     n_members = sample_data.shape[0]
     del sample_data
     logger.info(f"Found {n_members} ensemble members")
@@ -285,11 +248,4 @@ def main(cfg: dict):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli())
