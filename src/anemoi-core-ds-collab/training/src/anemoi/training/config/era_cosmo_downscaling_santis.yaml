@@ -435,7 +435,8 @@ training:
   loss_gradient_scaling:  False # Setting this to true seems to mess up loss calcs (NaNs?)
   # enter a run ID to start from a checkpoint, or null to start from scratch
   #run_id: 5fd6ba1a158d41db9c6d3d5b0de58225  # Train on deterministic, med training set.
-  run_id: null # Train from scratch
+  #run_id: null # Train from scratch
+  run_id: b24ed243e0504f98b9cf48396f871eac # Train determinisitc, full dataset, 2 nodes - pick up from first
   #run_id: d854be9735dc4aca98b3f130b172c155  # Train on a probabilistic run for a long time
   fork_run_id: null
   transfer_learning: False # activate to perform transfer learning

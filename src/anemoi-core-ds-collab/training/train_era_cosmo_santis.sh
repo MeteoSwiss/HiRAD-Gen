@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=c38
-#SBATCH -t 1:00:00
+#SBATCH -t 12:00:00
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
