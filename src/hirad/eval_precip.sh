@@ -27,6 +27,7 @@ srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.to
     # Diurnal cycle
     # python src/hirad/eval/diurnal_cycle_precip_mean_wet-hour.py --config-name=${CONFIG_NAME}
     # python src/hirad/eval/diurnal_cycle_precip_high_percentiles.py --config-name=${CONFIG_NAME}
+    # python -m hirad.eval.diurnal_cycle_precip_maps --config-name=${CONFIG_NAME}
 
     # Histograms
     # python src/hirad/eval/hist.py --config-name=${CONFIG_NAME}
