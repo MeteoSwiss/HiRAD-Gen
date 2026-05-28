@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name="eval_wind"
+#SBATCH --job-name="eval_temp"
 
 ### HARDWARE ###
 #SBATCH --partition=normal
@@ -13,7 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/plots_wind.log
+#SBATCH --output=./logs/plots_temp.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161
@@ -24,12 +24,6 @@ CONFIG_NAME="src/hirad/conf/eval_real.yaml"
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e .
 
-    # Diurnal cycle of windspeed
-    # python src/hirad/eval/diurnal_cycle_wind.py --config-name=${CONFIG_NAME}
-
-    # Probability of exceedance
-    # python src/hirad/eval/probability_of_exceedance_wind.py --config-name=${CONFIG_NAME}
-    
-    # Maps
-    # python src/hirad/eval/map_wind_stats.py --config-name=${CONFIG_NAME}
+    # Diurnal cycle of 2m temperature
+    # python src/hirad/eval/diurnal_cycle_temp.py --config-name=${CONFIG_NAME}
 "

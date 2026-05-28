@@ -2,7 +2,6 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -15,7 +14,7 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting computation for diurnal cycles of 2m temperature and windspeed")
+    logger.info("Starting computation for diurnal cycle of 2m temperature")
     try:
         generation_dir, gen_cfg, times = load_generation_setup(cfg)
     except ValueError as exc:
@@ -28,16 +27,10 @@ def main(cfg: dict):
     indices = get_channel_indices(gen_cfg)
     out_ch = indices['output']
     in_ch = indices['input']
-    
+
     # Temperature channel (try '2t' first, fallback to 't2m')
     t2m_out = out_ch.get('2t', out_ch.get('t2m'))
     t2m_in = in_ch.get('2t', in_ch.get('t2m', t2m_out))
-    
-    # Wind channels
-    u_out = out_ch['10u']
-    u_in = in_ch.get('10u', u_out)
-    v_out = out_ch['10v']  
-    v_in = in_ch.get('10v', v_out)
 
     # Output path
     out_root = Path(generation_dir)
@@ -49,7 +42,6 @@ def main(cfg: dict):
 
     # Prepare lists to collect DataArrays
     target_temp, baseline_temp, pred_temp, mean_pred_temp = [], [], [], []
-    target_wind, baseline_wind, pred_wind, mean_pred_wind = [], [], [], []
 
     def mean_over_land(data, dims, coords, time_coord):
         da = xr.DataArray(data, dims=dims, coords=coords) * land_mask
@@ -74,24 +66,11 @@ def main(cfg: dict):
         baseline_temp.append(mean_over_land(
             baseline[t2m_in] - 273.15, ("lat","lon"), land_mask.coords, dt))
         pred_temp.append(mean_over_land(
-            predictions[:, t2m_out, :, :] - 273.15, ("member","lat","lon"), 
+            predictions[:, t2m_out, :, :] - 273.15, ("member","lat","lon"),
             {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
         if regression_pred is not None:
             mean_pred_temp.append(mean_over_land(
                 regression_pred[t2m_out] - 273.15, ("lat","lon"), land_mask.coords, dt))
-
-
-        # Process wind speed
-        target_wind.append(mean_over_land(
-            np.hypot(target[u_out], target[v_out]), ("lat","lon"), land_mask.coords, dt))
-        baseline_wind.append(mean_over_land(
-            np.hypot(baseline[u_in], baseline[v_in]), ("lat","lon"), land_mask.coords, dt))
-        pred_wind.append(mean_over_land(
-            np.hypot(predictions[:, u_out, :, :], predictions[:, v_out, :, :]),
-            ("member","lat","lon"), {"member": np.arange(predictions.shape[0]), **land_mask.coords}, dt))
-        if regression_pred is not None:
-            mean_pred_wind.append(mean_over_land(
-                np.hypot(regression_pred[u_out], regression_pred[v_out]), ("lat","lon"), land_mask.coords, dt))
 
         if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -102,12 +81,6 @@ def main(cfg: dict):
     temp_pred_mean, temp_pred_std = concat_and_group_diurnal(pred_temp, is_member=True)
     if mean_pred_temp:
         temp_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_temp)
-
-    wind_target_mean, _ = concat_and_group_diurnal(target_wind)
-    wind_baseline_mean, _ = concat_and_group_diurnal(baseline_wind)
-    wind_pred_mean, wind_pred_std = concat_and_group_diurnal(pred_wind, is_member=True)
-    if mean_pred_wind:
-        wind_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wind)
 
     def save_plot(hour, means, stds, labels, ylabel, title, out_path):
         hrs = np.concatenate([hour.values, [24]])
@@ -136,7 +109,6 @@ def main(cfg: dict):
 
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
-    # Generate plots
     save_plot(
         temp_target_mean.hour,
         data,
@@ -145,20 +117,6 @@ def main(cfg: dict):
         '2m Temperature [°C]',
         'Diurnal Cycle of 2m Temperature',
         output_path / 'diurnal_cycle_2t.png'
-    )
-
-    data = [wind_target_mean, wind_baseline_mean, wind_pred_mean, wind_mean_pred_mean] if mean_pred_wind else [wind_target_mean, wind_baseline_mean, wind_pred_mean]
-    labels = ['Target', 'Input', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wind else ['Target', 'Input', 'CorrDiff ± Std(Members)']
-    stds = [None, None, wind_pred_std, None] if mean_pred_wind else [None, None, wind_pred_std]
-
-    save_plot(
-        wind_target_mean.hour,
-        data,
-        stds,
-        labels,
-        'Windspeed [m/s]',
-        'Diurnal Cycle of Windspeed',
-        output_path / 'diurnal_cycle_windspeed.png'
     )
 
     logger.info("Plots saved.")
