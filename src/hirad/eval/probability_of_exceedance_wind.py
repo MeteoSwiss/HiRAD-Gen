@@ -1,7 +1,5 @@
 """Probability of exceedance for wind speed and components."""
 import logging
-import argparse
-import yaml
 from pathlib import Path
 
 import hydra
@@ -10,9 +8,9 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels, known_datasets
+from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.plotting import get_channel_indices
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, resolve_ts_dir
 from hirad.eval.eval_utils import percentiles_from_histogram
 
 
@@ -126,48 +124,19 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    generation_dir = cfg.get("inference_output_dir", None)
-    if generation_dir is None:
-        logger.error("No inference_output_dir specified in config.")
-        return
-    
-    if not Path(generation_dir).exists() or not Path(generation_dir).is_dir():
-        logger.error(f"Inference output directory {generation_dir} does not exist or is not a directory.")
-        return
-
-    generation_config_path = Path(generation_dir) / ".hydra" / "config.yaml"
-    if not generation_config_path.exists():
-        logger.error(f"Generation config file {generation_config_path} does not exist.")
-        return
-
-    with open(generation_config_path, "r") as f:
-        gen_cfg = yaml.safe_load(f)
-
     logger.info("Starting computation for probability of exceedance for wind speed")
-    if cfg.get("times_range", None):
-        times = get_time_from_range(cfg.get("times_range"), time_format="%Y%m%d-%H%M")
-    elif cfg.get("times", None):
-        times = cfg.get("times")
-    elif gen_cfg.get("generation").get("times_range", None):
-        times = get_time_from_range(gen_cfg.get("generation").get("times_range"), time_format="%Y%m%d-%H%M")
-    elif gen_cfg.get("generation").get("times", None):
-        times = gen_cfg.get("generation").get("times")
-    else:
-        logger.error("No times or times_range specified in config or generation config.")
+    try:
+        generation_dir, gen_cfg, times = load_generation_setup(cfg)
+    except ValueError as exc:
+        logger.error(str(exc))
         return
     logger.info(f"Loaded {len(times)} timesteps to process")
-
-    # Initialize dataset
-    dataset_cfg = gen_cfg.get("dataset")
-    dataset_type = dataset_cfg.get("type")
-    dataset = known_datasets[dataset_type](**dataset_cfg)
-    logger.info("Dataset initialized")
 
     # Output root
     out_root = Path(generation_dir)
 
     # Find channel indices for wind components
-    indices = get_channel_indices(dataset)
+    indices = get_channel_indices(gen_cfg)
     u10_out = indices['output'].get('10u')
     v10_out = indices['output'].get('10v')
     u10_in = indices['input'].get('10u', u10_out)
@@ -214,7 +183,7 @@ def main(cfg: dict):
                 if i % cfg.get("log_interval") == 0:
                     logger.info(f"Processing timestep {i+1}/{len(times)}")
                 
-                data = torch.load(out_root/ts/f"{ts}-{mode}", weights_only=False)
+                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)
                 
                 # Extract wind components
                 if mode in ['target', 'regression-prediction']:
@@ -266,7 +235,7 @@ def main(cfg: dict):
         if i % cfg.get("log_interval") == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
-        preds = torch.load(out_root/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
         
         if n_members is None:
             n_members = preds.shape[0]
@@ -371,11 +340,4 @@ def main(cfg: dict):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
-    args = parser.parse_args()
-
-    with open(args.config_name, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    main(cfg)
+    main(parse_eval_cli())
