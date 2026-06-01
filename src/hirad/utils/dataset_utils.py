@@ -10,7 +10,8 @@ def regrid_icon_to_rotlatlon(
     weights: torch.Tensor,
     nx: int = 1170,
     ny: int = 786,
-) -> torch.Tensor:
+    coarsen_by_2x: bool = False,
+    ) -> torch.Tensor:
     """Regrid ICON unstructured data to a rotated lat-lon grid.
 
     Parameters
@@ -22,7 +23,12 @@ def regrid_icon_to_rotlatlon(
     weights : torch.Tensor
         Remap weights of shape (n_target, n_stencil).
     nx, ny : int
-        Output grid dimensions.
+        1km grid dimensions (before any coarsening).
+    coarsen_by_2x : bool
+        Whether to coarsen the grid by a factor of 2 after the regridding.
+        This is done by taking every other point (not pooling), to preserve
+        the original statistics as much as possible. If True, the output grid
+        will be (nx//2, ny//2).
 
     Returns
     -------
@@ -43,7 +49,12 @@ def regrid_icon_to_rotlatlon(
     vmax = values.amax(dim=-1)
     result = result.clamp(min=vmin, max=vmax)
 
-    return result.reshape(out_shape)
+    result = result.reshape(out_shape)
+
+    if coarsen_by_2x:
+        result = result[..., ::2, ::2]
+
+    return result
 
 
 class GridData():

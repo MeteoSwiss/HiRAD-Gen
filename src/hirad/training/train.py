@@ -136,7 +136,9 @@ def main(cfg: DictConfig) -> None:
         train_test_split=train_test_split,
         sampler_start_idx=cur_nimg,
     )
-    is_real_target = dataset_cfg.get("type").split("_")[-1] == "real"
+    is_real_target = dataset_cfg.get("type").split("_")[-1].startswith("real")
+    is_real2cosmo_target = dataset_cfg.get("type").split("_")[-1] == "real2cosmo"
+    is_real2km_target = dataset_cfg.get("type").split("_")[-1] == "real2km"
     logger0.info(f"Training on dataset with size {len(dataset)}")
     logger0.info(f"Validating on dataset with size {len(validation_dataset) if validation_dataset else 0}")
 
@@ -213,6 +215,8 @@ def main(cfg: DictConfig) -> None:
                                             amp_dtype,
                                             use_apex_gn,
                                             is_real_target,
+                                            is_real2cosmo_target,
+                                            is_real2km_target,
                                             songunet_checkpoint_level,
                                             use_patching,
                                             cfg.model.get("hr_mean_conditioning", False),

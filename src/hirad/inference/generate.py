@@ -74,7 +74,7 @@ def main(cfg: DictConfig) -> None:
     )
     dataset.stats_to_torch(device=dist.device, dtype=input_dtype)
     dataset.interpolator.to(device=dist.device)
-    is_real_target = dataset_cfg.get("type").split("_")[-1] == "real"
+    is_real_target = dataset_cfg.get("type").split("_")[-1].startswith("real")
     if is_real_target:
         dataset.regrid_indices_real = dataset.regrid_indices_real.to(dist.device)
         dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)      
@@ -299,6 +299,7 @@ def main(cfg: DictConfig) -> None:
                             image_tar.to(dist.device, dtype=input_dtype),
                             dataset.regrid_indices_real,
                             dataset.regrid_weights_real,
+                            coarsen_by_2x=dataset_cfg.get("type") == "real2km",
                         )
                         if dataset.trim_edge > 0:
                             image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]

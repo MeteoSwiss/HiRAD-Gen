@@ -50,6 +50,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 amp_dtype: torch.dtype,
                 use_apex_gn: bool,
                 is_real_target: bool, 
+                is_real2cosmo_target: bool,
+                is_real2km_target: bool,
                 songunet_checkpoint_level: int,
                 use_patching: bool,
                 hr_mean_conditioning: bool,
@@ -60,6 +62,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         self.input_dtype = input_dtype
         self.img_shape = img_shape
         self.is_real_target = is_real_target
+        self.is_real2cosmo_target = is_real2cosmo_target
+        self.is_real2km_target = is_real2km_target
         self.n_month_hour_channels = n_month_hour_channels
         self.fp16 = fp16
         self.songunet_checkpoint_level = songunet_checkpoint_level
@@ -88,6 +92,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 img_clean.to(self.dist.device, dtype=self.input_dtype),
                 self.dataset.regrid_indices_real,
                 self.dataset.regrid_weights_real,
+                coarsen_by_2x=self.is_real2km_target,
             )
             if self.dataset.trim_edge > 0:
                 img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,

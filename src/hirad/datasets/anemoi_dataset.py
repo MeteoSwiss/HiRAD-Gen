@@ -49,10 +49,11 @@ class AnemoiDataset(DownscalingDataset):
 
         input_dataset = type.split('_')[-2]
         target_dataset = type.split('_')[-1]
-        # 'real' or 'real2cosmo' will mostly be treated the same.
+        # 'real' or 'real2cosmo' or 'real2km' will mostly be treated the same.
         self.real_target = target_dataset.startswith('real')
         # in certain cases we will want to know whether we are also regridding to COSMO.
         self.real2cosmo_target = target_dataset == 'real2cosmo'
+        self.real2km_target = target_dataset == 'real2km'
         self.trim_edge = trim_edge
 
         if input_dataset != 'era5':
@@ -116,7 +117,7 @@ class AnemoiDataset(DownscalingDataset):
             self.static_data_normalized = (static_data - self.static_mean.reshape((self.static_mean.shape[0],1))) \
                                             / self.static_std.reshape((self.static_std.shape[0],1))
             self.static_data_normalized = torch.from_numpy(self.static_data_normalized)
-            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real)
+            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real, coarsen_by_2x=self.real2km_target)
             if trim_edge > 0 and self.real_target:
                 self.static_data_normalized = self.static_data_normalized[:, trim_edge:-trim_edge, trim_edge:-trim_edge]
             # self.normalize_input(np.flip(static_data.squeeze().reshape(-1, *target_shape), 1))
@@ -217,12 +218,14 @@ class AnemoiDataset(DownscalingDataset):
     # Question: Do we need an input longitude as well?
     def longitude(self) -> np.ndarray:
         """Get longitude values from the target dataset."""
+        # TODO(mmcgloho): may need regridding for the 2km cases.
         if self.real_target:
             return self.lat_lon_real[:,1]
         return self._output_dataset.longitudes
 
     def latitude(self) -> np.ndarray:
         """Get latitude values from the target dataset."""
+        # TODO(mmcgloho): may need regridding for the 2km cases.
         if self.real_target:
             return self.lat_lon_real[:,0]
         return self._output_dataset.latitudes

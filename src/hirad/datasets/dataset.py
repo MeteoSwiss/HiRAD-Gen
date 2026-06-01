@@ -35,6 +35,7 @@ known_datasets = {
     "anemoi_era5_cosmo": ANEMOI_ERA5_COSMO,
     "anemoi_era5_real": ANEMOI_ERA5_REAL,
     "anemoi_era5_real2cosmo": ANEMOI_ERA5_REAL, # for now we use the same dataset class for real2cosmo, which has same config structure.
+    "anemoi_era5_real2km": ANEMOI_ERA5_REAL, # for now we use the same dataset class for real2km, which has same config structure.
     "anemoi_era5_copernicus_tp_real": ANEMOI_ERA5COPERNICUSTP_REAL,
     "anemoi_era5_copernicus_tp_cosmo": ANEMOI_ERA5COPERNICUSTP_COSMO,
 }
