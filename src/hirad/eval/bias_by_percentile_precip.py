@@ -4,8 +4,9 @@ local-then-averaged estimator.
 
 For each grid point g (and ensemble member m), a histogram of precipitation is
 built over time and the per-percentile quantile q_{g,m}(p) is estimated.
-Spatial / member averaging is then applied to produce the plotted curves:
+Spatial / member averaging is then applied to produce the plotted curves.
 """
+import concurrent.futures
 import logging
 from pathlib import Path
 
@@ -22,75 +23,129 @@ from hirad.eval.eval_utils import (
 )
 
 
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
+def _to_flat(arr, conv: float) -> np.ndarray:
+    """Convert a (possibly xarray) field to a flat float numpy array scaled by conv."""
+    return (np.asarray(getattr(arr, 'values', arr)) * conv).ravel()
 
-def _accumulate_per_point_hist(pp_counts: np.ndarray, values_land: np.ndarray,
-                                bin_edges: np.ndarray, n_bins: int) -> None:
-    """In-place add of one timestep of land values into per-grid-point histograms.
 
-    pp_counts : (n_land, n_bins) int32  – modified in place.
-    values_land : (n_land,) float       – one value per land grid point.
+def _build_all_histograms(
+    times: list,
+    ts_dirs: dict,
+    tp_out: int,
+    tp_in: int,
+    conv: float,
+    land_idx: np.ndarray,
+    hist_bins: np.ndarray,
+    log_interval: int,
+    logger: logging.Logger,
+) -> tuple:
+    """Single serial pass over all timesteps, building histograms for every mode.
+
+    Returns ``(det_counts, member_counts, n_members)`` where *det_counts* maps
+    mode → array-or-None and *member_counts* is a list of arrays (one per member)
+    or None.
     """
-    # searchsorted over the interior edges: result in [0, n_bins - 1]
-    bin_idx = np.searchsorted(bin_edges[1:-1], values_land, side='right')
-    n_land = pp_counts.shape[0]
-    # Fancy indexing with unique indices is fully vectorised.
-    pp_counts.reshape(-1)[np.arange(n_land) * n_bins + bin_idx] += 1
+    n_land = land_idx.size
+    n_bins = len(hist_bins) - 1
+    det_modes = ('target', 'baseline', 'regression-prediction')
+    interior_edges = hist_bins[1:-1]
+    row_offsets = np.arange(n_land, dtype=np.intp) * n_bins
+
+    det_counts: dict = {m: np.zeros((n_land, n_bins), dtype=np.int32) for m in det_modes}
+    member_counts: list | None = None
+    n_members: int | None = None
+    skip_det: set = set()
+    skip_preds = False
+
+    def accumulate(counts, arr):
+        vals = _to_flat(arr, conv)[land_idx]
+        bin_idx = np.searchsorted(interior_edges, vals, side='right')
+        counts.reshape(-1)[row_offsets + bin_idx] += 1
+
+    logger.info(f"Processing all modes in a single pass ({len(times)} timesteps)")
+
+    for i, ts in enumerate(times):
+        if i % log_interval == 0:
+            logger.info(f"  timestep {i + 1}/{len(times)}")
+
+        ts_dir = ts_dirs[ts]
+
+        for mode in det_modes:
+            if mode in skip_det:
+                continue
+            ch = tp_in if mode == 'baseline' else tp_out
+            try:
+                arr = torch.load(ts_dir / f"{ts}-{mode}", weights_only=False)[ch]
+            except FileNotFoundError:
+                logger.warning(f"  [{mode}] file not found at {ts}, skipping mode")
+                skip_det.add(mode)
+                continue
+            accumulate(det_counts[mode], arr)
+
+        if not skip_preds:
+            try:
+                preds = torch.load(ts_dir / f"{ts}-predictions", weights_only=False)
+            except FileNotFoundError:
+                logger.warning(f"  [predictions] file not found at {ts}, skipping ensemble")
+                skip_preds = True
+                continue
+
+            if n_members is None:
+                n_members = preds.shape[0]
+                member_counts = [
+                    np.zeros((n_land, n_bins), dtype=np.int32)
+                    for _ in range(n_members)
+                ]
+                logger.info(f"  Detected {n_members} ensemble members")
+            for m in range(n_members):
+                accumulate(member_counts[m], preds[m, tp_out])
+
+    for mode in skip_det:
+        det_counts[mode] = None
+
+    return det_counts, member_counts, n_members
 
 
 def _per_point_quantiles(pp_counts: np.ndarray, bin_edges: np.ndarray,
-                          frac_percentiles: np.ndarray) -> np.ndarray:
+                          frac_percentiles: np.ndarray,
+                          block_size: int = 8192) -> np.ndarray:
     """Estimate per-row quantiles from per-grid-point histograms.
 
     Returns (n_land, P) float32 array.  Uses upper-bin-edge values (no in-bin
     interpolation) — adequate given fine log-spaced bins.
+
+    Processes land points in blocks of *block_size* rows so the CDF working set
+    (~block_size × n_bins × 8 bytes) fits comfortably in L3 cache, making the
+    row-wise ``searchsorted`` cache-friendly and GIL-free (numpy releases the
+    GIL for large C-level operations, enabling true thread parallelism when
+    multiple calls run concurrently).
     """
-    cdf = pp_counts.astype(np.float32, copy=True)
-    np.cumsum(cdf, axis=1, out=cdf)
-    totals = cdf[:, -1:].copy()
-    cdf /= np.maximum(totals, 1.0)
-
-    edges_upper = bin_edges[1:].astype(np.float32)
     n_land, n_bins = pp_counts.shape
-    out = np.empty((n_land, len(frac_percentiles)), dtype=np.float32)
+    P = len(frac_percentiles)
+    result = np.empty((n_land, P), dtype=np.float32)
+    edges_upper = bin_edges[1:].astype(np.float32)
+    frac_f64 = frac_percentiles.astype(np.float64)
 
-    # Reusable bool buffer to avoid repeated allocation.
-    buf = np.empty(cdf.shape, dtype=bool)
-    for j, p in enumerate(frac_percentiles):
-        np.less(cdf, p, out=buf)
-        idx = buf.sum(axis=1)                # first bin where cdf >= p
+    for start in range(0, n_land, block_size):
+        end = min(start + block_size, n_land)
+        blk = pp_counts[start:end]
+        B = end - start
+
+        cdf = np.cumsum(blk, axis=1, dtype=np.float64)
+        totals = cdf[:, -1:]
+        cdf /= np.maximum(totals, 1.0)
+
+        offset = (np.arange(B, dtype=np.float64) * 2.0)[:, None]
+        cdf += offset
+        queries = frac_f64[None, :] + offset
+
+        idx = np.searchsorted(cdf.ravel(), queries.ravel(), side='left')
+        idx = idx.reshape(B, P) - (np.arange(B, dtype=np.intp)[:, None] * n_bins)
         np.clip(idx, 0, n_bins - 1, out=idx)
-        out[:, j] = edges_upper[idx]
-    return out
+        result[start:end] = edges_upper[idx]
 
+    return result
 
-def _build_per_point_histogram(load_fn, times: list, land_idx: np.ndarray,
-                                hist_bins: np.ndarray, log_interval: int,
-                                logger: logging.Logger, mode_name: str
-                                ) -> np.ndarray | None:
-    """Stream timesteps through `load_fn(ts) -> (H*W,) float array` and return
-    (n_land, n_bins) int32 per-grid-point histogram, or None on failure."""
-    n_land = land_idx.size
-    n_bins = len(hist_bins) - 1
-    pp_counts = np.zeros((n_land, n_bins), dtype=np.int32)
-    try:
-        for i, ts in enumerate(times):
-            if i % log_interval == 0:
-                logger.info(f"  [{mode_name}] timestep {i + 1}/{len(times)}")
-            flat = load_fn(ts)                       # (H*W,) float, no NaN
-            _accumulate_per_point_hist(pp_counts, flat[land_idx], hist_bins, n_bins)
-    except FileNotFoundError:
-        logger.warning(f"  {mode_name} data not found, skipping")
-        return None
-    return pp_counts
-
-
-
-# ---------------------------------------------------------------------------
-# plotting
-# ---------------------------------------------------------------------------
 
 def save_bias_by_percentile_plot(
     bias_data_dict: dict,
@@ -112,14 +167,11 @@ def save_bias_by_percentile_plot(
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(10, 6))
-
-    # Convert to fractions in (0, 1) for logit scale
     frac = percentile_values / 100.0
 
     for (key, bias_data), label, color in zip(bias_data_dict.items(), labels, colors):
         if isinstance(bias_data, (list, tuple)):
-            # Ensemble: plot member average ± 1 σ
-            arr = np.array(bias_data)   # (n_members, n_percentiles)
+            arr = np.array(bias_data)
             mean_bias = arr.mean(axis=0)
             std_bias = arr.std(axis=0)
             ax.plot(frac, mean_bias, color=color, label=label, linewidth=2)
@@ -137,10 +189,7 @@ def save_bias_by_percentile_plot(
             )
 
     ax.axhline(0.0, color='black', linewidth=0.8, linestyle='--', label='Zero bias')
-
-    # Logit x-axis: compresses the centre and stretches both tails
     _apply_logit_xaxis(ax, frac)
-    # Symlog: linear within ±linthresh, logarithmic beyond → "log away from zero"
     ax.set_yscale('symlog', linthresh=0.1, linscale=0.3)
     ax.set_ylim(-10, 10)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
@@ -185,7 +234,7 @@ def save_mae_by_percentile_plot(
 
     for (key, mae_data), label, color in zip(mae_data_dict.items(), labels, colors):
         if isinstance(mae_data, (list, tuple)):
-            arr = np.array(mae_data)   # (n_members, n_percentiles), already absolute
+            arr = np.array(mae_data)
             mean_mae = arr.mean(axis=0)
             std_mae = arr.std(axis=0)
             ax.plot(frac, mean_mae, color=color, label=label, linewidth=2)
@@ -242,15 +291,11 @@ def save_spread_by_percentile_plot(
     plt.close()
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
 def main(cfg: dict) -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting per-gridpoint bias-by-percentile computation for precipitation over land")
+    logger.info("Starting bias-by-percentile computation for precipitation over land")
     try:
         generation_dir, gen_cfg, times = load_generation_setup(cfg)
     except ValueError as exc:
@@ -260,32 +305,27 @@ def main(cfg: dict) -> None:
 
     out_root = Path(generation_dir)
 
-    # Channel indices
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
-    # Land-sea mask: build a boolean mask and a flat index list of land points
     land_da = load_land_sea_mask(
         cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width")
     )
-    land_bool_2d = np.isfinite(land_da.values)                       # (H, W)
-    land_idx = np.flatnonzero(land_bool_2d.ravel())                  # (n_land,)
+    land_bool_2d = np.isfinite(land_da.values)
+    land_idx = np.flatnonzero(land_bool_2d.ravel())
     n_land = land_idx.size
     logger.info(f"{n_land} land grid points")
 
-    # Log-spaced histogram bins.  Coarser than the pooled version since each
-    # grid point only contributes ~ T samples (here T = {len(times)}).
     n_bins = 500
     hist_bins = np.concatenate([
         np.array([0.0]),
-        np.logspace(-2, 3.2, n_bins),       # 0.01 -> ~1585 mm/h
+        np.logspace(-2, 3.2, n_bins),
     ])
     log_interval = cfg.get("log_interval", 24)
-    conv = cfg.get("conv_factor_hourly")
+    conv = cfg.get("conv_factor_hourly", 1.0)
 
-    # -- Percentile grid (denser in the upper tail) --
     percentile_values = np.unique(np.concatenate([
         np.linspace(1.0, 90.0, 90),
         np.linspace(90.0, 99.0, 90),
@@ -295,127 +335,86 @@ def main(cfg: dict) -> None:
     frac_percentiles = percentile_values / 100.0
     P = len(frac_percentiles)
 
-    # ---------------------------------------------------------------------
-    # Loader helpers
-    # ---------------------------------------------------------------------
-    def _load_det(ts, mode):
-        ch_idx = tp_out if mode in ('target', 'regression-prediction') else tp_in
-        arr = torch.load(
-            resolve_ts_dir(out_root, ts) / ts / f"{ts}-{mode}",
-            weights_only=False,
-        )[ch_idx]
-        arr = np.asarray(getattr(arr, 'values', arr)) * conv
-        return arr.ravel()
+    logger.info(f"Resolving {len(times)} timestep directories ...")
+    ts_dirs = {ts: resolve_ts_dir(out_root, ts) / ts for ts in times}
 
-    def _load_member(ts, m, preds_cache):
-        arr = preds_cache[m, tp_out]
-        arr = np.asarray(getattr(arr, 'values', arr)) * conv
-        return arr.ravel()
-
-    # ---------------------------------------------------------------------
-    # Target: per-grid-point quantiles (needed by everything else)
-    # ---------------------------------------------------------------------
-    logger.info("Processing target")
-    target_pp_counts = _build_per_point_histogram(
-        lambda ts: _load_det(ts, 'target'),
-        times, land_idx, hist_bins, log_interval, logger, 'target',
+    det_counts, member_counts, n_members = _build_all_histograms(
+        times, ts_dirs, tp_out, tp_in, conv, land_idx, hist_bins,
+        log_interval, logger,
     )
-    if target_pp_counts is None:
+
+    if det_counts.get('target') is None:
         logger.error("No target data found; cannot compute bias.")
         return
-    target_q = _per_point_quantiles(target_pp_counts, hist_bins, frac_percentiles)
-    del target_pp_counts
+
+    det_mode_cfg = [
+        ('baseline',              'Input',                'orange'),
+        ('regression-prediction', 'Regression Prediction', 'red'),
+    ]
+    active_det_modes = [m for m, _, _ in det_mode_cfg if det_counts.get(m) is not None]
+    has_ensemble = member_counts is not None and n_members is not None and n_members > 0
+
+    n_tasks = 1 + len(active_det_modes) + (n_members if has_ensemble else 0)
+    n_quant_workers = cfg.get("n_quant_workers", n_tasks)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n_quant_workers) as pool:
+        def submit(counts):
+            return pool.submit(_per_point_quantiles, counts, hist_bins, frac_percentiles)
+
+        fut_target = submit(det_counts['target'])
+        fut_det = {mode: submit(det_counts[mode]) for mode in active_det_modes}
+        fut_members = (
+            [submit(member_counts[m]) for m in range(n_members)]
+            if has_ensemble else []
+        )
+
+        target_q = fut_target.result()
+        del det_counts['target']
+        det_results = {mode: fut_det[mode].result() for mode in active_det_modes}
+        for mode in active_det_modes:
+            del det_counts[mode]
+        member_qs = [f.result() for f in fut_members]
+        if has_ensemble:
+            for m in range(n_members):
+                member_counts[m] = None
+
     target_mean_q = target_q.mean(axis=0)
 
-    # ---------------------------------------------------------------------
-    # Deterministic modes
-    # ---------------------------------------------------------------------
     bias_data: dict = {}
     mae_data: dict = {}
     labels: list = []
     colors: list = []
-    mae_labels: list = []
-    mae_colors: list = []
 
-    for mode, label, color in [
-        ('baseline',              'Input',                'orange'),
-        ('regression-prediction', 'Regression Prediction', 'red'),
-    ]:
-        logger.info(f"Processing {mode}")
-        pp = _build_per_point_histogram(
-            lambda ts, m=mode: _load_det(ts, m),
-            times, land_idx, hist_bins, log_interval, logger, mode,
-        )
-        if pp is None:
+    for mode, label, color in det_mode_cfg:
+        if mode not in det_results:
             continue
-        pred_q = _per_point_quantiles(pp, hist_bins, frac_percentiles)
-        del pp
+        pred_q = det_results.pop(mode)
         bias_data[mode] = pred_q.mean(axis=0) - target_mean_q
         mae_data[mode] = np.abs(pred_q - target_q).mean(axis=0)
         labels.append(label)
         colors.append(color)
-        mae_labels.append(label)
-        mae_colors.append(color)
-
-    # ---------------------------------------------------------------------
-    # Ensemble predictions: process one timestep at a time, accumulating
-    # per-member per-grid-point histograms.  Then collapse per-member to
-    # spatial-mean curves and online-aggregate ensemble statistics.
-    # ---------------------------------------------------------------------
-    logger.info("Processing predictions (per-member, per-grid-point)")
-    n_members: int | None = None
-    member_pp: list[np.ndarray] | None = None
-
-    for i, ts in enumerate(times):
-        if i % log_interval == 0:
-            logger.info(f"  [predictions] timestep {i + 1}/{len(times)}")
-        preds = torch.load(
-            resolve_ts_dir(out_root, ts) / ts / f"{ts}-predictions",
-            weights_only=False,
-        )  # (n_members, n_channels, H, W)
-        if n_members is None:
-            n_members = preds.shape[0]
-            member_pp = [
-                np.zeros((n_land, n_bins), dtype=np.int32) for _ in range(n_members)
-            ]
-            logger.info(f"  Detected {n_members} ensemble members")
-        for m in range(n_members):
-            arr = preds[m, tp_out]
-            flat = (np.asarray(getattr(arr, 'values', arr)) * conv).ravel()
-            _accumulate_per_point_hist(member_pp[m], flat[land_idx], hist_bins, n_bins)
 
     member_biases: list[np.ndarray] = []
     member_maes: list[np.ndarray] = []
-    # Online aggregates for spread:  E[std_m(q_{g,m})] over g.
-    # Need per-(g, p) std across members -> keep running sum and sum-of-squares
-    # of per-member per-point quantiles.
-    if member_pp is not None and n_members is not None and n_members > 0:
+    spread = None
+
+    if has_ensemble:
         sum_q = np.zeros((n_land, P), dtype=np.float64)
         sumsq_q = np.zeros((n_land, P), dtype=np.float64)
-        for m in range(n_members):
-            qm = _per_point_quantiles(member_pp[m], hist_bins, frac_percentiles)
-            member_pp[m] = None  # free as we go
+        for qm in member_qs:
             sum_q += qm
             sumsq_q += qm.astype(np.float64) ** 2
             member_biases.append((qm.mean(axis=0) - target_mean_q).astype(np.float64))
             member_maes.append(np.abs(qm - target_q).mean(axis=0).astype(np.float64))
         mean_q = sum_q / n_members
         var_q = np.maximum(sumsq_q / n_members - mean_q ** 2, 0.0)
-        # Per-gridpoint std across members, then spatial mean.
         spread = np.sqrt(var_q).mean(axis=0)
 
         bias_data['predictions'] = member_biases
         mae_data['predictions'] = member_maes
         labels.append('CorrDiff Ensemble (mean +/- 1 sigma)')
         colors.append('green')
-        mae_labels.append('CorrDiff Ensemble (mean +/- 1 sigma)')
-        mae_colors.append('green')
-    else:
-        spread = None
 
-    # ---------------------------------------------------------------------
-    # Output
-    # ---------------------------------------------------------------------
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps") / "by_percentile"
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -431,7 +430,7 @@ def main(cfg: dict) -> None:
 
     fn_mae = output_path / 'precipitation_mae_by_percentile.png'
     save_mae_by_percentile_plot(
-        mae_data, percentile_values, mae_labels, mae_colors,
+        mae_data, percentile_values, labels, colors,
         title='Precipitation MAE by Percentile - Over Land (Per-Gridpoint)',
         xlabel='Percentile',
         ylabel='MAE [mm/h]',
@@ -449,6 +448,7 @@ def main(cfg: dict) -> None:
             out_path=fn_spread,
         )
         logger.info(f"Spread-by-percentile plot saved: {fn_spread}")
+
 
 
 if __name__ == '__main__':
