@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .constants import REAL_TO_ERA_CHANNEL_MAP, ERA_TO_REAL_CHANNEL_MAP
 from hirad.utils.console import PythonLogger
-from hirad.utils.dataset_utils import GridData, regrid_icon_to_rotlatlon
+from hirad.utils.dataset_utils import GridData, regrid_icon_to_rotlatlon, coarsen_2x
 
 
 logger = PythonLogger(__name__)
@@ -58,8 +58,8 @@ class AnemoiDataset(DownscalingDataset):
 
         if input_dataset != 'era5':
             raise ValueError(f"Input dataset {input_dataset} not supported for AnemoiDataset. Only 'era5' is supported.")
-        if target_dataset != 'cosmo' and target_dataset !='real':
-            raise ValueError(f"Target dataset {target_dataset} not supported for AnemoiDataset. Only 'cosmo' and 'real' are supported.")
+        if target_dataset != 'cosmo' and target_dataset !='real' and target_dataset != 'real2cosmo' and target_dataset != 'real2km':
+            raise ValueError(f"Target dataset {target_dataset} not supported for AnemoiDataset. Only 'cosmo', 'real', 'real2cosmo', and 'real2km' are supported.")
 
         if self.real_target:
             # Map output channel names from real to era5
@@ -117,9 +117,11 @@ class AnemoiDataset(DownscalingDataset):
             self.static_data_normalized = (static_data - self.static_mean.reshape((self.static_mean.shape[0],1))) \
                                             / self.static_std.reshape((self.static_std.shape[0],1))
             self.static_data_normalized = torch.from_numpy(self.static_data_normalized)
-            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real, coarsen_by_2x=self.real2km_target)
+            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real)
             if trim_edge > 0 and self.real_target:
                 self.static_data_normalized = self.static_data_normalized[:, trim_edge:-trim_edge, trim_edge:-trim_edge]
+            if self.real2km_target:
+                self.static_data_normalized = coarsen_2x(self.static_data_normalized)
             # self.normalize_input(np.flip(static_data.squeeze().reshape(-1, *target_shape), 1))
         else:
             self.static_data_normalized = None
@@ -215,19 +217,24 @@ class AnemoiDataset(DownscalingDataset):
     def __len__(self):
         return len(self._output_dataset.dates)
 
-    # Question: Do we need an input longitude as well?
     def longitude(self) -> np.ndarray:
         """Get longitude values from the target dataset."""
-        # TODO(mmcgloho): may need regridding for the 2km cases.
+        # TODO(mmcgloho): handle this for the real2cosmo case
         if self.real_target:
-            return self.lat_lon_real[:,1]
+            lons = self.lat_lon_real[:, 1]
+            if self.real2km_target:
+                lons = lons.reshape(704, 1088)[::2, ::2].flatten()
+            return lons
         return self._output_dataset.longitudes
 
     def latitude(self) -> np.ndarray:
         """Get latitude values from the target dataset."""
-        # TODO(mmcgloho): may need regridding for the 2km cases.
+        # TODO(mmcgloho): handle this for the real2cosmo case
         if self.real_target:
-            return self.lat_lon_real[:,0]
+            lats = self.lat_lon_real[:, 0]
+            if self.real2km_target:
+                lats = lats.reshape(704, 1088)[::2, ::2].flatten()
+            return lats
         return self._output_dataset.latitudes
 
     def input_channels(self) -> List[ChannelMetadata]:
@@ -250,11 +257,9 @@ class AnemoiDataset(DownscalingDataset):
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data."""
         if self.real_target:
-            if self.real2cosmo_target:
-                # trimmed 2km rotated lat/lon
-                return 352,544
-            # trimmed 1km rotated lat/lon
-            return 704,1088
+            if self.real2cosmo_target or self.real2km_target:
+                return 352, 544
+            return 704, 1088
         return self._output_dataset.field_shape
     
     def input_shape(self) -> Tuple[int, int]:

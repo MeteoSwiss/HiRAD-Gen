@@ -18,7 +18,7 @@ from hirad.inference import Generator
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
-from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
+from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon, coarsen_2x
 
 from hirad.datasets import get_dataset_and_sampler_inference
 
@@ -299,10 +299,11 @@ def main(cfg: DictConfig) -> None:
                             image_tar.to(dist.device, dtype=input_dtype),
                             dataset.regrid_indices_real,
                             dataset.regrid_weights_real,
-                            coarsen_by_2x=dataset_cfg.get("type") == "real2km",
                         )
                         if dataset.trim_edge > 0:
                             image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
+                        if dataset_cfg.get("type") == "real2km":
+                            image_tar = coarsen_2x(image_tar)
                     else:
                         image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())
                     if lead_time_label:

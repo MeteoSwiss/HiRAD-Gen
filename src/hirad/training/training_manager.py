@@ -4,12 +4,13 @@ import numpy as np
 import mlflow
 import os
 import json
+from omegaconf import OmegaConf
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger
 from hirad.datasets import DownscalingDataset
 from hirad.models import UNet, EDMPrecondSuperResolution
-from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
+from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon, coarsen_2x
 from hirad.utils.checkpoint import load_checkpoint
 
 
@@ -92,11 +93,12 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 img_clean.to(self.dist.device, dtype=self.input_dtype),
                 self.dataset.regrid_indices_real,
                 self.dataset.regrid_weights_real,
-                coarsen_by_2x=self.is_real2km_target,
             )
             if self.dataset.trim_edge > 0:
                 img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,
                                             self.dataset.trim_edge:-self.dataset.trim_edge]
+            if self.is_real2km_target:
+                img_clean = coarsen_2x(img_clean)
             img_clean = img_clean.flip(-2)
         else:
             img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
@@ -171,7 +173,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             model_args["prob_channels"] = prob_channels
         
         if cfg_model_args:  # override defaults from config file
-            model_args.update(cfg_model_args)
+            model_args.update(OmegaConf.to_container(cfg_model_args, resolve=True))
 
         model_args["use_apex_gn"] = self.use_apex_gn
         model_args["profile_mode"] = self.profile_mode
