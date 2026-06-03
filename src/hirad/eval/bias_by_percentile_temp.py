@@ -18,12 +18,13 @@ from hirad.eval.eval_utils import parse_eval_cli
 def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
     """Apply logit x-axis with labelled percentile ticks (and a °C secondary axis)."""
     ax.set_xscale('logit')
-    ax.set_xlim(frac[0], frac[-1])
+    xlim_right = frac[-1] + 1e-9
+    ax.set_xlim(frac[0], xlim_right)
     tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
     tick_labels = ['0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99']
     # only show ticks within our data range
     valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
-                   if frac[0] <= f <= frac[-1]]
+                   if frac[0] <= f <= xlim_right]
     ax.set_xticks([f for f, _ in valid_ticks])
     ax.set_xticklabels([l for _, l in valid_ticks])
     ax.grid(True, alpha=0.3, which='both')
@@ -31,7 +32,7 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -
     if mean_q is not None:
         ax2 = ax.twiny()
         ax2.set_xscale('logit')
-        ax2.set_xlim(frac[0], frac[-1])
+        ax2.set_xlim(frac[0], xlim_right)
         # The axis is logit in percentile, so a fixed list of round temps bunches
         # near the median while the tails get no labels; even_value_ticks picks a
         # nice step and spreads labels evenly across the whole logit axis.
