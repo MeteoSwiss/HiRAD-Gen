@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ### CONFIG ###
-CONFIG_NAME="src/hirad/conf/eval_real_tst.yaml"
+CONFIG_NAME="src/hirad/conf/eval_real.yaml"
 
 CMDS=(
     # Diurnal cycle of windspeed
