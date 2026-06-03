@@ -196,8 +196,8 @@ def main(cfg: dict):
             logger.warning(f"{mode} not available, skipping")
             continue
 
-        # Stack into (T, H, W) numpy array
-        mode_data = np.stack(data_list, axis=0).astype(np.float64)
+        # Stack into (T, H, W) numpy array. float32 to save memory.
+        mode_data = np.stack(data_list, axis=0).astype(np.float32)
         del data_list
 
         for stat_config in stat_configs:
@@ -207,33 +207,30 @@ def main(cfg: dict):
             map_output_dir.mkdir(parents=True, exist_ok=True)
             plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg)
 
-    # --- Predictions: load each file ONCE, distribute to all members ---
+        del mode_data
+
+    # --- Predictions: process ONE member at a time to bound memory usage ---
     logger.info("Processing predictions mode...")
     sample_data = torch.load(resolve_ts_dir(out_root, times[0]) / times[0] / f"{times[0]}-predictions", weights_only=False)
     n_members = sample_data.shape[0]
     del sample_data
     logger.info(f"Found {n_members} ensemble members")
 
-    # Pre-allocate arrays for ALL members at once: (n_members, T, H, W)
-    # If memory is tight, we can do this in chunks. For 16 members × 2200 × 704 × 1088 × 4 bytes ≈ 107 GB
-    # Instead we can do cummulative statistics on the fly without storing all members in memory (like in map_wind_stats), but this works for now.
-    H, W = cfg.get("height"), cfg.get("width")
-    member_arrays = [np.empty((len(times), H, W), dtype=np.float32) for _ in range(n_members)]
-
-    logger.info("Loading all prediction timesteps (single pass over files)...")
-    for i, ts in enumerate(times):
-        if i % log_interval == 0:
-            logger.info(f"Loading predictions timestep {i+1}/{len(times)}: {ts}")
-        pred_data = torch.load(out_root / ts / f"{ts}-predictions", weights_only=False) * conv_factor
-        for m in range(n_members):
-            member_arrays[m][i] = (pred_data[m, tp_out].numpy() if isinstance(pred_data, torch.Tensor)
-                                   else pred_data[m, tp_out])
-    del pred_data
+    H: int = cfg["height"]
+    W: int = cfg["width"]
+    member_data = np.empty((len(times), H, W), dtype=np.float32)
 
     for member_idx in range(n_members):
-        logger.info(f"Computing statistics for prediction member {member_idx+1}/{n_members}")
-        member_data = member_arrays[member_idx].astype(np.float64)
+        logger.info(f"Loading prediction member {member_idx+1}/{n_members} (single pass over files)...")
+        for i, ts in enumerate(times):
+            if i % log_interval == 0:
+                logger.info(f"Loading predictions member {member_idx+1} timestep {i+1}/{len(times)}: {ts}")
+            pred_data = torch.load(resolve_ts_dir(out_root, ts) / ts / f"{ts}-predictions", weights_only=False)
+            member_slice = pred_data[member_idx, tp_out]
+            member_data[i] = (member_slice.numpy() if isinstance(member_slice, torch.Tensor) else member_slice) * conv_factor
+            del pred_data
 
+        logger.info(f"Computing statistics for prediction member {member_idx+1}/{n_members}")
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for member {member_idx+1}...")
             member_result = apply_statistic(member_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
@@ -243,7 +240,7 @@ def main(cfg: dict):
             member_label = f'CorrDiff Member {member_idx+1}'
             plot_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg)
 
-    del member_arrays
+    del member_data
     logger.info("All precipitation statistics maps generated successfully")
 
 
