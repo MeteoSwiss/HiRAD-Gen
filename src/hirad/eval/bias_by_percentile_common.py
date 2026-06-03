@@ -160,7 +160,7 @@ def compute_quantiles(
     n_workers: int,
 ) -> tuple:
     """Compute per-point quantiles for every mode in parallel, freeing counts as we go."""
-    use_ensemble = has_ensemble and member_counts is not None and n_members is not None
+    members = member_counts if (has_ensemble and member_counts is not None and n_members is not None) else []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
         def submit(counts):
@@ -168,11 +168,7 @@ def compute_quantiles(
 
         fut_target = submit(det_counts['target'])
         fut_det = {mode: submit(det_counts[mode]) for mode in active_det_modes}
-        if use_ensemble:
-            assert member_counts is not None and n_members is not None
-            fut_members = [submit(member_counts[m]) for m in range(n_members)]
-        else:
-            fut_members = []
+        fut_members = [submit(c) for c in members]
 
         target_q = fut_target.result()
         del det_counts['target']
@@ -180,21 +176,19 @@ def compute_quantiles(
         for mode in active_det_modes:
             del det_counts[mode]
         member_qs = [f.result() for f in fut_members]
-        if use_ensemble:
-            assert member_counts is not None and n_members is not None
-            for m in range(n_members):
-                member_counts[m] = None
+        members.clear()
 
     return target_q, det_results, member_qs
 
 
-def _ensemble_stats(member_qs, target_q, target_mean_q, n_members, P, n_land, mae_kind):
+def _ensemble_stats(member_qs, target_q, target_mean_q, mae_kind):
     """Compute ensemble spread, the MAE plot entry, and per-member bias curves."""
     is_spatial = mae_kind == 'spatial_spread'
-    sum_q = np.zeros((n_land, P), dtype=np.float64)
-    sumsq_q = np.zeros((n_land, P), dtype=np.float64)
-    sum_ae = np.zeros((n_land, P), dtype=np.float64)
-    sumsq_ae = np.zeros((n_land, P), dtype=np.float64)
+    n_members = len(member_qs)
+    sum_q = np.zeros(target_q.shape, dtype=np.float64)
+    sumsq_q = np.zeros(target_q.shape, dtype=np.float64)
+    sum_ae = np.zeros(target_q.shape, dtype=np.float64)
+    sumsq_ae = np.zeros(target_q.shape, dtype=np.float64)
     member_biases: list = []
     member_maes: list = []
     target_q_f = target_q.astype(np.float64)
@@ -375,7 +369,6 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
 
     percentile_values = spec.percentile_values
     frac_percentiles = percentile_values / 100.0
-    P = len(frac_percentiles)
 
     logger.info(f"Resolving {len(times)} timestep directories ...")
     ts_dirs = {ts: resolve_ts_dir(out_root, ts) / ts for ts in times}
@@ -419,7 +412,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     spread = None
     if has_ensemble:
         spread, mae_entry, member_biases = _ensemble_stats(
-            member_qs, target_q, target_mean_q, n_members, P, n_land, spec.mae_kind,
+            member_qs, target_q, target_mean_q, spec.mae_kind,
         )
         bias_data['predictions'] = member_biases
         mae_data['predictions'] = mae_entry
