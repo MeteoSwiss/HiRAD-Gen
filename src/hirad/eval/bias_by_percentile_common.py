@@ -1,14 +1,4 @@
-"""
-Shared machinery for the *bias / MAE / spread by percentile* plots.
-
-Both the temperature and precipitation scripts build, for every grid point
-``g`` (and ensemble member ``m``), a histogram of the field over time, estimate
-the per-percentile quantile ``q_{g,m}(p)``, and then average spatially / across
-members to produce the plotted curves.  Everything that is identical between the
-two variables lives here; each variable script only supplies a small
-:class:`BiasByPercentileSpec` describing channels, binning, units and the
-variable-specific plot styling.
-"""
+"""Shared machinery for the *bias / MAE / spread by percentile* plots."""
 import concurrent.futures
 import logging
 from dataclasses import dataclass
@@ -45,9 +35,6 @@ _RC_PARAMS = {
 }
 
 
-# --------------------------------------------------------------------------- #
-# Data machinery
-# --------------------------------------------------------------------------- #
 def to_flat(arr, conv: float, offset: float = 0.0) -> np.ndarray:
     """Convert a (possibly xarray) field to a flat float numpy array, scaled and shifted."""
     return (np.asarray(getattr(arr, 'values', arr)) * conv + offset).ravel()
@@ -66,16 +53,7 @@ def build_all_histograms(
     log_interval: int,
     logger: logging.Logger,
 ) -> tuple:
-    """Single serial pass over all timesteps, building histograms for every mode.
-
-    *out_channels* / *in_channels* are tuples of channel indices; the per-channel
-    fields (after scaling) are combined into the plotted scalar by *reduce_fn*
-    (e.g. identity for single-channel fields, ``hypot`` for wind speed).
-
-    Returns ``(det_counts, member_counts, n_members)`` where *det_counts* maps
-    mode → array-or-None and *member_counts* is a list of arrays (one per member)
-    or None.
-    """
+    """Single serial pass over all timesteps, building histograms for every mode."""
     n_land = land_idx.size
     n_bins = len(hist_bins) - 1
     det_modes = ('target', 'baseline', 'regression-prediction')
@@ -143,15 +121,7 @@ def build_all_histograms(
 def per_point_quantiles(pp_counts: np.ndarray, bin_edges: np.ndarray,
                         frac_percentiles: np.ndarray,
                         block_size: int = 8192) -> np.ndarray:
-    """Estimate per-row quantiles from per-grid-point histograms.
-
-    Returns ``(n_land, P)`` float32 array.  Uses upper-bin-edge values (no in-bin
-    interpolation) — adequate given fine bins.
-
-    Land points are processed in blocks of *block_size* rows so the CDF working
-    set fits comfortably in L3 cache; numpy releases the GIL for the large
-    C-level operations, enabling true thread parallelism across concurrent calls.
-    """
+    """Estimate per-row quantiles from per-grid-point histograms."""
     n_land, n_bins = pp_counts.shape
     P = len(frac_percentiles)
     result = np.empty((n_land, P), dtype=np.float32)
@@ -189,10 +159,7 @@ def compute_quantiles(
     frac_percentiles: np.ndarray,
     n_workers: int,
 ) -> tuple:
-    """Compute per-point quantiles for every mode in parallel, freeing counts as we go.
-
-    Returns ``(target_q, det_results, member_qs)``.
-    """
+    """Compute per-point quantiles for every mode in parallel, freeing counts as we go."""
     use_ensemble = has_ensemble and member_counts is not None and n_members is not None
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
@@ -222,12 +189,7 @@ def compute_quantiles(
 
 
 def _ensemble_stats(member_qs, target_q, target_mean_q, n_members, P, n_land, mae_kind):
-    """Compute ensemble spread, the MAE plot entry, and per-member bias curves.
-
-    *mae_kind* selects how the MAE band is built:
-      - ``'member_list'``  → list of per-member MAE curves (band = mean ±σ across members).
-      - ``'spatial_spread'`` → ``(mean, std)`` from per-land-point inter-member AE spread.
-    """
+    """Compute ensemble spread, the MAE plot entry, and per-member bias curves."""
     is_spatial = mae_kind == 'spatial_spread'
     sum_q = np.zeros((n_land, P), dtype=np.float64)
     sumsq_q = np.zeros((n_land, P), dtype=np.float64)
@@ -263,25 +225,10 @@ def _ensemble_stats(member_qs, target_q, target_mean_q, n_members, P, n_land, ma
     return spread, mae_entry, member_biases
 
 
-# --------------------------------------------------------------------------- #
-# Plotting helpers
-# --------------------------------------------------------------------------- #
 def new_percentile_axes(percentile_values: np.ndarray):
     """Create a figure/axes pair and return it together with the fractional x-values."""
     fig, ax = plt.subplots(figsize=(10, 6))
     return fig, ax, percentile_values / 100.0
-
-
-def _nice_step(rough: float) -> float:
-    """Round *rough* up to the nearest 1/2/2.5/5 ×10ⁿ 'nice' step."""
-    if rough <= 0:
-        return 1.0
-    exp = np.floor(np.log10(rough))
-    base = 10.0 ** exp
-    for mult in (1.0, 2.0, 2.5, 5.0, 10.0):
-        if rough <= mult * base:
-            return mult * base
-    return 10.0 * base
 
 
 def _round_sig(x: float, sig: int = 2) -> float:
@@ -294,15 +241,7 @@ def _round_sig(x: float, sig: int = 2) -> float:
 
 def even_value_ticks(frac: np.ndarray, mean_q: np.ndarray,
                      target_ticks: int = 9) -> tuple:
-    """Pick secondary-axis ticks evenly spaced along the logit axis.
-
-    The plotted x-axis is logit in *percentile*, while the secondary axis labels
-    the *mean target value*.  We place *target_ticks* positions evenly spaced in
-    logit coordinates (so they look uniform on the axis), including both corners
-    — the first and last points that actually have data — then label each with
-    the interpolated value rounded to two significant figures for clean,
-    readable tick labels.  Returns ``(positions, values)``.
-    """
+    """Pick secondary-axis ticks evenly spaced along the logit axis."""
     def _logit(p):
         p = np.clip(p, 1e-9, 1 - 1e-9)
         return np.log(p / (1.0 - p))
@@ -334,13 +273,7 @@ def even_value_ticks(frac: np.ndarray, mean_q: np.ndarray,
 
 
 def plot_dict_curves(ax, frac, data_dict, labels, colors, lower_clip=None) -> list:
-    """Plot per-mode curves and return the arrays spanning the plotted range.
-
-    Entry types per dict value:
-      - ndarray            → a single line.
-      - list of ndarrays   → member curves, drawn as mean ±1 σ shading.
-      - ``(mean, std)`` tuple → an explicit band, drawn as mean ±1 σ shading.
-    """
+    """Plot per-mode curves and return the arrays spanning the plotted range."""
     all_vals = []
     for (_key, data), label, color in zip(data_dict.items(), labels, colors):
         if isinstance(data, list):
@@ -378,9 +311,6 @@ def finalize_percentile_plot(ax, frac, apply_xaxis, mean_q, xlabel, ylabel,
     plt.close()
 
 
-# --------------------------------------------------------------------------- #
-# Orchestration
-# --------------------------------------------------------------------------- #
 @dataclass
 class BiasByPercentileSpec:
     """Variable-specific configuration for :func:`run_bias_by_percentile`."""
