@@ -156,6 +156,7 @@ def save_bias_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
+    mean_q: np.ndarray = None,
 ) -> None:
     """Save a bias-by-percentile figure.
 
@@ -188,8 +189,8 @@ def save_bias_by_percentile_plot(
                 color=color, label=label, linewidth=2, alpha=0.85,
             )
 
-    ax.axhline(0.0, color='black', linewidth=0.8, linestyle='--', label='Zero bias')
-    _apply_logit_xaxis(ax, frac)
+    ax.axhline(0.0, color='black', linewidth=0.8, linestyle='--')
+    _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('symlog', linthresh=0.1, linscale=0.3)
     ax.set_ylim(-10, 10)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
@@ -202,15 +203,29 @@ def save_bias_by_percentile_plot(
     plt.close()
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray) -> None:
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray = None) -> None:
     """Apply logit x-axis with labelled percentile ticks."""
     ax.set_xscale('logit')
-    ax.set_xlim(frac[0], frac[-1])
-    tick_fracs  = [0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99, 0.999, 0.9999]
-    tick_labels = ['1',  '10', '25', '50', '75', '90', '99', '99.9', '99.99']
+    ax.set_xlim(0.5, frac[-1])
+    tick_fracs  = [0.50, 0.75, 0.90, 0.99, 0.999, 0.9999]
+    tick_labels = ['50', '75', '90', '99', '99.9', '99.99']
     ax.set_xticks(tick_fracs)
     ax.set_xticklabels(tick_labels)
     ax.grid(True, alpha=0.3, which='both')
+
+    if mean_q is not None:
+        ax2 = ax.twiny()
+        ax2.set_xscale('logit')
+        ax2.set_xlim(0.5, frac[-1])
+        # Place ticks at fixed "nice" mm/h values, positioning them by inverting mean_q
+        nice_mmh = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
+        tick_positions = np.interp(nice_mmh, mean_q, frac)
+        valid = (tick_positions > 0.5) & (tick_positions < frac[-1])
+        tick_positions = tick_positions[valid]
+        tick_mmh = nice_mmh[valid]
+        ax2.set_xticks(tick_positions)
+        ax2.set_xticklabels([f'{v:g}' for v in tick_mmh])
+        ax2.set_xlabel('Mean target [mm/h]')
 
 
 def save_mae_by_percentile_plot(
@@ -222,6 +237,7 @@ def save_mae_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
+    mean_q: np.ndarray = None,
 ) -> None:
     """Save a MAE-by-percentile figure.
 
@@ -247,9 +263,9 @@ def save_mae_by_percentile_plot(
         else:
             ax.plot(frac, mae_data, color=color, label=label, linewidth=2, alpha=0.85)
 
-    _apply_logit_xaxis(ax, frac)
+    _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('log')
-    ax.set_ylim(1e-3, 10)
+    ax.set_ylim(1e-5, 100)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -267,6 +283,7 @@ def save_spread_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
+    mean_q: np.ndarray = None,
 ) -> None:
     """Save an ensemble-spread-by-percentile figure.
 
@@ -277,10 +294,10 @@ def save_spread_by_percentile_plot(
     fig, ax = plt.subplots(figsize=(10, 6))
     frac = percentile_values / 100.0
 
-    ax.plot(frac, spread, color='green', linewidth=2, label='CorrDiff Ensemble')
-    _apply_logit_xaxis(ax, frac)
+    ax.plot(frac, spread, color='green', linewidth=2)
+    _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('log')
-    ax.set_ylim(1e-3, 10)
+    ax.set_ylim(1e-5, 100)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -294,6 +311,15 @@ def save_spread_by_percentile_plot(
 def main(cfg: dict) -> None:
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
+
+    plt.rcParams.update({
+        'font.size':        16,
+        'axes.titlesize':   18,
+        'axes.labelsize':   16,
+        'xtick.labelsize':  14,
+        'ytick.labelsize':  14,
+        'legend.fontsize':  14,
+    })
 
     logger.info("Starting bias-by-percentile computation for precipitation over land")
     try:
@@ -421,20 +447,22 @@ def main(cfg: dict) -> None:
     fn = output_path / 'precipitation_bias_by_percentile.png'
     save_bias_by_percentile_plot(
         bias_data, percentile_values, labels, colors,
-        title='Precipitation Bias by Percentile - Over Land (Per-Gridpoint)',
+        title='Precipitation Bias Over Land',
         xlabel='Percentile',
         ylabel='Bias [mm/h]',
         out_path=fn,
+        mean_q=target_mean_q,
     )
     logger.info(f"Bias-by-percentile plot saved: {fn}")
 
     fn_mae = output_path / 'precipitation_mae_by_percentile.png'
     save_mae_by_percentile_plot(
         mae_data, percentile_values, labels, colors,
-        title='Precipitation MAE by Percentile - Over Land (Per-Gridpoint)',
+        title='Precipitation MAE Over Land',
         xlabel='Percentile',
         ylabel='MAE [mm/h]',
         out_path=fn_mae,
+        mean_q=target_mean_q,
     )
     logger.info(f"MAE-by-percentile plot saved: {fn_mae}")
 
@@ -442,10 +470,11 @@ def main(cfg: dict) -> None:
         fn_spread = output_path / 'precipitation_spread_by_percentile.png'
         save_spread_by_percentile_plot(
             spread, percentile_values,
-            title='Precipitation Ensemble Spread by Percentile - Over Land (Per-Gridpoint)',
+            title='Precipitation Ensemble Spread Over Land',
             xlabel='Percentile',
-            ylabel='Spread (mean over land of std across members) [mm/h]',
+            ylabel='Ensemble Spread [mm/h]',
             out_path=fn_spread,
+            mean_q=target_mean_q,
         )
         logger.info(f"Spread-by-percentile plot saved: {fn_spread}")
 
