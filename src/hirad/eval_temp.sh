@@ -8,6 +8,8 @@ CONFIG_NAME="src/hirad/conf/eval_real.yaml"
 CMDS=(
     # Diurnal cycle of 2m temperature
     "python src/hirad/eval/diurnal_cycle_temp.py"
+    # QQ
+    "python -m hirad.eval.bias_by_percentile_temp"
 )
 
 for cmd in "${CMDS[@]}"; do
