@@ -16,7 +16,7 @@ defaults:
   # Model
   - model/era_real_regression # Use same model as era_real_regression since the input and output channels are the same for real2cosmo and real, but this can be changed in the future if needed.
 
-  - model_size/mini # Use model size used for the cosmo regression, since target output is 2km.
+  - model_size/normal # Use model size used for the cosmo regression, since target output is 2km.
 
   # Training
   - training/era_cosmo_regression # Params between cosmo/real seem to be mainly about memory needs, which should be reduced with the interpolatoin to COSMO 2km grid.
