@@ -1,0 +1,29 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion_era_real2km_test
+  run:
+    dir: ./outputs/training/${hydra:job.name}
+
+defaults:
+  # Dataset
+  - dataset/anemoi_era_real2km
+
+  # Model
+  - model/era_real_diffusion_patched
+
+  - model_size/mini # Use mini for test runs
+
+  # Training
+  - training/era_real_diffusion_patched
+
+  # Logging
+  - logging/era_real2km_diffusion
+
+  - _self_
+
+# Overrides: apex and triton not installed for test script
+training:
+  perf:
+    use_apex_gn: False
+    torch_compile: False

@@ -1,0 +1,23 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion_era_real2km
+  run:
+    dir: ./outputs/training/${hydra:job.name}
+
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/anemoi_era_real2km
+
+  # Model
+  - model/era_real_diffusion_patched # Same channels as real; hr_mean_conditioning uses regression output.
+
+  - model_size/normal # attn_resolutions: [22] matches COSMO-sized 352x544 grid.
+
+  # Training
+  - training/era_real_diffusion_patched
+
+  # Logging
+  - logging/era_real2km_diffusion

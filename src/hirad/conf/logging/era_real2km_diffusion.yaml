@@ -1,0 +1,5 @@
+method: mlflow
+experiment_name: hirad-corrdiff-diffusion-training
+run_name: era-real2km
+uri: null
+log_images: false
