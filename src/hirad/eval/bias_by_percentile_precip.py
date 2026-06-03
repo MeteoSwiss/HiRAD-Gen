@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import torch
 
@@ -91,12 +92,13 @@ def _build_all_histograms(
                 continue
 
             if n_members is None:
-                n_members = preds.shape[0]
+                n_members = int(preds.shape[0])
                 member_counts = [
                     np.zeros((n_land, n_bins), dtype=np.int32)
                     for _ in range(n_members)
                 ]
                 logger.info(f"  Detected {n_members} ensemble members")
+            assert n_members is not None and member_counts is not None
             for m in range(n_members):
                 accumulate(member_counts[m], preds[m, tp_out])
 
@@ -156,7 +158,7 @@ def save_bias_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
-    mean_q: np.ndarray = None,
+    mean_q: np.ndarray | None = None,
 ) -> None:
     """Save a bias-by-percentile figure.
 
@@ -193,7 +195,7 @@ def save_bias_by_percentile_plot(
     _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('symlog', linthresh=0.1, linscale=0.3)
     ax.set_ylim(-10, 10)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:g}'))
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -203,7 +205,7 @@ def save_bias_by_percentile_plot(
     plt.close()
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray = None) -> None:
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
     """Apply logit x-axis with labelled percentile ticks."""
     ax.set_xscale('logit')
     ax.set_xlim(0.5, frac[-1])
@@ -237,7 +239,7 @@ def save_mae_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
-    mean_q: np.ndarray = None,
+    mean_q: np.ndarray | None = None,
 ) -> None:
     """Save a MAE-by-percentile figure.
 
@@ -266,7 +268,7 @@ def save_mae_by_percentile_plot(
     _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('log')
     ax.set_ylim(1e-5, 100)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:g}'))
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -283,7 +285,7 @@ def save_spread_by_percentile_plot(
     xlabel: str,
     ylabel: str,
     out_path,
-    mean_q: np.ndarray = None,
+    mean_q: np.ndarray | None = None,
 ) -> None:
     """Save an ensemble-spread-by-percentile figure.
 
@@ -298,7 +300,7 @@ def save_spread_by_percentile_plot(
     _apply_logit_xaxis(ax, frac, mean_q)
     ax.set_yscale('log')
     ax.set_ylim(1e-5, 100)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{x:g}'))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f'{x:g}'))
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -337,7 +339,7 @@ def main(cfg: dict) -> None:
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
     land_da = load_land_sea_mask(
-        cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width")
+        cfg.get("land_sea_mask_path"), cfg.get("height") or 352, cfg.get("width") or 544
     )
     land_bool_2d = np.isfinite(land_da.values)
     land_idx = np.flatnonzero(land_bool_2d.ravel())
