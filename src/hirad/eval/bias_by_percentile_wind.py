@@ -1,6 +1,9 @@
 """
-Plots bias / MAE / spread as a function of percentile for 2m temperature, using a
+Plots bias / MAE / spread as a function of percentile for 10 m wind speed, using a
 local-then-averaged estimator (see :mod:`hirad.eval.bias_by_percentile_common`).
+
+Wind speed is derived per grid point from the two surface wind components
+(``10u``, ``10v``) as ``hypot(u, v)`` before histogramming.
 """
 import numpy as np
 
@@ -16,7 +19,7 @@ from hirad.eval.eval_utils import parse_eval_cli
 
 
 def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
-    """Apply logit x-axis with labelled percentile ticks (and a °C secondary axis)."""
+    """Apply logit x-axis with labelled percentile ticks (and an m/s secondary axis)."""
     ax.set_xscale('logit')
     ax.set_xlim(frac[0], frac[-1])
     tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
@@ -32,13 +35,13 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -
         ax2 = ax.twiny()
         ax2.set_xscale('logit')
         ax2.set_xlim(frac[0], frac[-1])
-        # The axis is logit in percentile, so a fixed list of round temps bunches
-        # near the median while the tails get no labels; even_value_ticks picks a
-        # nice step and spreads labels evenly across the whole logit axis.
-        tick_positions, tick_temps = even_value_ticks(frac, mean_q)
+        # Wind speed spans only a few m/s, so integer-only ticks leave the
+        # compressed tail unlabelled; even_value_ticks picks a nice sub-unit step
+        # and spreads labels evenly across the whole logit axis.
+        tick_positions, tick_speeds = even_value_ticks(frac, mean_q)
         ax2.set_xticks(tick_positions)
-        ax2.set_xticklabels([f'{v:g}' for v in tick_temps])
-        ax2.set_xlabel('Mean target [°C]')
+        ax2.set_xticklabels([f'{v:g}' for v in tick_speeds])
+        ax2.set_xlabel('Mean target [m/s]')
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,
@@ -82,31 +85,33 @@ def save_spread_by_percentile_plot(spread, percentile_values,
 
 
 def _resolve_channels(indices: dict) -> tuple:
-    # Temperature channel: try '2t' first, then 't2m'
-    t2m_out = indices['output'].get('2t', indices['output'].get('t2m'))
-    t2m_in = indices['input'].get('2t', indices['input'].get('t2m', t2m_out))
-    if t2m_out is None:
-        raise ValueError("Temperature channel (2t / t2m) not found in output channels.")
-    return t2m_out, t2m_in
+    # Wind speed is derived from the two surface wind components.
+    u_out = indices['output'].get('10u')
+    v_out = indices['output'].get('10v')
+    if u_out is None or v_out is None:
+        raise ValueError("Wind components (10u / 10v) not found in output channels.")
+    u_in = indices['input'].get('10u', u_out)
+    v_in = indices['input'].get('10v', v_out)
+    return (u_out, v_out), (u_in, v_in)
 
 
 def _make_hist_bins(cfg: dict) -> np.ndarray:
-    # Linear histogram bins in °C — fine enough to resolve sub-degree differences
-    n_bins = cfg.get("n_bins", 2000)
-    temp_min = cfg.get("temp_bin_min_celsius", -90.0)
-    temp_max = cfg.get("temp_bin_max_celsius", 65.0)
-    return np.linspace(temp_min, temp_max, n_bins + 1)
+    # Linear histogram bins in m/s — fine enough to resolve sub-m/s differences
+    n_bins = cfg.get("wind_n_bins", 1500)
+    speed_min = cfg.get("wind_bin_min_ms", 0.0)
+    speed_max = cfg.get("wind_bin_max_ms", 75.0)
+    return np.linspace(speed_min, speed_max, n_bins + 1)
 
 
 SPEC = BiasByPercentileSpec(
-    var_label='2m temperature',
-    output_prefix='temperature',
-    bias_title='2m Temperature Bias Over Land',
-    mae_title='2m Temperature MAE Over Land',
-    spread_title='2m Temperature Ensemble Spread Over Land',
-    bias_ylabel='Bias [°C]',
-    mae_ylabel='MAE [°C]',
-    spread_ylabel='Ensemble Spread [°C]',
+    var_label='10 m wind speed',
+    output_prefix='windspeed',
+    bias_title='10 m Wind Speed Bias Over Land',
+    mae_title='10 m Wind Speed MAE Over Land',
+    spread_title='10 m Wind Speed Ensemble Spread Over Land',
+    bias_ylabel='Bias [m/s]',
+    mae_ylabel='MAE [m/s]',
+    spread_ylabel='Ensemble Spread [m/s]',
     percentile_values=np.unique(np.concatenate([
         np.linspace(0.01, 0.1, 10),
         np.linspace(0.1, 1.0, 10),
@@ -119,9 +124,8 @@ SPEC = BiasByPercentileSpec(
     mae_kind='member_list',
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
-    # Default: convert Kelvin → °C (conv=1.0, offset=-273.15)
-    read_scaling=lambda cfg: (cfg.get("temp_conv_factor", 1.0),
-                              cfg.get("temp_offset_celsius", -273.15)),
+    read_scaling=lambda cfg: (cfg.get("wind_conv_factor", 1.0), 0.0),
+    reduce_fn=lambda flats: np.hypot(flats[0], flats[1]),
     save_bias=save_bias_by_percentile_plot,
     save_mae=save_mae_by_percentile_plot,
     save_spread=save_spread_by_percentile_plot,

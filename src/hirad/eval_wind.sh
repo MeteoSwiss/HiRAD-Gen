@@ -3,13 +3,15 @@
 set -euo pipefail
 
 ### CONFIG ###
-CONFIG_NAME="src/hirad/conf/eval_real.yaml"
+CONFIG_NAME="src/hirad/conf/eval_real_tst.yaml"
 
 CMDS=(
     # Diurnal cycle of windspeed
     "python src/hirad/eval/diurnal_cycle_wind.py"
     # Probability of exceedance
     "python src/hirad/eval/probability_of_exceedance_wind.py"
+    # QQ
+    "python -m hirad.eval.bias_by_percentile_wind"
     # Maps
     "python src/hirad/eval/map_wind_stats.py"
 )

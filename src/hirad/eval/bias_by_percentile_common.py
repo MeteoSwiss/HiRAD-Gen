@@ -272,6 +272,67 @@ def new_percentile_axes(percentile_values: np.ndarray):
     return fig, ax, percentile_values / 100.0
 
 
+def _nice_step(rough: float) -> float:
+    """Round *rough* up to the nearest 1/2/2.5/5 ×10ⁿ 'nice' step."""
+    if rough <= 0:
+        return 1.0
+    exp = np.floor(np.log10(rough))
+    base = 10.0 ** exp
+    for mult in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if rough <= mult * base:
+            return mult * base
+    return 10.0 * base
+
+
+def _round_sig(x: float, sig: int = 2) -> float:
+    """Round *x* to *sig* significant figures (clean axis labels)."""
+    if x == 0 or not np.isfinite(x):
+        return 0.0
+    digits = sig - int(np.floor(np.log10(abs(x)))) - 1
+    return round(x, digits)
+
+
+def even_value_ticks(frac: np.ndarray, mean_q: np.ndarray,
+                     target_ticks: int = 9) -> tuple:
+    """Pick secondary-axis ticks evenly spaced along the logit axis.
+
+    The plotted x-axis is logit in *percentile*, while the secondary axis labels
+    the *mean target value*.  We place *target_ticks* positions evenly spaced in
+    logit coordinates (so they look uniform on the axis), including both corners
+    — the first and last points that actually have data — then label each with
+    the interpolated value rounded to two significant figures for clean,
+    readable tick labels.  Returns ``(positions, values)``.
+    """
+    def _logit(p):
+        p = np.clip(p, 1e-9, 1 - 1e-9)
+        return np.log(p / (1.0 - p))
+
+    def _expit(z):
+        return 1.0 / (1.0 + np.exp(-z))
+
+    v_lo, v_hi = float(mean_q[0]), float(mean_q[-1])
+    if v_hi <= v_lo:
+        return np.array([]), np.array([])
+
+    lp_lo, lp_hi = _logit(frac[0]), _logit(frac[-1])
+    # Evenly spaced sample positions along the logit axis (corners included).
+    sample_lp = np.linspace(lp_lo, lp_hi, max(target_ticks, 2))
+    sample_pos = _expit(sample_lp)
+    sample_val = np.interp(sample_pos, frac, mean_q)
+
+    # Round labels to two significant figures, keeping the true axis position.
+    rounded = np.array([_round_sig(v) for v in sample_val])
+
+    # Drop consecutive duplicate labels (can happen where the value saturates),
+    # always keeping the first occurrence so both corners survive.
+    keep = [0]
+    for i in range(1, len(rounded)):
+        if rounded[i] != rounded[keep[-1]]:
+            keep.append(i)
+    keep = np.array(keep, dtype=np.intp)
+    return sample_pos[keep], rounded[keep]
+
+
 def plot_dict_curves(ax, frac, data_dict, labels, colors, lower_clip=None) -> list:
     """Plot per-mode curves and return the arrays spanning the plotted range.
 
