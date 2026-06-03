@@ -251,7 +251,17 @@ def save_mae_by_percentile_plot(
     frac = percentile_values / 100.0
 
     for (key, mae_data), label, color in zip(mae_data_dict.items(), labels, colors):
-        if isinstance(mae_data, (list, tuple)):
+        if isinstance(mae_data, tuple) and len(mae_data) == 2 and isinstance(mae_data[0], np.ndarray):
+            # (mean_mae, spread_mae) computed from per-land-point inter-member variance
+            mean_mae, std_mae = mae_data
+            ax.plot(frac, mean_mae, color=color, label=label, linewidth=2)
+            ax.fill_between(
+                frac,
+                np.maximum(mean_mae - std_mae, 0),
+                mean_mae + std_mae,
+                color=color, alpha=0.2,
+            )
+        elif isinstance(mae_data, list):
             arr = np.array(mae_data)
             mean_mae = arr.mean(axis=0)
             std_mae = arr.std(axis=0)
@@ -304,7 +314,6 @@ def save_spread_by_percentile_plot(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend()
     plt.tight_layout()
     plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -423,23 +432,32 @@ def main(cfg: dict) -> None:
         colors.append(color)
 
     member_biases: list[np.ndarray] = []
-    member_maes: list[np.ndarray] = []
     spread = None
+    ensemble_mae: tuple[np.ndarray, np.ndarray] | None = None
 
     if has_ensemble:
-        sum_q = np.zeros((n_land, P), dtype=np.float64)
+        sum_q  = np.zeros((n_land, P), dtype=np.float64)
         sumsq_q = np.zeros((n_land, P), dtype=np.float64)
+        sum_ae  = np.zeros((n_land, P), dtype=np.float64)
+        sumsq_ae = np.zeros((n_land, P), dtype=np.float64)
         for qm in member_qs:
-            sum_q += qm
+            ae = np.abs(qm.astype(np.float64) - target_q.astype(np.float64))
+            sum_q   += qm
             sumsq_q += qm.astype(np.float64) ** 2
+            sum_ae   += ae
+            sumsq_ae += ae ** 2
             member_biases.append((qm.mean(axis=0) - target_mean_q).astype(np.float64))
-            member_maes.append(np.abs(qm - target_q).mean(axis=0).astype(np.float64))
         mean_q = sum_q / n_members
-        var_q = np.maximum(sumsq_q / n_members - mean_q ** 2, 0.0)
+        var_q  = np.maximum(sumsq_q / n_members - mean_q ** 2, 0.0)
         spread = np.sqrt(var_q).mean(axis=0)
 
+        mean_ae  = sum_ae / n_members
+        var_ae   = np.maximum(sumsq_ae / n_members - mean_ae ** 2, 0.0)
+        # spatial mean of per-land-point inter-member MAE spread
+        ensemble_mae = (mean_ae.mean(axis=0), np.sqrt(var_ae).mean(axis=0))
+
         bias_data['predictions'] = member_biases
-        mae_data['predictions'] = member_maes
+        mae_data['predictions']  = ensemble_mae
         labels.append('CorrDiff Ensemble (mean +/- 1 sigma)')
         colors.append('green')
 
