@@ -20,8 +20,8 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -
     ax.set_xscale('logit')
     xlim_right = frac[-1] + 1e-9
     ax.set_xlim(frac[0], xlim_right)
-    tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
-    tick_labels = ['0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99']
+    tick_fracs  = [0.00001, 0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999, 0.99999]
+    tick_labels = ['0.001', '0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99', '99.999']
     # only show ticks within our data range
     valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
                    if frac[0] <= f <= xlim_right]
@@ -125,6 +125,7 @@ SPEC = BiasByPercentileSpec(
     spread_ylabel='Ensemble Spread [°C]',
     fbi_ylabel='FBI [-]',
     percentile_values=np.unique(np.concatenate([
+        np.linspace(0.001, 0.01, 10),
         np.linspace(0.01, 0.1, 10),
         np.linspace(0.1, 1.0, 10),
         np.linspace(1.0, 10.0, 10),
@@ -132,6 +133,7 @@ SPEC = BiasByPercentileSpec(
         np.linspace(90.0, 99.0, 90),
         np.linspace(99.0, 99.9, 45),
         np.linspace(99.9, 99.99, 20),
+        np.linspace(99.99, 99.999, 10),
     ])),
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,

@@ -18,8 +18,8 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -
     """Apply logit x-axis with labelled percentile ticks (and a mm/h secondary axis)."""
     ax.set_xscale('logit')
     ax.set_xlim(0.5, frac[-1])
-    tick_fracs  = [0.50, 0.75, 0.90, 0.99, 0.999, 0.9999]
-    tick_labels = ['50', '75', '90', '99', '99.9', '99.99']
+    tick_fracs  = [0.50, 0.75, 0.90, 0.99, 0.999, 0.9999, 0.99999]
+    tick_labels = ['50', '75', '90', '99', '99.9', '99.99', '99.999']
     ax.set_xticks(tick_fracs)
     ax.set_xticklabels(tick_labels)
     ax.grid(True, alpha=0.3, which='both')
@@ -112,6 +112,7 @@ SPEC = BiasByPercentileSpec(
         np.linspace(90.0, 99.0, 90),
         np.linspace(99.0, 99.9, 45),
         np.linspace(99.9, 99.99, 20),
+        np.linspace(99.99, 99.999, 10),
     ])),
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
