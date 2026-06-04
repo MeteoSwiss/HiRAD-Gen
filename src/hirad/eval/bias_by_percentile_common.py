@@ -159,6 +159,44 @@ def per_point_quantiles(pp_counts: np.ndarray, bin_edges: np.ndarray,
     return result
 
 
+def per_point_exceedance(pp_counts: np.ndarray, bin_edges: np.ndarray,
+                         thresholds: np.ndarray,
+                         block_size: int = 8192) -> np.ndarray:
+    """Estimate per-row exceedance probabilities P(value > threshold).
+
+    ``thresholds`` is ``(n_land, P)`` (one threshold per grid point and
+    percentile, e.g. the target's per-point quantiles). Returns an array of the
+    same shape with the fraction of this mode's mass strictly above each
+    threshold, read from the per-grid-point histogram CDF. This drives the
+    frequency bias index (FBI), a ratio of exceedance frequencies.
+    """
+    n_land, P = thresholds.shape
+    n_bins = pp_counts.shape[1]
+    result = np.empty((n_land, P), dtype=np.float32)
+    edges_upper = bin_edges[1:].astype(np.float32)
+
+    for start in range(0, n_land, block_size):
+        end = min(start + block_size, n_land)
+        blk = pp_counts[start:end]
+        B = end - start
+
+        cdf = np.cumsum(blk, axis=1, dtype=np.float64)
+        totals = cdf[:, -1:]
+        cdf /= np.maximum(totals, 1.0)
+
+        # Bin whose upper edge first reaches the threshold; the CDF up to and
+        # including that bin is the non-exceedance probability.
+        thr = thresholds[start:end]
+        bin_idx = np.empty((B, P), dtype=np.intp)
+        for j in range(P):
+            bin_idx[:, j] = np.searchsorted(edges_upper, thr[:, j], side='left')
+        np.clip(bin_idx, 0, n_bins - 1, out=bin_idx)
+        non_exc = np.take_along_axis(cdf, bin_idx, axis=1)
+        result[start:end] = np.clip(1.0 - non_exc, 0.0, 1.0)
+
+    return result
+
+
 def compute_quantiles(
     det_counts: dict,
     member_counts: list | None,
@@ -169,33 +207,48 @@ def compute_quantiles(
     frac_percentiles: np.ndarray,
     n_workers: int,
 ) -> tuple:
-    """Compute per-point quantiles for every mode in parallel, freeing counts as we go."""
+    """Compute per-point quantiles for every mode in parallel, freeing counts as we go.
+
+    Alongside the per-point quantiles, each prediction mode / member also gets
+    its per-point exceedance probability evaluated at the target's per-point
+    quantiles (the thresholds), which feeds the frequency bias index.
+    """
     members = member_counts if (has_ensemble and member_counts is not None and n_members is not None) else []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
-        def submit(counts):
+        def submit_q(counts):
             return pool.submit(per_point_quantiles, counts, hist_bins, frac_percentiles)
 
-        fut_target = submit(det_counts['target'])
-        fut_det = {mode: submit(det_counts[mode]) for mode in active_det_modes}
-        fut_members = [submit(c) for c in members]
+        def submit_exc(counts, thresholds):
+            return pool.submit(per_point_exceedance, counts, hist_bins, thresholds)
 
-        target_q = fut_target.result()
+        # Target quantiles first: they are the thresholds for every exceedance.
+        target_q = per_point_quantiles(det_counts['target'], hist_bins, frac_percentiles)
         del det_counts['target']
-        det_results = {mode: fut_det[mode].result() for mode in active_det_modes}
+
+        fut_det_q = {mode: submit_q(det_counts[mode]) for mode in active_det_modes}
+        fut_det_exc = {mode: submit_exc(det_counts[mode], target_q) for mode in active_det_modes}
+        fut_member_q = [submit_q(c) for c in members]
+        fut_member_exc = [submit_exc(c, target_q) for c in members]
+
+        det_results = {mode: fut_det_q[mode].result() for mode in active_det_modes}
+        det_exceedance = {mode: fut_det_exc[mode].result() for mode in active_det_modes}
         for mode in active_det_modes:
             del det_counts[mode]
-        member_qs = [f.result() for f in fut_members]
+        member_qs = [f.result() for f in fut_member_q]
+        member_exc = [f.result() for f in fut_member_exc]
         members.clear()
 
-    return target_q, det_results, member_qs
+    return target_q, det_results, det_exceedance, member_qs, member_exc
 
 
-def _ensemble_stats(member_qs, target_q):
+def _ensemble_stats(member_qs, member_exc, target_q, frac_percentiles):
     """Compute ensemble spread, and the MAE / bias / FBI plot entries.
 
     All quantities use the same local-then-averaged estimator: a statistic
     is formed per grid point across ensemble members, then averaged over land.
+    FBI is the frequency bias index: per grid point and percentile ``p`` it is
+    ``P(pred > q_target(p)) / P(target > q_target(p)) = P(pred > q_target(p)) / (1 - p)``.
     """
     n_members = len(member_qs)
     sum_q = np.zeros(target_q.shape, dtype=np.float64)
@@ -205,17 +258,17 @@ def _ensemble_stats(member_qs, target_q):
     sum_fbi = np.zeros(target_q.shape, dtype=np.float64)
     sumsq_fbi = np.zeros(target_q.shape, dtype=np.float64)
     target_q_f = target_q.astype(np.float64)
-    # FBI is a quantile ratio q_pred / q_target; guard against zero targets.
-    target_q_safe = np.where(target_q_f != 0.0, target_q_f, np.nan)
+    # Target exceedance probability P(target > q_target(p)) = 1 - p; guard p -> 1.
+    target_exc = np.maximum(1.0 - frac_percentiles.astype(np.float64), 1e-12)[None, :]
 
-    for qm in member_qs:
+    for qm, exc in zip(member_qs, member_exc):
         qm_f = qm.astype(np.float64)
         sum_q += qm
         sumsq_q += qm_f ** 2
         ae = np.abs(qm_f - target_q_f)
         sum_ae += ae
         sumsq_ae += ae ** 2
-        fbi = qm_f / target_q_safe
+        fbi = exc.astype(np.float64) / target_exc
         sum_fbi += fbi
         sumsq_fbi += fbi ** 2
 
@@ -334,11 +387,9 @@ class BiasByPercentileSpec:
     bias_title: str
     mae_title: str
     spread_title: str
-    fbi_title: str
     bias_ylabel: str
     mae_ylabel: str
     spread_ylabel: str
-    fbi_ylabel: str
     percentile_values: np.ndarray
     resolve_channels: Callable[[dict], tuple]   # indices -> (ch_out, ch_in); raises ValueError
     make_hist_bins: Callable[[dict], np.ndarray]
@@ -346,7 +397,10 @@ class BiasByPercentileSpec:
     save_bias: Callable
     save_mae: Callable
     save_spread: Callable
-    save_fbi: Callable
+    # FBI is optional: leave ``save_fbi`` as ``None`` to skip the plot entirely.
+    save_fbi: Callable | None = None
+    fbi_title: str | None = None
+    fbi_ylabel: str | None = None
     # Combines the (scaled) per-channel flat fields into the plotted scalar.
     # Defaults to the single-channel identity; wind speed uses ``hypot``.
     reduce_fn: Callable[[list], np.ndarray] = lambda flats: flats[0]
@@ -423,14 +477,16 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     n_tasks = 1 + len(active_det_modes) + (n_members if has_ensemble else 0)
     n_quant_workers = cfg.get("n_quant_workers", n_tasks)
 
-    target_q, det_results, member_qs = compute_quantiles(
+    target_q, det_results, det_exceedance, member_qs, member_exc = compute_quantiles(
         det_counts, member_counts, n_members, active_det_modes, has_ensemble,
         hist_bins, frac_percentiles, n_quant_workers,
     )
 
     target_mean_q = target_q.mean(axis=0)
-    # FBI is a per-point quantile ratio q_pred / q_target; guard zero targets.
-    target_q_safe = np.where(target_q != 0.0, target_q, np.nan)
+    want_fbi = spec.save_fbi is not None
+    # FBI is the frequency bias index: P(pred > q_target(p)) / P(target > q_target(p)),
+    # where P(target > q_target(p)) = 1 - p by construction. Guard p -> 1.
+    target_exc = np.maximum(1.0 - frac_percentiles, 1e-12)
 
     bias_data: dict = {}
     mae_data: dict = {}
@@ -442,20 +498,23 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         if mode not in det_results:
             continue
         pred_q = det_results.pop(mode)
+        pred_exc = det_exceedance.pop(mode)
         bias_data[mode] = pred_q.mean(axis=0) - target_mean_q
         mae_data[mode] = np.abs(pred_q - target_q).mean(axis=0)
-        fbi_data[mode] = np.nanmean(pred_q / target_q_safe, axis=0)
+        if want_fbi:
+            fbi_data[mode] = np.nanmean(pred_exc / target_exc[None, :], axis=0)
         labels.append(label)
         colors.append(color)
 
     spread = None
     if has_ensemble:
         spread, mae_entry, bias_entry, fbi_entry = _ensemble_stats(
-            member_qs, target_q,
+            member_qs, member_exc, target_q, frac_percentiles,
         )
         bias_data['predictions'] = bias_entry
         mae_data['predictions'] = mae_entry
-        fbi_data['predictions'] = fbi_entry
+        if want_fbi:
+            fbi_data['predictions'] = fbi_entry
         labels.append(ENSEMBLE_LABEL)
         colors.append(ENSEMBLE_COLOR)
 
@@ -478,13 +537,14 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     )
     logger.info(f"MAE-by-percentile plot saved: {fn_mae}")
 
-    fn_fbi = output_path / f'{spec.output_prefix}_fbi_by_percentile{suffix}.png'
-    spec.save_fbi(
-        fbi_data, percentile_values, labels, colors,
-        title=spec.fbi_title + title_note, xlabel='Percentile', ylabel=spec.fbi_ylabel,
-        out_path=fn_fbi, mean_q=target_mean_q,
-    )
-    logger.info(f"FBI-by-percentile plot saved: {fn_fbi}")
+    if want_fbi:
+        fn_fbi = output_path / f'{spec.output_prefix}_fbi_by_percentile{suffix}.png'
+        spec.save_fbi(
+            fbi_data, percentile_values, labels, colors,
+            title=spec.fbi_title + title_note, xlabel='Percentile', ylabel=spec.fbi_ylabel,
+            out_path=fn_fbi, mean_q=target_mean_q,
+        )
+        logger.info(f"FBI-by-percentile plot saved: {fn_fbi}")
 
     if spread is not None:
         fn_spread = output_path / f'{spec.output_prefix}_spread_by_percentile{suffix}.png'
