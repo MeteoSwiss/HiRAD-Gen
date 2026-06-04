@@ -181,42 +181,42 @@ def compute_quantiles(
     return target_q, det_results, member_qs
 
 
-def _ensemble_stats(member_qs, target_q, target_mean_q, mae_kind):
-    """Compute ensemble spread, the MAE plot entry, and per-member bias curves."""
-    is_spatial = mae_kind == 'spatial_spread'
+def _ensemble_stats(member_qs, target_q):
+    """Compute ensemble spread, and the MAE / bias plot entries.
+
+    All three quantities use the same local-then-averaged estimator: a statistic
+    is formed per grid point across ensemble members, then averaged over land.
+    """
     n_members = len(member_qs)
     sum_q = np.zeros(target_q.shape, dtype=np.float64)
     sumsq_q = np.zeros(target_q.shape, dtype=np.float64)
     sum_ae = np.zeros(target_q.shape, dtype=np.float64)
     sumsq_ae = np.zeros(target_q.shape, dtype=np.float64)
-    member_biases: list = []
-    member_maes: list = []
     target_q_f = target_q.astype(np.float64)
 
     for qm in member_qs:
         qm_f = qm.astype(np.float64)
         sum_q += qm
         sumsq_q += qm_f ** 2
-        member_biases.append((qm.mean(axis=0) - target_mean_q).astype(np.float64))
-        if is_spatial:
-            ae = np.abs(qm_f - target_q_f)
-            sum_ae += ae
-            sumsq_ae += ae ** 2
-        else:
-            member_maes.append(np.abs(qm - target_q).mean(axis=0).astype(np.float64))
+        ae = np.abs(qm_f - target_q_f)
+        sum_ae += ae
+        sumsq_ae += ae ** 2
 
     mean_q = sum_q / n_members
     var_q = np.maximum(sumsq_q / n_members - mean_q ** 2, 0.0)
-    spread = np.sqrt(var_q).mean(axis=0)
+    std_q = np.sqrt(var_q)
+    spread = std_q.mean(axis=0)
 
-    if is_spatial:
-        mean_ae = sum_ae / n_members
-        var_ae = np.maximum(sumsq_ae / n_members - mean_ae ** 2, 0.0)
-        mae_entry: object = (mean_ae.mean(axis=0), np.sqrt(var_ae).mean(axis=0))
-    else:
-        mae_entry = member_maes
+    mean_ae = sum_ae / n_members
+    var_ae = np.maximum(sumsq_ae / n_members - mean_ae ** 2, 0.0)
+    mae_entry = (mean_ae.mean(axis=0), np.sqrt(var_ae).mean(axis=0))
 
-    return spread, mae_entry, member_biases
+    # Bias band, local-then-averaged: per grid point the member-mean bias is
+    # (mean_q - target_q) and the member-std of bias equals std_q (target is
+    # constant across members); both are then averaged over land.
+    bias_entry = ((mean_q - target_q_f).mean(axis=0), std_q.mean(axis=0))
+
+    return spread, mae_entry, bias_entry
 
 
 def new_percentile_axes(percentile_values: np.ndarray):
@@ -317,7 +317,6 @@ class BiasByPercentileSpec:
     mae_ylabel: str
     spread_ylabel: str
     percentile_values: np.ndarray
-    mae_kind: str           # 'member_list' | 'spatial_spread'
     resolve_channels: Callable[[dict], tuple]   # indices -> (ch_out, ch_in); raises ValueError
     make_hist_bins: Callable[[dict], np.ndarray]
     read_scaling: Callable[[dict], tuple]       # cfg -> (conv, offset)
@@ -411,10 +410,10 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
 
     spread = None
     if has_ensemble:
-        spread, mae_entry, member_biases = _ensemble_stats(
-            member_qs, target_q, target_mean_q, spec.mae_kind,
+        spread, mae_entry, bias_entry = _ensemble_stats(
+            member_qs, target_q,
         )
-        bias_data['predictions'] = member_biases
+        bias_data['predictions'] = bias_entry
         mae_data['predictions'] = mae_entry
         labels.append(ENSEMBLE_LABEL)
         colors.append(ENSEMBLE_COLOR)

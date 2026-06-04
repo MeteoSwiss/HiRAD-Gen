@@ -97,7 +97,6 @@ SPEC = BiasByPercentileSpec(
         np.linspace(99.0, 99.9, 45),
         np.linspace(99.9, 99.99, 20),
     ])),
-    mae_kind='spatial_spread',
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
     read_scaling=lambda cfg: (cfg.get("conv_factor_hourly", 1.0), 0.0),

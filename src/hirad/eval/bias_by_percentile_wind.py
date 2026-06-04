@@ -122,7 +122,6 @@ SPEC = BiasByPercentileSpec(
         np.linspace(99.0, 99.9, 45),
         np.linspace(99.9, 99.99, 20),
     ])),
-    mae_kind='member_list',
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
     read_scaling=lambda cfg: (cfg.get("wind_conv_factor", 1.0), 0.0),
