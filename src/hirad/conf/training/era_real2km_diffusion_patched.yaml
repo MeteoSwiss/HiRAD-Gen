@@ -1,0 +1,32 @@
+# Hyperparameters
+hp:
+    training_duration: 8000000
+    total_batch_size: "auto"
+    batch_size_per_gpu: 10
+    lr: 0.0002
+    grad_clip_threshold: 1e6
+    lr_decay: 0.7
+    lr_rampup: 1000000
+    lr_decay_rate: 5e5
+    patch_shape_x: 128
+    patch_shape_y: 128
+    patch_num: 15
+    max_patch_per_gpu: 300
+
+# Performance
+perf:
+    fp_optimizations: amp-bf16
+    dataloader_workers: 30
+    songunet_checkpoint_level: 0
+    use_apex_gn: True
+    torch_compile: True
+    profile_mode: False
+
+# I/O
+io:
+    regression_checkpoint_path: /capstor/scratch/cscs/mmcgloho/hirad_checkpoints/era_real2km_regression/checkpoints_regression
+    print_progress_freq: 2000
+    save_checkpoint_freq: 250000
+    validation_freq: 50000
+    validation_steps: 50
+    checkpoint_dir: /capstor/scratch/cscs/mmcgloho/hirad_checkpoints/era_real2km_regression

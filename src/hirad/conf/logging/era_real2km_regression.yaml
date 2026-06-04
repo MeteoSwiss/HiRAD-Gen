@@ -1,6 +1,6 @@
 # set method to mlflow to log with mlflow
 method: mlflow
-experiment_name: hirad-corrdiff-regression-training
+experiment_name: hirad-corrdiff-regression-training-era-real2km-2
 run_name: era-real2km
 # change uri to remote mlflow server; if null, it is stored locally
 # if uri is remote make sure to have credentials set in ~/.mlflow/credentials

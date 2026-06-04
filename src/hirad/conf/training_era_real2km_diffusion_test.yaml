@@ -15,7 +15,7 @@ defaults:
   - model_size/mini # Use mini for test runs
 
   # Training
-  - training/era_real_diffusion_patched
+  - training/era_real2km_diffusion_patched
 
   # Logging
   - logging/era_real2km_diffusion
