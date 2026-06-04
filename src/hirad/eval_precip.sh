@@ -14,6 +14,7 @@ CMDS=(
     "python src/hirad/eval/probability_of_exceedance.py"
     # QQ
     "python -m hirad.eval.bias_by_percentile_precip"
+    "python -m hirad.eval.bias_by_percentile_precip_smoothed"
     # Maps
     "python src/hirad/eval/map_precip_stats.py"
     "python -m hirad.eval.diurnal_cycle_precip_maps"
