@@ -85,6 +85,20 @@ def save_spread_by_percentile_plot(spread, percentile_values,
                              xlabel, ylabel, title, out_path)
 
 
+def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors,
+                                title, xlabel, ylabel, out_path, mean_q=None) -> None:
+    """Save a frequency-bias-index-by-percentile figure (linear y-axis, ratio around 1)."""
+    _, ax, frac = new_percentile_axes(percentile_values)
+    all_vals = plot_dict_curves(ax, frac, fbi_data_dict, labels, colors, lower_clip=0)
+    ax.axhline(1.0, color='black', linewidth=0.8, linestyle='--')
+    if all_vals:
+        ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.1
+        if ymax > 1.0:
+            ax.set_ylim(0, ymax)
+    finalize_percentile_plot(ax, frac, _apply_logit_xaxis, mean_q,
+                             xlabel, ylabel, title, out_path)
+
+
 def _resolve_channels(indices: dict) -> tuple:
     # Wind speed is derived from the two surface wind components.
     u_out = indices['output'].get('10u')
@@ -110,9 +124,11 @@ SPEC = BiasByPercentileSpec(
     bias_title='10 m Wind Speed Bias Over Land',
     mae_title='10 m Wind Speed MAE Over Land',
     spread_title='10 m Wind Speed Ensemble Spread Over Land',
+    fbi_title='10 m Wind Speed Frequency Bias Index Over Land',
     bias_ylabel='Bias [m/s]',
     mae_ylabel='MAE [m/s]',
     spread_ylabel='Ensemble Spread [m/s]',
+    fbi_ylabel='FBI [-]',
     percentile_values=np.unique(np.concatenate([
         np.linspace(0.01, 0.1, 10),
         np.linspace(0.1, 1.0, 10),
@@ -129,6 +145,7 @@ SPEC = BiasByPercentileSpec(
     save_bias=save_bias_by_percentile_plot,
     save_mae=save_mae_by_percentile_plot,
     save_spread=save_spread_by_percentile_plot,
+    save_fbi=save_fbi_by_percentile_plot,
 )
 
 

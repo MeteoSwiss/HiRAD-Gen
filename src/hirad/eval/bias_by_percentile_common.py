@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import torch
+from scipy.ndimage import gaussian_filter
 
 from hirad.eval.eval_utils import (
     get_channel_indices,
@@ -40,6 +41,12 @@ def to_flat(arr, conv: float, offset: float = 0.0) -> np.ndarray:
     return (np.asarray(getattr(arr, 'values', arr)) * conv + offset).ravel()
 
 
+def _smooth2d(arr, sigma: float) -> np.ndarray:
+    """Apply an isotropic Gaussian low-pass to a 2D field (grid-point sigma)."""
+    a = np.asarray(getattr(arr, 'values', arr), dtype=np.float32)
+    return gaussian_filter(a, sigma=sigma, mode='nearest')
+
+
 def build_all_histograms(
     times: list,
     ts_dirs: dict,
@@ -52,6 +59,7 @@ def build_all_histograms(
     hist_bins: np.ndarray,
     log_interval: int,
     logger: logging.Logger,
+    smoothing_sigma: float | None = None,
 ) -> tuple:
     """Single serial pass over all timesteps, building histograms for every mode."""
     n_land = land_idx.size
@@ -67,6 +75,8 @@ def build_all_histograms(
     skip_preds = False
 
     def accumulate(counts, channel_arrs):
+        if smoothing_sigma is not None:
+            channel_arrs = [_smooth2d(a, smoothing_sigma) for a in channel_arrs]
         flats = [to_flat(a, conv, offset) for a in channel_arrs]
         vals = reduce_fn(flats)[land_idx]
         bin_idx = np.searchsorted(interior_edges, vals, side='right')
@@ -182,9 +192,9 @@ def compute_quantiles(
 
 
 def _ensemble_stats(member_qs, target_q):
-    """Compute ensemble spread, and the MAE / bias plot entries.
+    """Compute ensemble spread, and the MAE / bias / FBI plot entries.
 
-    All three quantities use the same local-then-averaged estimator: a statistic
+    All quantities use the same local-then-averaged estimator: a statistic
     is formed per grid point across ensemble members, then averaged over land.
     """
     n_members = len(member_qs)
@@ -192,7 +202,11 @@ def _ensemble_stats(member_qs, target_q):
     sumsq_q = np.zeros(target_q.shape, dtype=np.float64)
     sum_ae = np.zeros(target_q.shape, dtype=np.float64)
     sumsq_ae = np.zeros(target_q.shape, dtype=np.float64)
+    sum_fbi = np.zeros(target_q.shape, dtype=np.float64)
+    sumsq_fbi = np.zeros(target_q.shape, dtype=np.float64)
     target_q_f = target_q.astype(np.float64)
+    # FBI is a quantile ratio q_pred / q_target; guard against zero targets.
+    target_q_safe = np.where(target_q_f != 0.0, target_q_f, np.nan)
 
     for qm in member_qs:
         qm_f = qm.astype(np.float64)
@@ -201,6 +215,9 @@ def _ensemble_stats(member_qs, target_q):
         ae = np.abs(qm_f - target_q_f)
         sum_ae += ae
         sumsq_ae += ae ** 2
+        fbi = qm_f / target_q_safe
+        sum_fbi += fbi
+        sumsq_fbi += fbi ** 2
 
     mean_q = sum_q / n_members
     var_q = np.maximum(sumsq_q / n_members - mean_q ** 2, 0.0)
@@ -216,7 +233,11 @@ def _ensemble_stats(member_qs, target_q):
     # constant across members); both are then averaged over land.
     bias_entry = ((mean_q - target_q_f).mean(axis=0), std_q.mean(axis=0))
 
-    return spread, mae_entry, bias_entry
+    mean_fbi = sum_fbi / n_members
+    var_fbi = np.maximum(sumsq_fbi / n_members - mean_fbi ** 2, 0.0)
+    fbi_entry = (np.nanmean(mean_fbi, axis=0), np.nanmean(np.sqrt(var_fbi), axis=0))
+
+    return spread, mae_entry, bias_entry, fbi_entry
 
 
 def new_percentile_axes(percentile_values: np.ndarray):
@@ -313,9 +334,11 @@ class BiasByPercentileSpec:
     bias_title: str
     mae_title: str
     spread_title: str
+    fbi_title: str
     bias_ylabel: str
     mae_ylabel: str
     spread_ylabel: str
+    fbi_ylabel: str
     percentile_values: np.ndarray
     resolve_channels: Callable[[dict], tuple]   # indices -> (ch_out, ch_in); raises ValueError
     make_hist_bins: Callable[[dict], np.ndarray]
@@ -323,6 +346,7 @@ class BiasByPercentileSpec:
     save_bias: Callable
     save_mae: Callable
     save_spread: Callable
+    save_fbi: Callable
     # Combines the (scaled) per-channel flat fields into the plotted scalar.
     # Defaults to the single-channel identity; wind speed uses ``hypot``.
     reduce_fn: Callable[[list], np.ndarray] = lambda flats: flats[0]
@@ -366,6 +390,17 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     log_interval = cfg.get("log_interval", 24)
     conv, offset = spec.read_scaling(cfg)
 
+    smoothing_km = cfg.get("smoothing_sigma_km")
+    grid_res_km = cfg.get("grid_res_km", 1.0)
+    smoothing_sigma = (smoothing_km / grid_res_km) if smoothing_km else None
+    if smoothing_sigma is not None:
+        logger.info(
+            f"Gaussian smoothing enabled: sigma = {smoothing_km} km "
+            f"/ {grid_res_km} km = {smoothing_sigma:.3g} grid points"
+        )
+    suffix = f"_smoothed{int(smoothing_km)}km" if smoothing_km else ""
+    title_note = f" ({int(smoothing_km)} km smoothed)" if smoothing_km else ""
+
     percentile_values = spec.percentile_values
     frac_percentiles = percentile_values / 100.0
 
@@ -375,6 +410,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     det_counts, member_counts, n_members = build_all_histograms(
         times, ts_dirs, out_channels, in_channels, spec.reduce_fn, conv, offset,
         land_idx, hist_bins, log_interval, logger,
+        smoothing_sigma=smoothing_sigma,
     )
 
     if det_counts.get('target') is None:
@@ -393,9 +429,12 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     )
 
     target_mean_q = target_q.mean(axis=0)
+    # FBI is a per-point quantile ratio q_pred / q_target; guard zero targets.
+    target_q_safe = np.where(target_q != 0.0, target_q, np.nan)
 
     bias_data: dict = {}
     mae_data: dict = {}
+    fbi_data: dict = {}
     labels: list = []
     colors: list = []
 
@@ -405,43 +444,53 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         pred_q = det_results.pop(mode)
         bias_data[mode] = pred_q.mean(axis=0) - target_mean_q
         mae_data[mode] = np.abs(pred_q - target_q).mean(axis=0)
+        fbi_data[mode] = np.nanmean(pred_q / target_q_safe, axis=0)
         labels.append(label)
         colors.append(color)
 
     spread = None
     if has_ensemble:
-        spread, mae_entry, bias_entry = _ensemble_stats(
+        spread, mae_entry, bias_entry, fbi_entry = _ensemble_stats(
             member_qs, target_q,
         )
         bias_data['predictions'] = bias_entry
         mae_data['predictions'] = mae_entry
+        fbi_data['predictions'] = fbi_entry
         labels.append(ENSEMBLE_LABEL)
         colors.append(ENSEMBLE_COLOR)
 
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps") / "by_percentile"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    fn = output_path / f'{spec.output_prefix}_bias_by_percentile.png'
+    fn = output_path / f'{spec.output_prefix}_bias_by_percentile{suffix}.png'
     spec.save_bias(
         bias_data, percentile_values, labels, colors,
-        title=spec.bias_title, xlabel='Percentile', ylabel=spec.bias_ylabel,
+        title=spec.bias_title + title_note, xlabel='Percentile', ylabel=spec.bias_ylabel,
         out_path=fn, mean_q=target_mean_q,
     )
     logger.info(f"Bias-by-percentile plot saved: {fn}")
 
-    fn_mae = output_path / f'{spec.output_prefix}_mae_by_percentile.png'
+    fn_mae = output_path / f'{spec.output_prefix}_mae_by_percentile{suffix}.png'
     spec.save_mae(
         mae_data, percentile_values, labels, colors,
-        title=spec.mae_title, xlabel='Percentile', ylabel=spec.mae_ylabel,
+        title=spec.mae_title + title_note, xlabel='Percentile', ylabel=spec.mae_ylabel,
         out_path=fn_mae, mean_q=target_mean_q,
     )
     logger.info(f"MAE-by-percentile plot saved: {fn_mae}")
 
+    fn_fbi = output_path / f'{spec.output_prefix}_fbi_by_percentile{suffix}.png'
+    spec.save_fbi(
+        fbi_data, percentile_values, labels, colors,
+        title=spec.fbi_title + title_note, xlabel='Percentile', ylabel=spec.fbi_ylabel,
+        out_path=fn_fbi, mean_q=target_mean_q,
+    )
+    logger.info(f"FBI-by-percentile plot saved: {fn_fbi}")
+
     if spread is not None:
-        fn_spread = output_path / f'{spec.output_prefix}_spread_by_percentile.png'
+        fn_spread = output_path / f'{spec.output_prefix}_spread_by_percentile{suffix}.png'
         spec.save_spread(
             spread, percentile_values,
-            title=spec.spread_title, xlabel='Percentile', ylabel=spec.spread_ylabel,
+            title=spec.spread_title + title_note, xlabel='Percentile', ylabel=spec.spread_ylabel,
             out_path=fn_spread, mean_q=target_mean_q,
         )
         logger.info(f"Spread-by-percentile plot saved: {fn_spread}")
