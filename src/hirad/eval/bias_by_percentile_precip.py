@@ -75,14 +75,15 @@ def save_spread_by_percentile_plot(spread, percentile_values,
 
 def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors,
                                 title, xlabel, ylabel, out_path, mean_q=None) -> None:
-    """Save a frequency-bias-index-by-percentile figure (linear y-axis, ratio around 1)."""
+    """Save a frequency-bias-index-by-percentile figure (log y-axis, ratio around 1)."""
     _, ax, frac = new_percentile_axes(percentile_values)
-    all_vals = plot_dict_curves(ax, frac, fbi_data_dict, labels, colors, lower_clip=0)
+    all_vals = plot_dict_curves(ax, frac, fbi_data_dict, labels, colors, lower_clip=1e-3)
     ax.axhline(1.0, color='black', linewidth=0.8, linestyle='--')
+    ax.set_yscale('log')
     if all_vals:
-        ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.1
-        if ymax > 1.0:
-            ax.set_ylim(0, ymax)
+        ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.5
+        ymin = float(min(np.nanmin(v) for v in all_vals)) / 1.5
+        ax.set_ylim(max(ymin, 1e-3), max(ymax, 2.0))
     finalize_percentile_plot(ax, frac,
                              lambda ax_, frac_, mq: _apply_logit_xaxis(ax_, frac_, mq, xlim_left=0.10),
                              mean_q, xlabel, ylabel, title, out_path)
