@@ -12,6 +12,7 @@ CMDS=(
     "python src/hirad/eval/probability_of_exceedance_wind.py"
     # QQ
     "python -m hirad.eval.bias_by_percentile_wind"
+    "python -m hirad.eval.bias_by_percentile_wind_smoothed"
     # Maps
     "python src/hirad/eval/map_wind_stats.py"
 )
