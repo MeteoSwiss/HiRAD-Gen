@@ -18,16 +18,18 @@ from hirad.eval.bias_by_percentile_common import (
 from hirad.eval.eval_utils import parse_eval_cli
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
+                       xlim_left: float | None = None) -> None:
     """Apply logit x-axis with labelled percentile ticks (and an m/s secondary axis)."""
     ax.set_xscale('logit')
+    if xlim_left is None:
+        xlim_left = float(frac[0])
     xlim_right = frac[-1] + 1e-9
-    ax.set_xlim(frac[0], xlim_right)
+    ax.set_xlim(xlim_left, xlim_right)
     tick_fracs  = [0.00001, 0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999, 0.99999]
     tick_labels = ['0.001', '0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99', '99.999']
-    # only show ticks within our data range
     valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
-                   if frac[0] <= f <= xlim_right]
+                   if xlim_left <= f <= xlim_right]
     ax.set_xticks([f for f, _ in valid_ticks])
     ax.set_xticklabels([l for _, l in valid_ticks])
     ax.grid(True, alpha=0.3, which='both')
@@ -35,13 +37,11 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -
     if mean_q is not None:
         ax2 = ax.twiny()
         ax2.set_xscale('logit')
-        ax2.set_xlim(frac[0], xlim_right)
-        # Wind speed spans only a few m/s, so integer-only ticks leave the
-        # compressed tail unlabelled; even_value_ticks picks a nice sub-unit step
-        # and spreads labels evenly across the whole logit axis.
+        ax2.set_xlim(xlim_left, xlim_right)
         tick_positions, tick_speeds = even_value_ticks(frac, mean_q)
-        ax2.set_xticks(tick_positions)
-        ax2.set_xticklabels([f'{v:g}' for v in tick_speeds])
+        valid = (tick_positions >= xlim_left) & (tick_positions <= xlim_right)
+        ax2.set_xticks(tick_positions[valid])
+        ax2.set_xticklabels([f'{v:g}' for v in tick_speeds[valid]])
         ax2.set_xlabel('Mean target [m/s]')
 
 
@@ -95,8 +95,9 @@ def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors
         ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.1
         if ymax > 1.0:
             ax.set_ylim(0, ymax)
-    finalize_percentile_plot(ax, frac, _apply_logit_xaxis, mean_q,
-                             xlabel, ylabel, title, out_path)
+    finalize_percentile_plot(ax, frac,
+                             lambda ax_, frac_, mq: _apply_logit_xaxis(ax_, frac_, mq, xlim_left=0.10),
+                             mean_q, xlabel, ylabel, title, out_path)
 
 
 def _resolve_channels(indices: dict) -> tuple:
