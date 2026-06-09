@@ -10,6 +10,9 @@ import xarray as xr
 
 from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
 
+ALLHOUR_THRESHOLDS = [0.1, 1.0, 10.0, 100.0]  # mm/h
+
+
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     hrs = np.concatenate([hour.values, [24]])
     plt.figure(figsize=(8,4))
@@ -30,6 +33,37 @@ def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path)
     plt.close()
+
+
+def save_allhour_wethours_plot(thresholds, mode_data, labels, title, out_path):
+    """Bar chart of all-hour wet-hour fraction (%) per threshold.
+
+    mode_data: list of dicts {thr: (mean_pct, std_pct_or_None)}
+    """
+    n_thr = len(thresholds)
+    n_modes = len(mode_data)
+    x = np.arange(n_thr)
+    width = 0.7 / n_modes
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for i, (data, label) in enumerate(zip(mode_data, labels)):
+        offset = (i - n_modes / 2 + 0.5) * width
+        means = [data[thr][0] for thr in thresholds]
+        stds  = [data[thr][1] if data[thr][1] is not None else 0.0 for thr in thresholds]
+        ax.bar(x + offset, means, width, label=label, alpha=0.8)
+        if any(s > 0 for s in stds):
+            ax.errorbar(x + offset, means, yerr=stds, fmt='none', color='black', capsize=3)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f'>{thr:g} mm/h' for thr in thresholds])
+    ax.set_ylabel('Wet-Hour Fraction [%]')
+    ax.set_yscale('log')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, axis='y', alpha=0.3, which='both')
+    plt.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path)
+    plt.close()
+
 
 def main(cfg: dict):
     # Setup logging
@@ -61,7 +95,10 @@ def main(cfg: dict):
 
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
-    target_wet, baseline_wet, pred_wet, mean_pred_wet = [], [], [], []
+    wet_target   = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_baseline = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_pred     = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_regpred  = {thr: [] for thr in ALLHOUR_THRESHOLDS}
 
     # Collect data
     for idx, ts in enumerate(times, 1):
@@ -95,12 +132,13 @@ def main(cfg: dict):
         if mean_pred is not None:
             mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction, i.e., freq(precip) > wet_threshold
-        target_wet.append(((da_target / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
-        baseline_wet.append(((da_baseline / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
-        pred_wet.append(((da_preds / 24> cfg.get("wet_threshold")).mean(dim=("lat","lon")).assign_coords(time=dt)))
-        if mean_pred is not None:
-            mean_pred_wet.append(((da_mean_pred / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
+        # Wet-hour fraction per threshold
+        for thr in ALLHOUR_THRESHOLDS:
+            wet_target[thr].append((da_target / 24 > thr).mean().assign_coords(time=dt))
+            wet_baseline[thr].append((da_baseline / 24 > thr).mean().assign_coords(time=dt))
+            wet_pred[thr].append((da_preds / 24 > thr).mean(dim=('lat', 'lon')).assign_coords(time=dt))
+            if mean_pred is not None:
+                wet_regpred[thr].append((da_mean_pred / 24 > thr).mean().assign_coords(time=dt))
 
         if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -112,11 +150,11 @@ def main(cfg: dict):
     if mean_pred_precip:
         amount_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_precip)
 
-    wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to obtain percentages
-    wet_baseline_mean, _ = concat_and_group_diurnal(baseline_wet, scale=100.0)
-    wet_pred_mean, wet_pred_std = concat_and_group_diurnal(pred_wet, is_member=True, scale=100.0)
-    if mean_pred_wet:
-        wet_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wet, scale=100.0)
+    wet_target_mean, _ = concat_and_group_diurnal(wet_target[0.1], scale=100.0)
+    wet_baseline_mean, _ = concat_and_group_diurnal(wet_baseline[0.1], scale=100.0)
+    wet_pred_mean, wet_pred_std = concat_and_group_diurnal(wet_pred[0.1], is_member=True, scale=100.0)
+    if wet_regpred[0.1]:
+        wet_mean_pred_mean, _ = concat_and_group_diurnal(wet_regpred[0.1], scale=100.0)
 
     # Generate plots
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
@@ -132,13 +170,33 @@ def main(cfg: dict):
     )
     save_plot(
         wet_target_mean.hour,
-        [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if mean_pred_wet else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
-        [None, None, wet_pred_std, None] if mean_pred_wet else [None, None, wet_pred_std],
-        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wet else ['Target','Input','CorrDiff ± Std(Members)'],
+        [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if wet_regpred[0.1] else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
+        [None, None, wet_pred_std, None] if wet_regpred[0.1] else [None, None, wet_pred_std],
+        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if wet_regpred[0.1] else ['Target','Input','CorrDiff ± Std(Members)'],
         'Wet-Hour Fraction [%]',
         'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
         output_path / 'diurnal_cycle_precip_wethours.png'
     )
+
+    # All-hour wet-hour fraction bar chart
+    pred_all = {thr: xr.concat(wet_pred[thr], dim='time').values.ravel() for thr in ALLHOUR_THRESHOLDS}
+    allhour_mode_data = [
+        {thr: (float(xr.concat(wet_target[thr],   dim='time').mean()) * 100, None) for thr in ALLHOUR_THRESHOLDS},
+        {thr: (float(xr.concat(wet_baseline[thr], dim='time').mean()) * 100, None) for thr in ALLHOUR_THRESHOLDS},
+        {thr: (float(pred_all[thr].mean()) * 100, float(pred_all[thr].std()) * 100) for thr in ALLHOUR_THRESHOLDS},
+    ]
+    allhour_labels = ['Target', 'Input', 'CorrDiff ± Std(Members)']
+    if any(wet_regpred[thr] for thr in ALLHOUR_THRESHOLDS):
+        allhour_mode_data.append(
+            {thr: (float(xr.concat(wet_regpred[thr], dim='time').mean()) * 100, None) for thr in ALLHOUR_THRESHOLDS}
+        )
+        allhour_labels.append('Regression Prediction')
+    fn_allhour = output_path / 'allhour_wethours.png'
+    save_allhour_wethours_plot(
+        ALLHOUR_THRESHOLDS, allhour_mode_data, allhour_labels,
+        'All-Hour Wet-Hour Fraction', fn_allhour,
+    )
+    logger.info(f"All-hour wet-hour plot saved: {fn_allhour}")
 
     logger.info("Plots saved.")
 
