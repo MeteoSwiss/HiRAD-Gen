@@ -10,6 +10,8 @@ CMDS=(
     "python src/hirad/eval/diurnal_cycle_temp.py"
     # QQ
     "python -m hirad.eval.bias_by_percentile_temp"
+    # Maps
+    "python src/hirad/eval/map_temp_stats.py"
 )
 
 for cmd in "${CMDS[@]}"; do
