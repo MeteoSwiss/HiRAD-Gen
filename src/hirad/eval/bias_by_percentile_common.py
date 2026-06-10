@@ -74,8 +74,8 @@ def build_all_histograms(
     skip_det: set = set()
     skip_preds = False
 
-    def accumulate(counts, channel_arrs):
-        if smoothing_sigma is not None:
+    def accumulate(counts, channel_arrs, smooth: bool = True):
+        if smoothing_sigma is not None and smooth:
             channel_arrs = [_smooth2d(a, smoothing_sigma) for a in channel_arrs]
         flats = [to_flat(a, conv, offset) for a in channel_arrs]
         vals = reduce_fn(flats)[land_idx]
@@ -101,7 +101,8 @@ def build_all_histograms(
                 logger.warning(f"  [{mode}] file not found at {ts}, skipping mode")
                 skip_det.add(mode)
                 continue
-            accumulate(det_counts[mode], [loaded[c] for c in chans])
+            accumulate(det_counts[mode], [loaded[c] for c in chans],
+                       smooth=mode != 'baseline')
 
         if not skip_preds:
             try:
