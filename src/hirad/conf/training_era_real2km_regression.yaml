@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: regression_era_real2km
+    name: regression_era_real2km_2
   run:
-    dir: ./outputs/training/${hydra:job.name}
+    dir: /capstor/scratch/cscs/mmcgloho/outputs/training/${hydra:job.name}
 
 
 # Get defaults

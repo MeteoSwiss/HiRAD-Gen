@@ -16,7 +16,7 @@ hp:
 # Performance
 perf:
     fp_optimizations: amp-bf16
-    dataloader_workers: 30
+    dataloader_workers: 10 # was 30; running out of shared memory
     songunet_checkpoint_level: 0
     use_apex_gn: True
     torch_compile: True
