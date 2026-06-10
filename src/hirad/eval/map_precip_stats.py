@@ -128,11 +128,6 @@ def plot_stat_map(data, filename, stat_config, label, grid_cfg):
         )
 
 
-def _load_predictions_all_members(filepath, conv_factor):
-    """Load prediction file once and return (n_members, C, H, W) tensor."""
-    return torch.load(filepath, weights_only=False) * conv_factor
-
-
 def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -203,7 +198,7 @@ def main(cfg: dict):
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for {mode}...")
             result = apply_statistic(mode_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
-            map_output_dir = output_path / f"maps_{stat_config['stat_name']}"
+            map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg)
 
@@ -234,7 +229,7 @@ def main(cfg: dict):
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for member {member_idx+1}...")
             member_result = apply_statistic(member_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
-            map_output_dir = output_path / f"maps_{stat_config['stat_name']}"
+            map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
             member_label = f'CorrDiff Member {member_idx+1}'
