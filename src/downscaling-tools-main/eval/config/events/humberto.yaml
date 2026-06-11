@@ -1,0 +1,11 @@
+name: humberto
+full_name: "Hurricane Humberto"
+lat_min: 15.0
+lat_max: 45.0
+lon_min: -90.0
+lon_max: -50.0
+dates: ["26", "27", "28", "29", "30"]
+analysis_dates: ["20250926"]
+year: "2025"
+month: "09"
+pressure_threshold: 1013.25

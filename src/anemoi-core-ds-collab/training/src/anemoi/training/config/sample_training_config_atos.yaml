@@ -8,9 +8,9 @@ config_validation: False
 # Datal config
 # ===================
 variables:
-  in_lres_variables: [2t, sp]
-  out_hres_variables: [2t, sp]
-  residual_variables: [sp]
+  in_lres_variables: [2t]
+  out_hres_variables: [2t]
+  residual_variables: []
   direct_prediction_fields: [2t]
   hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
 

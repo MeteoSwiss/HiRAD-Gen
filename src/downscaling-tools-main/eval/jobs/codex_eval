@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") --expver <EXPVER> [extra autopilot args]
+  $(basename "$0") --run-id <RUN_ID> [extra autopilot_predictions args]
+
+Example:
+  $(basename "$0") --expver j24v
+  $(basename "$0") --run-id p25a
+EOF
+}
+
+if [[ $# -lt 2 ]]; then
+  usage
+  exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+EVAL_ROOT="${EVAL_ROOT:-/home/ecm5702/scratch/eval}"
+
+MODE="$1"
+TARGET="$2"
+shift 2
+
+case "${MODE}" in
+  --expver)
+    RUN_NAME="${TARGET}"
+    AUTOPILOT="${PROJECT_ROOT}/eval/jobs/autopilot.py"
+    LOG_FILE_BASENAME="autopilot_background.log"
+    PID_FILE_BASENAME="autopilot.pid"
+    ARGS=(--expver "${TARGET}")
+    ;;
+  --run-id)
+    RUN_NAME="${TARGET}"
+    AUTOPILOT="${PROJECT_ROOT}/eval/jobs/autopilot_predictions.py"
+    LOG_FILE_BASENAME="autopilot_predictions_background.log"
+    PID_FILE_BASENAME="autopilot_predictions.pid"
+    ARGS=(--run-id "${TARGET}")
+    ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "First argument must be --expver or --run-id, got: ${MODE}" >&2
+    usage
+    exit 2
+    ;;
+esac
+
+if [[ "${RUN_NAME}" == *"/"* ]]; then
+  echo "Unsafe target name (contains '/'): ${RUN_NAME}" >&2
+  exit 2
+fi
+if [[ ! "${RUN_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Unsafe target name: ${RUN_NAME}" >&2
+  echo "Allowed pattern: [A-Za-z0-9._-]+" >&2
+  exit 2
+fi
+
+EXTRA_ARGS=("$@")
+for ((idx=0; idx<${#EXTRA_ARGS[@]}; idx++)); do
+  if [[ "${EXTRA_ARGS[$idx]}" == "--eval-root" && $((idx + 1)) -lt ${#EXTRA_ARGS[@]} ]]; then
+    EVAL_ROOT="${EXTRA_ARGS[$((idx + 1))]}"
+  fi
+done
+
+LOG_DIR="${EVAL_ROOT}/${RUN_NAME}/logs"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/${LOG_FILE_BASENAME}"
+PID_FILE="${LOG_DIR}/${PID_FILE_BASENAME}"
+
+nohup "${PYTHON_BIN}" "${AUTOPILOT}" "${ARGS[@]}" "$@" > "${LOG_FILE}" 2>&1 &
+PID=$!
+echo "${PID}" > "${PID_FILE}"
+
+echo "Autopilot started in background."
+echo "target: ${RUN_NAME}"
+echo "pid: ${PID}"
+echo "log: ${LOG_FILE}"
+if [[ "${MODE}" == "--expver" ]]; then
+  echo "state: ${LOG_DIR}/autopilot_state.json"
+else
+  echo "state: ${LOG_DIR}/autopilot_predictions_state.json"
+fi
+
+# /home/ecm5702/dev/downscaling-tools/eval/jobs/codex_eval --expver j24v

@@ -1,0 +1,105 @@
+prepare:
+  bundle_filename_tpl: "enfo_o48_0001_date{date}_time0000_mem{member:02d}_step{step:03d}h_input_bundle.nc"
+  args:
+    lres_sfc_grib:   "{source_grib_root}/enfo_o48_0001_date{date}_time0000_mem1to10_step24to120_sfc.grib"
+    lres_pl_grib:    "{source_grib_root}/enfo_o48_0001_date{date}_time0000_mem1to10_step24to120_pl.grib"
+    hres_grib:       "{source_grib_root}/enfo_o96_0001_date{date}_time0000_step24to120_sfc.grib"
+    target_sfc_grib: "{source_grib_root}/iekm_o96_iekm_date{date}_time0000_step24to120_sfc_y.grib"
+    target_pl_grib:  "{source_grib_root}/iekm_o96_iekm_date{date}_time0000_step24to120_pl_y.grib"
+  optional_sidecars:
+    - file: "{source_grib_root}/enfo_o48_0001_date{date}_time0000_mem1to10_step24to120_sfc_tp.grib"
+      arg:  lres_sfc_extra_grib
+    - file: "{source_grib_root}/iekm_o96_iekm_date{date}_time0000_step24to120_sfc_y_tp.grib"
+      arg:  target_sfc_extra_grib
+
+predict:
+  input_root: /home/ecm5702/hpcperm/data/input_data/o48_o96/humberto_20250926_20250930
+  members: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  steps: [24, 48, 72, 96, 120]
+  dates: ["20250926", "20250927", "20250928", "20250929", "20250930"]
+  sampler:
+    schedule_type: "experimental_piecewise"
+    num_steps: 21
+    sigma_max: 1000.0
+    sigma_transition: 10.0
+    sigma_min: 0.03
+    high_schedule_type: "exponential"
+    low_schedule_type: "karras"
+    num_steps_high: 5
+    num_steps_low: 16
+    rho: 7.0
+    sampler: "heun"
+    S_churn: 2.5
+    S_min: 0.75
+    S_max: 1000.0
+    S_noise: 1.05
+
+tc:
+  beta: 0.5
+  mslp_ref: 1013.25
+  events: ["humberto"]
+  tail_keys: ["mslp_p1", "mslp_p01", "mslp_min", "wind_p99", "wind_p999", "wind_max"]
+  grib_dir: "/home/ecm5702/perm/reference/o48_o96/tc"
+  analysis_expid: "OPER_O96_0001"
+  reference_expids: ["ENFO_O48_0001"]
+  target_grib: "/home/ecm5702/hpcperm/data/input_data/o48_o96/humberto_20250926_20250930/iekm_o96_iekm_date*_time0000_step24to120_sfc_y.grib"
+  target_label: "IEKM_O96"
+  support_mode: "regridded"
+
+spectra:
+  fields: ["10u", "10v", "2t", "msl", "t_850", "z_500"]
+  wavenumber_threshold: 100.0
+
+surface:
+  weighting: "truth-std"
+
+regions:
+  interesting:
+    humberto_atlantic: [5.0, 45.0, -80.0, -40.0]
+    eastern_us_coast: [10.0, 55.0, -110.0, -45.0]
+    caribbean_and_antilles: [8.0, 28.0, -90.0, -55.0]
+    amazon_forest_core: [-25.0, 15.0, -90.0, -30.0]
+    andes_central: [-50.0, -5.0, -95.0, -45.0]
+
+region_plot:
+  region_names:
+    - humberto_atlantic
+    - eastern_us_coast
+    - caribbean_and_antilles
+    - amazon_forest_core
+    - andes_central
+
+evaluator_groups:
+  default: [tc, spectra, surface, region_plot]
+  diagnostics: [sigma, mechanistic, intermediate, spectra_ecmwf, mlflow]
+
+resource_profiles:
+  predict:
+    qos: ng
+    gpus: 1
+    time: "12:00:00"
+    mem: "0"
+    cpus: 16
+  evaluate:
+    time: "04:00:00"
+    mem: 128G
+  evaluate_tc:
+    time: "06:00:00"
+    mem: 128G
+    cpus: 4
+  evaluate_spectra:
+    time: "08:00:00"
+    mem: 128G
+  evaluate_region_plot:
+    time: "06:00:00"
+    mem: 128G
+    cpus: 8
+  evaluate_sigma:
+    gpus: 1
+    time: "01:00:00"
+    mem: 64G
+    cpus: 8
+  scoreboard:
+    time: "00:30:00"
+    mem: 16G
+    cpus: 1

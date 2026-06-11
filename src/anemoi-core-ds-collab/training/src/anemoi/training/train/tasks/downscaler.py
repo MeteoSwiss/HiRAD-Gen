@@ -185,15 +185,22 @@ class GraphDiffusionDownscaler(BaseGraphModule):
             x_in_interp_to_hres[..., self.x_in_matching_channel_indices],
         )
 
+        # log residual statistics for plotting/debugging.
+        self._log_residual_statistics(residuals_target)
+        self._log_data_statistics(x_in_interp_to_hres, "input_lres_pre_norm")
+
         # Y = Y[:, :, :, ..., self.data_indices.data.output.full] #(see if necessary)
 
         x_in_interp_to_hres = self.model.pre_processors(
             x_in_interp_to_hres, dataset="input_lres"
         )  # need in place ?, in_place=False)
+        self._log_data_statistics(x_in_interp_to_hres, "input_lres_post_norm")
         # x_in_interp_to_hres = x_in_interp_to_hres[  :, :, ..., self.data_indices.data.input[0].full] (see if necessary)
+        self._log_data_statistics(x_in_hres, "input_hres_pre_norm")
         x_in_hres = self.model.pre_processors(
             x_in_hres, dataset="input_hres"
         )  # , in_place=False
+        self._log_data_statistics(x_in_hres, "input_hres_post_norm")
         # x_in_hres = x_in_hres[:, :, ..., self.data_indices.data.input[1].full]
         residuals_target = self.model.pre_processors(residuals_target, dataset="output")
 
@@ -246,6 +253,66 @@ class GraphDiffusionDownscaler(BaseGraphModule):
         y_preds = [x_in_interp_to_hres[..., self.x_in_matching_channel_indices] + y_pred, y_pred]
 
         return loss, metrics_next, y_preds
+
+    def _log_residual_statistics(self, residuals: torch.Tensor) -> None:
+        """Log per-variable statistics of raw (pre-normalization) residuals.
+
+        Parameters
+        ----------
+        residuals : torch.Tensor
+            Shape [batch, dates, ensemble, gridpoints, variables], raw physical units.
+        """
+        var_names = list(self.data_indices.data.output.name_to_index.keys())
+        r = residuals.detach().float()
+        for var_idx, var_name in enumerate(var_names):
+            r_var = r[..., var_idx]
+            for stat_name, value in (
+                ("mean", r_var.mean()),
+                ("std", r_var.std()),
+                ("min", r_var.min()),
+                ("max", r_var.max()),
+            ):
+                self.log(
+                    f"residuals_raw/{stat_name}/{var_name}",
+                    value,
+                    on_epoch=True,
+                    on_step=False,
+                    logger=self.logger_enabled,
+                    sync_dist=True,
+                )
+
+    def _log_data_statistics(self, data: torch.Tensor, prefix: str) -> None:
+        """Log per-variable statistics of data, either before or after normalization.
+
+        Parameters
+        ----------
+        data : torch.Tensor
+            Shape [batch, dates, ensemble, gridpoints, variables], raw physical units.
+        prefix : str
+            Logging prefix; use "lres" in the prefix for lres input tensors so the
+            correct (input[0]) variable names are used instead of output names.
+        """
+        if "lres" in prefix:
+            var_names = list(self.data_indices.data.input[0].name_to_index.keys())
+        else:
+            var_names = list(self.data_indices.data.output.name_to_index.keys())
+        r = data.detach().float()
+        for var_idx, var_name in enumerate(var_names):
+            r_var = r[..., var_idx]
+            for stat_name, value in (
+                ("mean", r_var.mean()),
+                ("std", r_var.std()),
+                ("min", r_var.min()),
+                ("max", r_var.max()),
+            ):
+                self.log(
+                    f"{prefix}/{stat_name}/{var_name}",
+                    value,
+                    on_epoch=True,
+                    on_step=False,
+                    logger=self.logger_enabled,
+                    sync_dist=True,
+                )
 
     def _noise_target(self, x: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
         """Add noise to the state."""

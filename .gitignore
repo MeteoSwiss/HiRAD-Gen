@@ -181,6 +181,7 @@ src/anemoi-core-ds-collab/outputs/*
 src/anemoi-core-ds-collab/anemoi-config-examples/outputs/*
 src/anemoi-core-ds-collab/training/outputs/*
 logs/*
+src/anemoi-core-ds-collab/anemoi-config-examples/outputs/*
 
 # conda
 .conda/*

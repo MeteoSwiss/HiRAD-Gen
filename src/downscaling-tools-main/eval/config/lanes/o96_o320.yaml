@@ -1,0 +1,99 @@
+predict:
+  members: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  steps: [24, 48, 72, 96, 120]
+  dates: ["20230826", "20230827", "20230828", "20230829", "20230830"]
+  sampler:
+    schedule_type: "experimental_piecewise"
+    num_steps: 30
+    sigma_max: 1000.0
+    sigma_transition: 10.0
+    sigma_min: 0.03
+    high_schedule_type: "exponential"
+    low_schedule_type: "karras"
+    num_steps_high: 10
+    num_steps_low: 20
+    rho: 7.0
+    sampler: "heun"
+    S_churn: 2.5
+    S_min: 0.75
+    S_max: 1000.0
+    S_noise: 1.05
+
+tc:
+  beta: 0.5
+  mslp_ref: 1013.25
+  events: ["idalia", "franklin"]
+  tail_keys: ["mslp_p1", "mslp_p01", "mslp_min", "wind_p99", "wind_p999", "wind_max"]
+  grib_dir: "/home/ecm5702/perm/reference/o96_o320/tc"
+  analysis_expid: "OPER_O320_0001"
+  reference_expids: ["EEFO_O96_0001", "ENFO_O320_0001"]
+  support_mode: "regridded"
+  member_maps:
+    enabled: true
+    dates: ["20230829", "20230828"]
+    steps: [24, 120]
+    members: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+spectra:
+  fields: ["10u", "10v", "2t", "msl", "t_850", "z_500"]
+  wavenumber_threshold: 100.0
+
+surface:
+  weighting: "truth-std"
+
+regions:
+  interesting:
+    amazon_forest: [-15.0, 5.0, -75.0, -45.0]
+    european_arctic: [-25.0, 0.0, 75.0, 90.0]
+    himalayas: [25.0, 40.0, 75.0, 100.0]
+    rocky_mountains: [35.0, 50.0, -120.0, -100.0]
+    west_sahara: [15.0, 30.0, -20.0, 0.0]
+    pyrenees_alpes: [40.0, 50.0, 0.0, 10.0]
+    eastern_us: [25.0, 45.0, -90.0, -70.0]
+    central_africa: [-10.0, 10.0, 10.0, 30.0]
+
+region_plot:
+  region_names:
+    - amazon_forest
+    - european_arctic
+    - himalayas
+    - rocky_mountains
+    - west_sahara
+    - pyrenees_alpes
+    - eastern_us
+    - central_africa
+
+evaluator_groups:
+  default: [tc, spectra, surface, region_plot]
+  diagnostics: [sigma, mechanistic, intermediate, spectra_ecmwf, mlflow]
+
+resource_profiles:
+  predict:
+    qos: ng
+    gpus: 1
+    time: "12:00:00"
+    mem: "0"
+    cpus: 16
+  evaluate:
+    time: "04:00:00"
+    mem: 128G
+  evaluate_tc:
+    time: "06:00:00"
+    mem: 256G
+    cpus: 4
+  evaluate_spectra:
+    time: "08:00:00"
+    mem: 128G
+  evaluate_region_plot:
+    time: "06:00:00"
+    mem: 256G
+    cpus: 8
+  evaluate_sigma:
+    gpus: 1
+    time: "01:00:00"
+    mem: 64G
+    cpus: 8
+  scoreboard:
+    time: "00:30:00"
+    mem: 16G
+    cpus: 1

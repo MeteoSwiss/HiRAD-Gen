@@ -1,0 +1,59 @@
+{
+    "description": "O96->O320 TC scoring with explicit canonical analysis. Model is between OPER and ENFO. Hand-verified.",
+    "events": {
+        "idalia": {
+            "extreme_tail": {
+                "rows": [
+                    {
+                        "exp": "OPER_O320_0001",
+                        "mslp_p1": 970.0,
+                        "mslp_p01": 965.0,
+                        "mslp_min": 960.0,
+                        "wind_p99": 30.0,
+                        "wind_p999": 35.0,
+                        "wind_max": 40.0
+                    },
+                    {
+                        "exp": "ENFO_O320_0001",
+                        "mslp_p1": 980.0,
+                        "mslp_p01": 975.0,
+                        "mslp_min": 970.0,
+                        "wind_p99": 25.0,
+                        "wind_p999": 28.0,
+                        "wind_max": 32.0
+                    },
+                    {
+                        "exp": "EEFO_O96_0001",
+                        "mslp_p1": 1005.0,
+                        "mslp_p01": 1003.0,
+                        "mslp_min": 1000.0,
+                        "wind_p99": 8.0,
+                        "wind_p999": 10.0,
+                        "wind_max": 12.0
+                    },
+                    {
+                        "exp": "manual_0c446b41_new_o96_o320",
+                        "mslp_p1": 975.0,
+                        "mslp_p01": 970.0,
+                        "mslp_min": 965.0,
+                        "wind_p99": 28.0,
+                        "wind_p999": 32.0,
+                        "wind_max": 36.0
+                    }
+                ]
+            }
+        }
+    },
+    "canonical_analysis": {
+        "idalia": {
+            "mslp_p1": 970.0,
+            "mslp_p01": 965.0,
+            "mslp_min": 960.0,
+            "wind_p99": 30.0,
+            "wind_p999": 35.0,
+            "wind_max": 40.0
+        }
+    },
+    "run_id": "manual_0c446b41_new_o96_o320",
+    "event_names": ["idalia"]
+}

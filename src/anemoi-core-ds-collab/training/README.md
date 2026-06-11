@@ -11,7 +11,7 @@ Interfaces and functionality are likely to change, and the project itself may be
 Miscellanous tools for training data-driven weather forecasts.
 
 ## Documentation
-
+  
 The documentation can be found at https://anemoi-training.readthedocs.io/.
 
 ## Install

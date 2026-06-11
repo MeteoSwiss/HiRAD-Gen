@@ -1,0 +1,47 @@
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] -  This is the ECMWF jobfilter
+[ECMWF-INFO -sbatch] -  +++ Please report issues using the Support portal +++
+[ECMWF-INFO -sbatch] -  +++ https://support.ecmwf.int                     +++
+[ECMWF-INFO -sbatch] -  /usr/local/bin/ecsbatch: size: 53801, mtime: Tue Nov 25 12:31:30 2025
+[ECMWF-INFO -sbatch] - -------------------------------------------------------------------------------------
+[ECMWF-INFO -sbatch] - Time at submit: Sun Apr 26 09:43:21 2026 (1777196601.8714554) on ac6-101.bullx:/etc/ecmwf/nfs/dh2_home_a/ecm5702/dev/downscaling-tools/tests/overfit
+[ECMWF-INFO -sbatch] - --- SLURM VARIABLES ---
+[ECMWF-INFO -sbatch] - SLURM_GPUS_PER_NODE=1
+[ECMWF-INFO -sbatch] - SLURM_NNODES=1
+[ECMWF-INFO -sbatch] - EC_CLUSTER=ac
+[ECMWF-INFO -sbatch] - SLURM_EXPORT_ENV=ALL
+[ECMWF-INFO -sbatch] - SBATCH_EXPORT=NONE
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - jobscript: /etc/ecmwf/nfs/dh2_home_a/ecm5702/dev/downscaling-tools/tests/overfit/overfit_o1280_o2560.sbatch
+[ECMWF-INFO -sbatch] - --- SCRIPT OPTIONS ---
+[ECMWF-INFO -sbatch] - #SBATCH --job-name=overfit_o1280_o2560
+[ECMWF-INFO -sbatch] - #SBATCH --nodes=1
+[ECMWF-INFO -sbatch] - #SBATCH --ntasks-per-node=1
+[ECMWF-INFO -sbatch] - #SBATCH --cpus-per-task=16
+[ECMWF-INFO -sbatch] - #SBATCH --gpus-per-node=1
+[ECMWF-INFO -sbatch] - #SBATCH --hint=nomultithread
+[ECMWF-INFO -sbatch] - #SBATCH --time=03:00:00
+[ECMWF-INFO -sbatch] - #SBATCH --qos=ng
+[ECMWF-INFO -sbatch] - #SBATCH --mem=256G
+[ECMWF-INFO -sbatch] - #SBATCH --output=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.out
+[ECMWF-INFO -sbatch] - #SBATCH --error=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.err
+[ECMWF-INFO -sbatch] - -----------------------
+[ECMWF-INFO -sbatch] - --- POST-PROCESSED OPTIONS ---
+[ECMWF-INFO -sbatch] - ARG --positional=['overfit_o1280_o2560.sbatch']
+[ECMWF-INFO -sbatch] - ARG --cpus_per_task=16
+[ECMWF-INFO -sbatch] - ARG --error=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.err
+[ECMWF-INFO -sbatch] - ARG --job_name=overfit_o1280_o2560
+[ECMWF-INFO -sbatch] - ARG --ntasks_per_node=1
+[ECMWF-INFO -sbatch] - ARG --nodes=1
+[ECMWF-INFO -sbatch] - ARG --output=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.out
+[ECMWF-INFO -sbatch] - ARG --qos=ng
+[ECMWF-INFO -sbatch] - ARG --time=03:00:00
+[ECMWF-INFO -sbatch] - ARG --mem=256G
+[ECMWF-INFO -sbatch] - ARG --hint=nomultithread
+[ECMWF-INFO -sbatch] - ARG --gpus_per_node=1
+[ECMWF-INFO -sbatch] - ------------------------------
+[ECMWF-INFO -sbatch] - jobtag: ecm5702-overfit_o1280_o2560-1x16-/home/ecm5702/dev/jobscripts/outputs/overfit/overfit_o1280_o2560__JOBID_.out
+[ECMWF-INFO -sbatch] - ['/usr/bin/sbatch', '--cpus-per-task=16', '--error=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.err', '--job-name=overfit_o1280_o2560', '--ntasks-per-node=1', '--nodes=1', '--output=/home/ecm5702/dev/jobscripts/outputs/overfit/%x_%j.out', '--qos=ng', '--time=03:00:00', '--mem=256G', '--hint=nomultithread', '--gpus-per-node=1', '--licenses=h2resw01', '--export=EC_user_time_limit=03:00:00', '/etc/ecmwf/nfs/dh2_home_a/ecm5702/dev/downscaling-tools/tests/overfit/overfit_o1280_o2560.sbatch']
+[ECMWF-INFO -sbatch] - sbatch executed on ac
+[ECMWF-INFO -sbatch] - Job queued on ac using method local
+[ECMWF-INFO -sbatch] - Submitted batch job 33453557
