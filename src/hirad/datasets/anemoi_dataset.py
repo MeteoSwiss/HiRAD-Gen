@@ -67,6 +67,8 @@ class AnemoiDataset(DownscalingDataset):
             self.lat_lon_real = torch.load(target_grid_path, weights_only=False)
             self.regrid_indices_real = torch.from_numpy(np.load(remap_indices_path)).long()
             self.regrid_weights_real = torch.from_numpy(np.load(remap_weights_path))
+            self.regrid_nx = 582 if self.real2cosmo_target else 1170
+            self.regrid_ny = 390 if self.real2cosmo_target else 786
 
 
         #TODO switch hanbdling paths to Path rather than pure strings
@@ -117,7 +119,7 @@ class AnemoiDataset(DownscalingDataset):
             self.static_data_normalized = (static_data - self.static_mean.reshape((self.static_mean.shape[0],1))) \
                                             / self.static_std.reshape((self.static_std.shape[0],1))
             self.static_data_normalized = torch.from_numpy(self.static_data_normalized)
-            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real)
+            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real, nx=self.regrid_nx, ny=self.regrid_ny)
             if trim_edge > 0 and self.real_target:
                 self.static_data_normalized = self.static_data_normalized[:, trim_edge:-trim_edge, trim_edge:-trim_edge]
             if self.real2km_target:
@@ -219,7 +221,6 @@ class AnemoiDataset(DownscalingDataset):
 
     def longitude(self) -> np.ndarray:
         """Get longitude values from the target dataset."""
-        # TODO(mmcgloho): handle this for the real2cosmo case
         if self.real_target:
             lons = self.lat_lon_real[:, 1]
             if self.real2km_target:
@@ -229,7 +230,6 @@ class AnemoiDataset(DownscalingDataset):
 
     def latitude(self) -> np.ndarray:
         """Get latitude values from the target dataset."""
-        # TODO(mmcgloho): handle this for the real2cosmo case
         if self.real_target:
             lats = self.lat_lon_real[:, 0]
             if self.real2km_target:

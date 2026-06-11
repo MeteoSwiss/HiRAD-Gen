@@ -93,6 +93,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 img_clean.to(self.dist.device, dtype=self.input_dtype),
                 self.dataset.regrid_indices_real,
                 self.dataset.regrid_weights_real,
+                nx=self.dataset.regrid_nx,
+                ny=self.dataset.regrid_ny,
             )
             if self.dataset.trim_edge > 0:
                 img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,

@@ -299,10 +299,12 @@ def main(cfg: DictConfig) -> None:
                             image_tar.to(dist.device, dtype=input_dtype),
                             dataset.regrid_indices_real,
                             dataset.regrid_weights_real,
+                            nx=dataset.regrid_nx,
+                            ny=dataset.regrid_ny,
                         )
                         if dataset.trim_edge > 0:
                             image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
-                        if dataset_cfg.get("type") == "real2km":
+                        if dataset.real2km_target:
                             image_tar = coarsen_2x(image_tar)
                     else:
                         image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())

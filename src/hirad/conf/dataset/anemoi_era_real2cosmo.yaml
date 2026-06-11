@@ -4,8 +4,8 @@ input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper
 # corrected_tp_path: '/capstor/scratch/cscs/mmcgloho/basic-numpy/copernicus-era-1h/copernicus-interpolated/'
 target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
 target_grid_path: '/capstor/store/cscs/pasc/c38/real2cosmo_grid_info/cosmo-lat-lon'
-remap_indices_path: '/capstor/store/cscs/pasc/c38/real2cosmo_grid_info/remap_indices.npy'
-remap_weights_path: '/capstor/store/cscs/pasc/c38/real2cosmo_grid_info/remap_weights.npy'
+remap_indices_path: '/capstor/store/cscs/pasc/c38/real2cosmo_grid_info/remap_indices_2km.npy'
+remap_weights_path: '/capstor/store/cscs/pasc/c38/real2cosmo_grid_info/remap_weights_2km.npy'
 input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
 output_channel_names: [2t, 10u, 10v, tp]
 static_channel_names: ['FIS']
