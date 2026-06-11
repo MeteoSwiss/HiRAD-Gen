@@ -37,5 +37,7 @@ input:
                     - cos_local_time
                     - cos_longitude
                     - insolation
+                    - lsm
+                    - z
         - regrid:
             mask: /store_new/mch/msopr/hirad-gen/anemoi-downscaling-data/era2cosmo_mask_100km.npz
