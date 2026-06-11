@@ -203,9 +203,9 @@ def main(cfg: dict):
         logger.error("No temperature channel ('2t' or 't2m') found in output channels. Aborting.")
         return
 
-    # Conversion from Kelvin to Celsius: value * conv_factor + conv_offset
-    conv_factor = cfg.get("conv_factor", 1.0)
-    conv_offset = cfg.get("conv_offset", -273.15)
+    # Conversion from Kelvin to Celsius: value * temp_conv_factor + temp_conv_offset
+    conv_factor = cfg.get("temp_conv_factor", 1.0)
+    conv_offset = cfg.get("temp_conv_offset", -273.15)
     log_interval = cfg.get("log_interval", 100)
 
     STATISTICS_CONFIG = {
