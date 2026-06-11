@@ -299,19 +299,21 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
 
 class TrainingManagerDiT(TrainingManagerBase):
     def __init__(
-                self, 
-                dist: DistributedManager, 
-                logger: PythonLogger, 
-                dataset: DownscalingDataset, 
-                input_dtype: torch.dtype, 
-                img_shape: tuple[int, int], 
-                n_month_hour_channels: int, 
+                self,
+                dist: DistributedManager,
+                logger: PythonLogger,
+                dataset: DownscalingDataset,
+                input_dtype: torch.dtype,
+                img_shape: tuple[int, int],
+                n_month_hour_channels: int,
                 fp16: bool,
                 enable_amp: bool,
                 amp_dtype: torch.dtype,
-                is_real_target: bool, 
+                is_real_target: bool,
                 logging_method: str,
                 use_apex_gn: bool,
+                n_prev_hr_frames: int = 0,
+                prev_hr_dropout: float = 0.0,
                 ):
         super().__init__(dist,
                         logger,
@@ -325,6 +327,8 @@ class TrainingManagerDiT(TrainingManagerBase):
                         use_apex_gn,
                         logging_method)
         self.fp16 = fp16
+        self.n_prev_hr_frames = n_prev_hr_frames
+        self.prev_hr_dropout = prev_hr_dropout
 
     def create_model(self, cfg_model_name: str, cfg_model_args: dict):
         """Instantiate the model."""
@@ -332,10 +336,16 @@ class TrainingManagerDiT(TrainingManagerBase):
         n_static_channels = len(self.dataset.static_channels())
         n_output_channels = len(self.dataset.output_channels())
 
-        img_in_channels = n_input_channels + n_static_channels
+        img_in_channels = (n_input_channels + n_static_channels
+                           + self.n_prev_hr_frames * n_output_channels)
         img_out_channels = n_output_channels
 
-        self.logger.info(f"Creating model {cfg_model_name} with {img_in_channels} input channels and {img_out_channels} output channels.")
+        self.logger.info(
+            f"Creating model {cfg_model_name} with {img_in_channels} input channels "
+            f"({n_input_channels} ERA5, {n_static_channels} static, "
+            f"{self.n_prev_hr_frames * n_output_channels} prev_hr) "
+            f"and {img_out_channels} output channels."
+        )
 
         model_args = {  # default parameters for all networks
             "model_type": "DiT",
@@ -346,10 +356,100 @@ class TrainingManagerDiT(TrainingManagerBase):
             "amp_mode": self.enable_amp,
             "condition_dim": self.n_month_hour_channels,
         }
-        
+
         if cfg_model_args:  # override defaults from config file
             model_args.update(cfg_model_args)
 
         model = EDMPrecondSuperResolution(**model_args)
 
         return model, model_args
+
+    def load_and_preprocess_batch(self, dataset_iterator):
+        """Load a batch and preprocess it; when n_prev_hr_frames>0, also process prev HR."""
+        batch = next(dataset_iterator)
+
+        if self.n_prev_hr_frames > 0:
+            img_clean, img_lr, *date_str, prev_hr_raw, prev_hr_valid = batch
+        else:
+            img_clean, img_lr, *date_str = batch
+
+        # Interpolate and normalize low-res input
+        img_lr = self.dataset.interpolator(
+            img_lr.to(self.dist.device, dtype=self.input_dtype)
+        ).reshape(*img_lr.shape[:-1], *self.img_shape).flip(-2)
+        img_lr = self.dataset.normalize_input(img_lr)
+
+        # Process high-res target
+        if self.is_real_target:
+            img_clean = regrid_icon_to_rotlatlon(
+                img_clean.to(self.dist.device, dtype=self.input_dtype),
+                self.dataset.regrid_indices_real,
+                self.dataset.regrid_weights_real,
+            )
+            if self.dataset.trim_edge > 0:
+                img_clean = img_clean[:, :,
+                                       self.dataset.trim_edge:-self.dataset.trim_edge,
+                                       self.dataset.trim_edge:-self.dataset.trim_edge]
+            img_clean = img_clean.flip(-2)
+        else:
+            img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
+            img_clean = img_clean.reshape(*img_clean.shape[:-1], *self.img_shape).flip(-2)
+        img_clean = self.dataset.normalize_output(img_clean)
+
+        # Date embedding
+        date_embedding = None
+        if self.n_month_hour_channels > 0:
+            date_embedding = self.dataset.make_time_grids(*date_str, self.dist.device, dtype=self.input_dtype)
+
+        # Previous HR conditioning
+        if self.n_prev_hr_frames > 0:
+            prev_hr_raw = prev_hr_raw.to(self.dist.device, dtype=self.input_dtype)
+            prev_hr_valid = prev_hr_valid.to(self.dist.device)  # (B,) bool
+
+            # Same preprocessing as img_clean
+            if self.is_real_target:
+                prev_hr = regrid_icon_to_rotlatlon(
+                    prev_hr_raw,
+                    self.dataset.regrid_indices_real,
+                    self.dataset.regrid_weights_real,
+                )
+                if self.dataset.trim_edge > 0:
+                    prev_hr = prev_hr[:, :,
+                                       self.dataset.trim_edge:-self.dataset.trim_edge,
+                                       self.dataset.trim_edge:-self.dataset.trim_edge]
+                prev_hr = prev_hr.flip(-2)
+            else:
+                prev_hr = prev_hr_raw.reshape(*prev_hr_raw.shape[:-1], *self.img_shape).flip(-2)
+            prev_hr = self.dataset.normalize_output(prev_hr)
+
+            # Force-zero boundary/gap samples (in normalized space)
+            invalid_mask = (~prev_hr_valid).view(-1, 1, 1, 1)
+            prev_hr = prev_hr.masked_fill(invalid_mask, 0.0)
+
+            # Stochastic CFG dropout: only during training (grad enabled), not validation
+            if self.prev_hr_dropout > 0.0 and torch.is_grad_enabled():
+                keep = torch.bernoulli(
+                    torch.full(
+                        (prev_hr.shape[0], 1, 1, 1),
+                        1.0 - self.prev_hr_dropout,
+                        device=self.dist.device,
+                    )
+                ).to(dtype=torch.bool)
+                prev_hr = prev_hr * keep
+
+            # Append to img_lr; DiffusionLoss will later append static channels
+            img_lr = torch.cat([img_lr, prev_hr], dim=1)
+
+        # Memory format
+        if self.use_apex_gn:
+            img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
+                memory_format=torch.channels_last
+            )
+            img_lr = img_lr.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
+                memory_format=torch.channels_last
+            )
+        else:
+            img_clean = img_clean.to(self.dist.device).to(self.input_dtype).contiguous()
+            img_lr = img_lr.to(self.dist.device).to(self.input_dtype).contiguous()
+
+        return img_clean, img_lr, date_embedding

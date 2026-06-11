@@ -354,6 +354,8 @@ def main(cfg: DictConfig) -> None:
 
                     if time_index == warmup_steps:
                         start.record()
+                        if use_cuda_timing:
+                            torch.cuda.reset_peak_memory_stats()
 
                     savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
                     os.makedirs(savedir,exist_ok=True)
@@ -471,6 +473,15 @@ def main(cfg: DictConfig) -> None:
                             if calls_total > 0:
                                 per_call_ms = (fwd_total / calls_total) * 1000
                                 logger0.info(f"  {'diff_net_fwd/call':20s}: {per_call_ms:.1f} ms/call")
+
+                # Log peak GPU memory over timed steps
+                if dist.rank == 0 and use_cuda_timing:
+                    _gib = 1024 ** 3
+                    peak_allocated = torch.cuda.max_memory_allocated() / _gib
+                    peak_reserved  = torch.cuda.max_memory_reserved()  / _gib
+                    logger0.info("--- Peak GPU memory (timed steps only) ---")
+                    logger0.info(f"  {'allocated (tensors)':25s}: {peak_allocated:.2f} GiB")
+                    logger0.info(f"  {'reserved  (allocator)':25s}: {peak_reserved:.2f} GiB")
 
                 # make sure all the workers are done writing
                 if dist.rank == 0:

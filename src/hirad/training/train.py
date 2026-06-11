@@ -211,6 +211,8 @@ def main(cfg: DictConfig) -> None:
         "use_apex_gn": use_apex_gn,
     }
     if cfg.model.name in {"diffusion_transformer"}:
+        training_manager_args["n_prev_hr_frames"] = dataset_cfg.get("n_prev_hr_frames", 0)
+        training_manager_args["prev_hr_dropout"] = cfg.training.hp.get("prev_hr_dropout", 0.0)
         training_manager = TrainingManagerDiT(**training_manager_args)
     else:
         training_manager = TrainingManagerCorrDiff(

@@ -1,0 +1,35 @@
+num_ensembles: 16
+  # Number of ensemble members to generate per time step
+seed_batch_size: 4
+  # Seeds processed per forward pass (keep ≤ num_ensembles)
+
+# Whether the checkpoint uses previous-HR conditioning (n_prev_hr_frames > 0
+# in its model_args.json).  Set to 0 to use legacy checkpoints without
+# temporal conditioning (degenerates to stateless generation).
+n_prev_hr_frames: 1
+
+randomize: True
+  # Draw fresh random seeds for each time step.  Set False for reproducible runs.
+random_seed: 2578458
+
+# Patching is not supported in autoregressive mode.
+patching: False
+
+times_range: ['20230817-2300','20230831-2300',1]
+  # [start, end (inclusive), step in hours]
+  # The loop processes these times in order; each step conditions on the
+  # ensemble mean of the previous step.
+
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: True
+  num_writer_workers: 8
+  enable_timing: True
+  profile: False
+
+io:
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit_time_cor/
+  output_path: .

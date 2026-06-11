@@ -17,6 +17,7 @@ hp:
     lr_decay_rate: 5e5
     # Learning rate decay threshold in number of samples, applied every lr_decay_rate samples.
     grad_clip_threshold: 5.0
+    prev_hr_dropout: 0.2
 
 # Performance
 perf:

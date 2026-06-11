@@ -41,6 +41,7 @@ class AnemoiDataset(DownscalingDataset):
                 transform_output_stdevs: dict = {},
                 n_month_hour_channels: int = None,
                 trim_edge: int = 0,
+                n_prev_hr_frames: int = 0,
                 ):
         super().__init__()
 
@@ -63,6 +64,7 @@ class AnemoiDataset(DownscalingDataset):
 
         #TODO switch hanbdling paths to Path rather than pure strings
         self._n_month_hour_channels = n_month_hour_channels
+        self.n_prev_hr_frames = n_prev_hr_frames
         target_open_dataset_kwargs = {}
         if start_date is not None and end_date is not None:
             assert start_date < end_date, "start_date must be before end_date"
@@ -173,29 +175,32 @@ class AnemoiDataset(DownscalingDataset):
             self.latitude())
 
 
-    # DO NOT SUBMIT: This is not implemented yet.
-    # Question: Is it OK to change the signature to return 3 items?
     def __getitem__(self, idx):
         """Get input and target data. Transform and normalize, but do not interpolate."""
 
-        # Pull input, replacing the corrected tp if applicable
         date_str = to_datetime(self._input_dataset.dates[idx]).strftime('%Y%m%d-%H%M')
-        
-        # Don't reshape, but do squeeze ensemble dimension.
         input_data = self._input_dataset[idx].squeeze()
-        
-        # Pull target data
-        # squeeze the ensemble dimesnsion
         target_data = self._output_dataset[idx].squeeze()
-        
-        # next two steps only if target is cosmo, real has to be regridded first (done in training loop on gpu-s for efficiency)
-        # reshape to image_shape
-        # flip so that it starts in top-left corner (by default it is bottom left)
-        # if not self.real_target:
-        #     target_shape = self.image_shape()
-        #     target_data = np.flip(target_data \
-        #             .reshape(-1,*target_shape),
-        #         1)
+
+        if self.n_prev_hr_frames > 0:
+            prev_idx = idx - 1
+            is_valid = (
+                prev_idx >= 0
+                and (self._output_dataset.dates[idx] - self._output_dataset.dates[prev_idx])
+                    == np.timedelta64(1, 'h')
+            )
+            prev_target_data = (
+                self._output_dataset[prev_idx].squeeze().copy()
+                if is_valid
+                else np.zeros_like(target_data)
+            )
+            return (
+                torch.from_numpy(target_data.copy()),
+                torch.from_numpy(input_data),
+                date_str,
+                torch.from_numpy(prev_target_data),
+                torch.tensor(is_valid, dtype=torch.bool),
+            )
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\

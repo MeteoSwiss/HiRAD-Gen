@@ -146,6 +146,7 @@ def diffusion_step(
     use_apex_gn: bool = False,
     _timings: Optional[dict] = None,
     additional_model_args: Optional[dict] = {},
+    img_lr_per_sample: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
     """
@@ -191,6 +192,14 @@ def diffusion_step(
         Whether Apex's fused group normalization is used. Default is False.
     additional_model_args : dict, optional
         Additional arguments to pass to the model during sampling. Default is an empty dictionary.
+    img_lr_per_sample : torch.Tensor, optional
+        Per-sample conditioning tensor with shape
+        (total_samples_this_rank, C_lr, height, width).
+        When provided, each batch in ``rank_batches`` receives the appropriate
+        slice of this tensor as ``img_lr`` instead of expanding the shared
+        ``img_lr``.  Used for autoregressive per-member HR conditioning where
+        every ensemble member has its own previous-step output as context.
+        Default is None (standard shared-conditioning behaviour).
 
     Returns
     -------
@@ -199,10 +208,11 @@ def diffusion_step(
         (seed_batch_size * len(rank_batches), out_channels, height, width).
     """
 
-    # Check img_lr dimensions match expected shape
-    if img_lr.shape[-2:] != img_shape:
+    # Check spatial dimensions (use img_lr_per_sample when available)
+    ref_shape = img_lr_per_sample.shape[-2:] if img_lr_per_sample is not None else img_lr.shape[-2:]
+    if ref_shape != img_shape:
         raise ValueError(
-            f"img_lr shape {img_lr.shape[-2:]} does not match expected shape img_shape {img_shape}"
+            f"img_lr shape {ref_shape} does not match expected shape img_shape {img_shape}"
         )
 
     # Check mean_hr dimensions if provided
@@ -235,22 +245,32 @@ def diffusion_step(
 
     # Loop over batches
     all_images = []
+    _sample_offset = 0  # running index into img_lr_per_sample (when used)
     for batch_seeds in tqdm.tqdm(rank_batches, unit="batch", disable=(rank != 0)):
         with nvtx.annotate(f"generate {len(all_images)}", color="rapids"):
             batch_size = len(batch_seeds)
             if batch_size == 0:
                 continue
-            if batch_size != img_lr.shape[0]:
-                raise ValueError(
-                    f"Batch size {batch_size} does not match img_lr batch size {img_lr.shape[0]}"
-                )
+
+            # Resolve the img_lr for this batch:
+            #   - img_lr_per_sample: per-member conditioning (e.g. autoregressive prev HR)
+            #   - img_lr: shared conditioning broadcast to all members (existing path)
+            if img_lr_per_sample is not None:
+                img_lr_batch = img_lr_per_sample[_sample_offset:_sample_offset + batch_size]
+                _sample_offset += batch_size
+            else:
+                if batch_size != img_lr.shape[0]:
+                    raise ValueError(
+                        f"Batch size {batch_size} does not match img_lr batch size {img_lr.shape[0]}"
+                    )
+                img_lr_batch = img_lr
 
             # Initialize random generator, and generate latents
             _t0 = _t()
             rnd = StackedRandomGenerator(device, batch_seeds)
             latents = rnd.randn(
                 [
-                    img_lr.shape[0],
+                    batch_size,
                     img_out_channels,
                     img_shape[0],
                     img_shape[1],
@@ -262,7 +282,7 @@ def diffusion_step(
             batch_timings: dict = {} if _timings is not None else None
             with torch.inference_mode():
                 images = sampler_fn(
-                    net, latents, img_lr, randn_like=rnd.randn_like, _timings=batch_timings, model_args=additional_model_args, **additional_args
+                    net, latents, img_lr_batch, randn_like=rnd.randn_like, _timings=batch_timings, model_args=additional_model_args, **additional_args
                 )
             _t_sampler = _t()
 

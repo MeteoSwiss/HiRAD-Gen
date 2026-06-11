@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Optional
 from functools import partial
 import time
 from collections import defaultdict
@@ -185,6 +185,8 @@ class GeneratorCorrDiff(GeneratorBase):
                     gather_list=gathered_tensors if self.dist.rank == 0 else None,
                     dst=0,
                 )
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 if not skip_timing:
                     self._timings["gather"] += _t() - _t0
                     self._timing_counts["gather"] += 1
@@ -205,7 +207,7 @@ class GeneratorDiT(GeneratorBase):
                 model: torch.nn.Module,
                 batch_size: int,
                 ensemble_size: int,
-                n_out_channels: int, 
+                n_out_channels: int,
                 dist: DistributedManager):
         super().__init__(
             batch_size=batch_size,
@@ -214,8 +216,14 @@ class GeneratorDiT(GeneratorBase):
             dist=dist
         )
         self.model = model
+        # Stores this rank's local output slice BEFORE the gather.
+        # Used by autoregressive callers as the per-member prev_hr for the
+        # next step, avoiding an inter-rank broadcast of the full ensemble.
+        self._last_local_output: Optional[torch.Tensor] = None
 
-    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=True, skip_timing=False):
+    def generate(self, image_lr, prev_hr: Optional[torch.Tensor] = None,
+                 static_channels=None, date_embedding=None, lead_time_label=None,
+                 randomize=False, random_seed=None, use_apex_gn=True, skip_timing=False):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
@@ -234,6 +242,41 @@ class GeneratorDiT(GeneratorBase):
             if date_embedding is not None:
                 model_args = {"condition": date_embedding}
 
+            # Build img_lr and img_lr_per_sample depending on prev_hr shape:
+            #   prev_hr is None           → no temporal conditioning
+            #   prev_hr.shape[0] == 1     → same frame for all members (e.g. first step zeros)
+            #   prev_hr.shape[0] == N > 1 → per-member conditioning (autoregressive)
+            #
+            # NOTE: for per-member conditioning randomize=False is required so
+            # that rank_batches (and therefore member ordering) is consistent
+            # across steps. randomize=True changes the seed ordering each step,
+            # making member-to-member pairing ill-defined.
+            img_lr_per_sample: Optional[torch.Tensor] = None
+
+            if prev_hr is None or prev_hr.shape[0] == 1:
+                # Shared conditioning: prepend to image_lr and expand as usual.
+                if prev_hr is not None:
+                    image_lr = torch.cat([image_lr, prev_hr], dim=1)
+                img_lr_expanded = image_lr.expand(
+                    self.batch_size, -1, -1, -1
+                ).to(memory_format=torch.channels_last)
+            else:
+                # Per-member conditioning: prev_hr is already the LOCAL slice
+                # for this rank (shape: n_per_rank, C_hr, H, W).  The caller
+                # (generate_autoregressive.py) obtained it from
+                # generator._last_local_output, which was stored BEFORE the
+                # gather — so no start_idx slicing is needed here.
+                n_per_rank = sum(len(b) for b in self.rank_batches)
+                img_lr_per_sample = torch.cat(
+                    [image_lr.expand(n_per_rank, -1, -1, -1), prev_hr],
+                    dim=1,
+                ).to(memory_format=torch.channels_last)
+                # img_lr_expanded is still needed for the spatial shape check
+                # inside diffusion_step when img_lr_per_sample is provided.
+                img_lr_expanded = image_lr.expand(
+                    self.batch_size, -1, -1, -1
+                ).to(memory_format=torch.channels_last)
+
             with nvtx.annotate("DiT model", color="purple"):
                 _t0 = _t()
                 image_out = diffusion_step(
@@ -242,9 +285,7 @@ class GeneratorDiT(GeneratorBase):
                     img_shape=img_shape,
                     img_out_channels=self.n_out_channels,
                     rank_batches=self.rank_batches,
-                    img_lr=image_lr.expand(
-                        self.batch_size, -1, -1, -1
-                    ).to(memory_format=torch.channels_last),
+                    img_lr=img_lr_expanded,
                     rank=self.dist.rank,
                     device=image_lr.device,
                     lead_time_label=lead_time_label,
@@ -252,6 +293,7 @@ class GeneratorDiT(GeneratorBase):
                     use_apex_gn=use_apex_gn,
                     additional_model_args=model_args,
                     _timings=_step_timings,
+                    img_lr_per_sample=img_lr_per_sample,
                 )
                 if not skip_timing:
                     self._timings["diffusion"] += _t() - _t0
@@ -261,6 +303,11 @@ class GeneratorDiT(GeneratorBase):
                 for k, v in _step_timings.items():
                     self._timings[k] += v
                     self._timing_counts[k] += 1
+
+            # Save this rank's local output BEFORE the gather.
+            # Autoregressive callers use this as the per-member prev_hr for the
+            # next step, avoiding any inter-rank broadcast of the full ensemble.
+            self._last_local_output = image_out.contiguous()
 
             # Gather tensors on rank 0
             if self.dist.world_size > 1:
@@ -281,6 +328,15 @@ class GeneratorDiT(GeneratorBase):
                     gather_list=gathered_tensors if self.dist.rank == 0 else None,
                     dst=0,
                 )
+                # Ensure the NCCL gather kernel has fully completed on every
+                # rank's GPU before returning.  Without this, NCCL may still
+                # be running on its own stream when the NEXT step calls
+                # torch.cuda.synchronize() (which waits for ALL streams).
+                # On ranks 1-3 that skip postprocessing, that sync would then
+                # block indefinitely, preventing them from reaching the next
+                # step's barrier while rank 0 races ahead — deadlock.
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 if not skip_timing:
                     self._timings["gather"] += _t() - _t0
                     self._timing_counts["gather"] += 1

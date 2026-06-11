@@ -157,6 +157,9 @@ def main(cfg: dict) -> None:
         input_channels = dataset.input_channels()
         output_channels = dataset.output_channels()
 
+    plot_errors = cfg.get("plot_errors", True)
+    plot_wind_derived = cfg.get("plot_wind_derived", True)
+
     plot_channels = cfg.get("plot_channels", None)
     if plot_channels is not None:
         plot_channels = get_channels_from_strings(plot_channels)
@@ -177,6 +180,9 @@ def main(cfg: dict) -> None:
     output_path.mkdir(parents=True, exist_ok=True)
     input_files = FileRepository(generation_dir)
     output_files = FileRepository(output_path)
+
+    logger.info("Generating maps for times: " + ", ".join(times))
+    logger.info(f"In total {len(times)} time steps.")
 
     for curr_time in times:
         prediction = input_files.load(curr_time, f'{curr_time}-predictions')
@@ -239,40 +245,43 @@ def main(cfg: dict) -> None:
             if mean_pred is not None:
                 save_field("mean-prediction", mean_pred[output_channel_idx, :, :], metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
 
-            # Baseline MAE and ME
-            _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[output_channel_idx, :, :])
-            baseline_me = (baseline[input_channel_idx, :, :] - target[output_channel_idx, :, :])
-            save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-            save_field("baseline", baseline_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+            if plot_errors:
+                # Baseline MAE and ME
+                _, baseline_mae = compute_mae(baseline[input_channel_idx, :, :], target[output_channel_idx, :, :])
+                baseline_me = (baseline[input_channel_idx, :, :] - target[output_channel_idx, :, :])
+                save_field("baseline", baseline_mae.reshape(baseline[input_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                save_field("baseline", baseline_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
 
-            # Regression prediction MAE and ME
-            if mean_pred is not None:
-                _, mean_mae = compute_mae(mean_pred[idx, :, :], target[output_channel_idx, :, :])
-                mean_me = (mean_pred[output_channel_idx, :, :] - target[output_channel_idx, :, :])
-                save_field("mean-prediction", mean_mae.reshape(mean_pred[output_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                save_field("mean-prediction", mean_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                # Regression prediction MAE and ME
+                if mean_pred is not None:
+                    _, mean_mae = compute_mae(mean_pred[idx, :, :], target[output_channel_idx, :, :])
+                    mean_me = (mean_pred[output_channel_idx, :, :] - target[output_channel_idx, :, :])
+                    save_field("mean-prediction", mean_mae.reshape(mean_pred[output_channel_idx, :, :].shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                    save_field("mean-prediction", mean_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
 
             # Ensemble predictions
             if prediction.ndim > 3:
                 for member_idx in range(prediction.shape[0]):
                     member = prediction[member_idx, output_channel_idx, :, :]
                     save_field("prediction", member, metadata, output_files, channel, curr_time, member=member_idx, title=plot_title, grid_cfg=grid_cfg)
-                    _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
-                    save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, member=member_idx, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                    prediction_me = (member - target[output_channel_idx, :, :])
-                    save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, member=member_idx, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                    if plot_errors:
+                        _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
+                        save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, member=member_idx, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                        prediction_me = (member - target[output_channel_idx, :, :])
+                        save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, member=member_idx, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
             else:
                 member = prediction[output_channel_idx, :, :]
                 save_field("prediction", member, metadata, output_files, channel, curr_time, title=plot_title, grid_cfg=grid_cfg)
-                _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
-                save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
-                prediction_me = (member - target[output_channel_idx, :, :])
-                save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                if plot_errors:
+                    _, prediction_mae = compute_mae(member, target[output_channel_idx, :, :])
+                    save_field("prediction", prediction_mae.reshape(member.shape), metadata, output_files, channel, curr_time, kind="mae", cmap=metadata.cmap if channel.name not in ("10u", "10v", "2t") else 'viridis', vmin=0, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
+                    prediction_me = (member - target[output_channel_idx, :, :])
+                    save_field("prediction", prediction_me, metadata, output_files, channel, curr_time, kind="me", cmap=metadata.me_cmap, vmin=metadata.err_vmin, vmax=metadata.err_vmax, title=plot_title, grid_cfg=grid_cfg)
 
         # Plot Windspeed and direction
         wind_channels = {ch.name: idx for idx, ch in enumerate(output_channels) if ch.name in ("10u", "10v")}
         wind_channels_input = {ch.name: idx for idx, ch in enumerate(input_channels) if ch.name in ("10u", "10v")}
-        if "10u" in wind_channels and "10v" in wind_channels:
+        if plot_wind_derived and "10u" in wind_channels and "10v" in wind_channels:
             idx_10u = wind_channels["10u"]
             idx_10v = wind_channels["10v"]
             input_idx_10u = wind_channels_input["10u"]

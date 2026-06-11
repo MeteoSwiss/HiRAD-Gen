@@ -1,0 +1,19 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_era_real_dit_autoregressive_JJA2023
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  # Dataset  (n_prev_hr_frames is NOT set here; the autoregressive state is
+  # managed entirely inside the inference script — the DataLoader only returns
+  # the standard 3-tuple per step)
+  - dataset/anemoi_era_real_inference
+
+  # Sampler
+  - sampler/stochastic
+
+  # Generation params
+  - generation/era_real_autoregressive
