@@ -8,7 +8,7 @@ import xarray as xr
 import numba
 
 from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.plotting import plot_map
+from hirad.eval.plotting import plot_map, plot_map_temperature
 
 
 @numba.njit
@@ -121,12 +121,7 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
     title = f'{label}: {stat_config["title_stat"]}'
 
     if stype in ('mean', 'quantile', 'max', 'min'):
-        plot_map(
-            data, filename,
-            title=title,
-            label='Temperature [°C]',
-            vmin=-10, vmax=40, cmap='RdBu_r', extend='both', grid_cfg=grid_cfg
-        )
+        plot_map_temperature(data, filename, title=title, grid_cfg=grid_cfg)
     elif stype == 'std':
         plot_map(
             data, filename,
@@ -153,7 +148,7 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
             data, filename,
             title=title,
             label='Days',
-            vmin=0, vmax=30, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
+            vmin=0, vmax=60, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
         )
     elif stype == 'cold_spell':
         plot_map(
