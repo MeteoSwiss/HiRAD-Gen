@@ -33,7 +33,7 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
         ax2.set_xlim(xlim_left, frac[-1])
         nice_mmh = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
         tick_positions = np.interp(nice_mmh, mean_q, frac)
-        valid = (tick_positions > xlim_left) & (tick_positions < frac[-1])
+        valid = (tick_positions > xlim_left) & (tick_positions <= frac[-1])
         ax2.set_xticks(tick_positions[valid])
         ax2.set_xticklabels([f'{v:g}' for v in nice_mmh[valid]])
         ax2.set_xlabel('Mean target [mm/h]')
