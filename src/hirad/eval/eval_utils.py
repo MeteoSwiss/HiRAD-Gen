@@ -174,6 +174,15 @@ def get_channel_indices(gen_cfg: dict, channels=None) -> dict:
     }
 
 
+def make_percentile_values(per_decade: int = 20) -> np.ndarray:
+    """Percentiles sampled equidistantly on the logit (log-exceedance) axis."""
+    tail = np.logspace(-3, 1, 4 * per_decade + 1)   # 0.001 ... 10
+    lower = tail                                     # low tail:  0.001 ... 10
+    upper = 100.0 - tail[::-1]                       # high tail: 90 ... 99.999
+    center = np.linspace(10.0, 90.0, 2 * per_decade + 1)
+    return np.unique(np.concatenate([lower, center, upper]))
+
+
 def resolve_ts_dir(out_root: Path, ts: str) -> Path:
     """Return the directory under *out_root* that contains the timestamp folder *ts*."""
     if (out_root / ts).is_dir():

@@ -15,7 +15,7 @@ from hirad.eval.bias_by_percentile_common import (
     plot_dict_curves,
     run_bias_by_percentile,
 )
-from hirad.eval.eval_utils import parse_eval_cli
+from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
 
 
 def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
@@ -130,18 +130,8 @@ SPEC = BiasByPercentileSpec(
     bias_ylabel='Bias [m/s]',
     mae_ylabel='MAE [m/s]',
     spread_ylabel='Ensemble Spread [m/s]',
-    fbi_ylabel='FBI [-]',
-    percentile_values=np.unique(np.concatenate([
-        np.linspace(0.001, 0.01, 10),
-        np.linspace(0.01, 0.1, 10),
-        np.linspace(0.1, 1.0, 10),
-        np.linspace(1.0, 10.0, 10),
-        np.linspace(10.0, 90.0, 80),
-        np.linspace(90.0, 99.0, 90),
-        np.linspace(99.0, 99.9, 45),
-        np.linspace(99.9, 99.99, 20),
-        np.linspace(99.99, 99.999, 10),
-    ])),
+    fbi_ylabel='FBI (exceedance)',
+    percentile_values=make_percentile_values(),
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
     read_scaling=lambda cfg: (cfg.get("wind_conv_factor", 1.0), 0.0),
