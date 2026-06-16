@@ -9,6 +9,7 @@ import numpy as np
 
 from hirad.eval.bias_by_percentile_common import (
     BiasByPercentileSpec,
+    _round_sig,
     even_value_ticks,
     finalize_percentile_plot,
     new_percentile_axes,
@@ -40,8 +41,15 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
         ax2.set_xlim(xlim_left, xlim_right)
         tick_positions, tick_speeds = even_value_ticks(frac, mean_q)
         valid = (tick_positions >= xlim_left) & (tick_positions <= xlim_right)
-        ax2.set_xticks(tick_positions[valid])
-        ax2.set_xticklabels([f'{v:g}' for v in tick_speeds[valid]])
+        positions = list(tick_positions[valid])
+        speeds = list(tick_speeds[valid])
+        # Ensure a labelled tick at the left-hand edge of the visible range.
+        left_speed = _round_sig(float(np.interp(xlim_left, frac, mean_q)))
+        if not positions or positions[0] > xlim_left:
+            positions.insert(0, xlim_left)
+            speeds.insert(0, left_speed)
+        ax2.set_xticks(positions)
+        ax2.set_xticklabels([f'{v:g}' for v in speeds])
         ax2.set_xlabel('Mean target [m/s]')
 
 
