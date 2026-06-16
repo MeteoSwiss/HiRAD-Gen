@@ -136,7 +136,7 @@ def per_point_quantiles(pp_counts: np.ndarray, bin_edges: np.ndarray,
     n_land, n_bins = pp_counts.shape
     P = len(frac_percentiles)
     result = np.empty((n_land, P), dtype=np.float32)
-    edges_upper = bin_edges[1:].astype(np.float32)
+    bin_centers = (0.5 * (bin_edges[:-1] + bin_edges[1:])).astype(np.float32)
     frac_f64 = frac_percentiles.astype(np.float64)
 
     for start in range(0, n_land, block_size):
@@ -155,7 +155,7 @@ def per_point_quantiles(pp_counts: np.ndarray, bin_edges: np.ndarray,
         idx = np.searchsorted(cdf.ravel(), queries.ravel(), side='left')
         idx = idx.reshape(B, P) - (np.arange(B, dtype=np.intp)[:, None] * n_bins)
         np.clip(idx, 0, n_bins - 1, out=idx)
-        result[start:end] = edges_upper[idx]
+        result[start:end] = bin_centers[idx]
 
     return result
 
