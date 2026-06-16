@@ -109,12 +109,13 @@ def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000
 def plot_map_temperature(values, filename, title='', grid_cfg=DEFAULT_GRID_CONFIG):
     """Plot 2m temperature data with Meteoswiss-style colormap."""
     colors = [
-        "#4C97FF", "#4CA8FF", "#00CCFF", "#DEE699", "#A6D473",
-        "#6BBF4D", "#33AB26", "#009900", "#33B300", "#66CC00",
-        "#99E600", "#CCFF00", "#FFFF00", "#FFCC00", "#FF9900",
-        "#FF6600", "#FF3300", "#FF0000", "#EB00EB", "#FF40FF",
+        "#1A33CC", "#3366FF", "#4C97FF", "#4CA8FF", "#00CCFF",
+        "#DEE699", "#A6D473", "#6BBF4D", "#33AB26", "#009900",
+        "#33B300", "#66CC00", "#99E600", "#CCFF00", "#FFFF00",
+        "#FFCC00", "#FF9900", "#FF6600", "#FF3300", "#FF0000",
+        "#EB00EB", "#FF40FF", "#FF80FF", "#FFBFFF",
     ]
-    bounds = [-5, -4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34]
+    bounds = [-9, -7, -5, -4, -2, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38]
 
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(bounds, ncolors=len(colors), clip=False)
