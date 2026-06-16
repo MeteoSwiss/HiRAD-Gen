@@ -74,7 +74,7 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
         return np.quantile(data_np, stat_param, axis=0)
 
     # For daily-based indices, build daily aggregations using xarray
-    if stat_type in ('warm_days', 'frost_days', 'ice_days', 'tropical_nights',
+    if stat_type in ('warm_days', 'hot_days', 'frost_days', 'ice_days', 'tropical_nights',
                      'dtr', 'warm_spell', 'cold_spell'):
         da = xr.DataArray(
             data_np, dims=['time', 'lat', 'lon'],
@@ -87,6 +87,10 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
         if stat_type == 'warm_days':
             # SU: fraction of days with daily max > 25 °C
             return np.mean(daily_max > 25.0, axis=0) * 100.0
+
+        if stat_type == 'hot_days':
+            # HD: fraction of days with daily max > 35 °C
+            return np.mean(daily_max > 35.0, axis=0) * 100.0
 
         if stat_type == 'frost_days':
             # FD: fraction of days with daily min < 0 °C
@@ -136,19 +140,19 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
             label='Diurnal Range [°C]',
             vmin=0, vmax=20, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
         )
-    elif stype in ('warm_days', 'frost_days', 'ice_days', 'tropical_nights'):
+    elif stype in ('warm_days', 'hot_days', 'frost_days', 'ice_days', 'tropical_nights'):
         plot_map(
             data, filename,
             title=title,
             label='Frequency [% of days]',
-            vmin=0, vmax=100, cmap='OrRd', extend='neither', grid_cfg=grid_cfg
+            vmin=0, vmax=50, cmap='OrRd', extend='neither', grid_cfg=grid_cfg
         )
     elif stype == 'warm_spell':
         plot_map(
             data, filename,
             title=title,
             label='Days',
-            vmin=0, vmax=60, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
+            vmin=0, vmax=92, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
         )
     elif stype == 'cold_spell':
         plot_map(
@@ -215,6 +219,7 @@ def main(cfg: dict):
         'p0.1':            {'type': 'quantile', 'param': 0.001,  'title': '0.1th Percentile Temperature'},
         'p0.01':           {'type': 'quantile', 'param': 0.0001, 'title': '0.01th Percentile Temperature'},
         'warm_days':       {'type': 'warm_days',       'title': 'Summer Days (daily max > 25°C)'},
+        'hot_days':        {'type': 'hot_days',        'title': 'Hot Days (daily max > 35°C)'},
         'frost_days':      {'type': 'frost_days',      'title': 'Frost Days (daily min < 0°C)'},
         'ice_days':        {'type': 'ice_days',        'title': 'Ice Days (daily max < 0°C)'},
         'tropical_nights': {'type': 'tropical_nights', 'title': 'Tropical Nights (daily min > 20°C)'},
