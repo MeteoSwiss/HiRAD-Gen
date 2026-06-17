@@ -73,9 +73,8 @@ def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors
     ax.axhline(1.0, color='black', linewidth=0.8, linestyle='--')
     ax.set_yscale('log')
     if all_vals:
-        ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.5
         ymin = float(min(np.nanmin(v) for v in all_vals)) / 1.5
-        ax.set_ylim(max(ymin, 1e-3), max(ymax, 2.0))
+        ax.set_ylim(max(ymin, 1e-3), 10.0)
     finalize_percentile_plot(ax, frac,
                              lambda ax_, frac_, mq: _apply_logit_xaxis(ax_, frac_, mq, xlim_left=0.10),
                              mean_q, xlabel, ylabel, title, out_path)
