@@ -75,7 +75,7 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
 
     # For daily-based indices, build daily aggregations using xarray
     if stat_type in ('warm_days', 'hot_days', 'frost_days', 'ice_days', 'tropical_nights',
-                     'dtr', 'warm_spell', 'cold_spell'):
+                     'dtr', 'warm_spell', 'hot_spell', 'cold_spell'):
         da = xr.DataArray(
             data_np, dims=['time', 'lat', 'lon'],
             coords={'time': times_dt}
@@ -111,6 +111,10 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
         if stat_type == 'warm_spell':
             # WSDI-like: longest consecutive run of days with daily max > 25 °C
             return consecutive_spell(daily_max, lambda x: x > 25.0)
+
+        if stat_type == 'hot_spell':
+            # longest consecutive run of days with daily max > 35 °C
+            return consecutive_spell(daily_max, lambda x: x > 35.0)
 
         if stat_type == 'cold_spell':
             # CSDI-like: longest consecutive run of days with daily min < 0 °C
@@ -154,6 +158,13 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
             label='Days',
             vmin=0, vmax=92, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
         )
+    elif stype == 'hot_spell':
+        plot_map(
+            data, filename,
+            title=title,
+            label='Days',
+            vmin=0, vmax=30, cmap='YlOrRd', extend='max', grid_cfg=grid_cfg
+        )
     elif stype == 'cold_spell':
         plot_map(
             data, filename,
@@ -175,7 +186,7 @@ def _difference_label(stat_type):
         return 'Difference [°C]'
     if stat_type in ('warm_days', 'hot_days', 'frost_days', 'ice_days', 'tropical_nights'):
         return 'Difference [% of days]'
-    if stat_type in ('warm_spell', 'cold_spell'):
+    if stat_type in ('warm_spell', 'hot_spell', 'cold_spell'):
         return 'Difference [days]'
     return 'Difference'
 
@@ -235,6 +246,7 @@ def main(cfg: dict):
         'tropical_nights': {'type': 'tropical_nights', 'title': 'Tropical Nights (daily min > 20°C)'},
         'dtr':             {'type': 'dtr',             'title': 'Mean Diurnal Temperature Range (DTR)'},
         'warm_spell':      {'type': 'warm_spell',      'title': 'Warm Spell Duration (daily max > 25°C)'},
+        'hot_spell':       {'type': 'hot_spell',       'title': 'Hot Spell Duration (daily max > 35°C)'},
         'cold_spell':      {'type': 'cold_spell',      'title': 'Cold Spell Duration (daily min < 0°C)'},
     }
     stat_configs = [
