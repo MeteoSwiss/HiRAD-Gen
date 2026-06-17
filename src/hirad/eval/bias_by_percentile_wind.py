@@ -9,8 +9,7 @@ import numpy as np
 
 from hirad.eval.bias_by_percentile_common import (
     BiasByPercentileSpec,
-    _round_sig,
-    even_value_ticks,
+    apply_logit_percentile_xaxis,
     finalize_percentile_plot,
     new_percentile_axes,
     plot_dict_curves,
@@ -21,36 +20,9 @@ from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
 
 def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
                        xlim_left: float | None = None) -> None:
-    """Apply logit x-axis with labelled percentile ticks (and an m/s secondary axis)."""
-    ax.set_xscale('logit')
-    if xlim_left is None:
-        xlim_left = max(float(frac[0]), 0.0001)
-    xlim_right = min(float(frac[-1]), 0.9999)
-    ax.set_xlim(xlim_left, xlim_right)
-    tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
-    tick_labels = ['0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99']
-    valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
-                   if xlim_left <= f <= xlim_right]
-    ax.set_xticks([f for f, _ in valid_ticks])
-    ax.set_xticklabels([l for _, l in valid_ticks])
-    ax.grid(True, alpha=0.3, which='both')
-
-    if mean_q is not None:
-        ax2 = ax.twiny()
-        ax2.set_xscale('logit')
-        ax2.set_xlim(xlim_left, xlim_right)
-        tick_positions, tick_speeds = even_value_ticks(frac, mean_q)
-        valid = (tick_positions >= xlim_left) & (tick_positions <= xlim_right)
-        positions = list(tick_positions[valid])
-        speeds = list(tick_speeds[valid])
-        # Ensure a labelled tick at the left-hand edge of the visible range.
-        left_speed = _round_sig(float(np.interp(xlim_left, frac, mean_q)))
-        if not positions or positions[0] > xlim_left:
-            positions.insert(0, xlim_left)
-            speeds.insert(0, left_speed)
-        ax2.set_xticks(positions)
-        ax2.set_xticklabels([f'{v:g}' for v in speeds])
-        ax2.set_xlabel('Mean target [m/s]')
+    """Apply logit percentile x-axis with an m/s secondary axis."""
+    apply_logit_percentile_xaxis(ax, frac, mean_q, xlim_left=xlim_left,
+                                 secondary_label='Mean target [m/s]')
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,

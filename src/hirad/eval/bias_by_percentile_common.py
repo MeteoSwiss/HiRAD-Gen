@@ -3,7 +3,7 @@ import concurrent.futures
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -294,12 +294,6 @@ def _ensemble_stats(member_qs, member_exc, target_q, frac_percentiles):
     return spread, mae_entry, bias_entry, fbi_entry
 
 
-def new_percentile_axes(percentile_values: np.ndarray):
-    """Create a figure/axes pair and return it together with the fractional x-values."""
-    fig, ax = plt.subplots(figsize=(10, 6))
-    return fig, ax, percentile_values / 100.0
-
-
 def _round_sig(x: float, sig: int = 2) -> float:
     """Round *x* to *sig* significant figures (clean axis labels)."""
     if x == 0 or not np.isfinite(x):
@@ -339,6 +333,95 @@ def even_value_ticks(frac: np.ndarray, mean_q: np.ndarray,
             keep.append(i)
     keep = np.array(keep, dtype=np.intp)
     return sample_pos[keep], rounded[keep]
+
+
+# Percentile tick presets for a logit x-axis, as (fraction, label) pairs.
+LOGIT_PERCENTILE_TICKS_FINE = (
+    (0.0001, '0.01'), (0.001, '0.1'), (0.01, '1'), (0.1, '10'),
+    (0.50, '50'), (0.90, '90'), (0.99, '99'), (0.999, '99.9'), (0.9999, '99.99'),
+)
+LOGIT_PERCENTILE_TICKS_TAIL = (
+    (0.50, '50'), (0.75, '75'), (0.90, '90'),
+    (0.99, '99'), (0.999, '99.9'), (0.9999, '99.99'),
+)
+
+
+def apply_logit_percentile_xaxis(
+    ax,
+    frac: np.ndarray,
+    mean_q: Optional[np.ndarray] = None,
+    *,
+    xlim_left: Optional[float] = None,
+    percentile_ticks=LOGIT_PERCENTILE_TICKS_FINE,
+    secondary_label: Optional[str] = None,
+    secondary_values: Optional[np.ndarray] = None,
+) -> None:
+    """Configure a logit percentile x-axis with an optional physical-unit top axis.
+
+    Shared by the bias / MAE / spread / FBI "by percentile" plots. The primary
+    axis carries labelled percentile ticks on a logit scale; when ``mean_q`` is
+    supplied, a secondary top axis labelled in the variable's physical units is
+    added.
+
+    Parameters
+    ----------
+    ax : matplotlib Axes to configure.
+    frac : fractional percentile positions (0-1) used as the x-coordinates.
+    mean_q : per-percentile mean target value; enables the secondary top axis.
+    xlim_left : left x-limit; defaults to ``max(frac[0], 1e-4)``.
+    percentile_ticks : (fraction, label) pairs for the primary percentile axis.
+    secondary_label : axis label for the top axis (e.g. ``'Mean target [m/s]'``).
+    secondary_values : fixed "nice" physical values to place on the top axis
+        (e.g. precipitation rates). When omitted, ticks are spread evenly along
+        the logit axis via :func:`even_value_ticks`.
+    """
+    ax.set_xscale('logit')
+    if xlim_left is None:
+        xlim_left = max(float(frac[0]), 0.0001)
+    xlim_right = min(float(frac[-1]), 0.9999)
+    ax.set_xlim(xlim_left, xlim_right)
+
+    visible = [(f, l) for f, l in percentile_ticks if xlim_left <= f <= xlim_right]
+    ax.set_xticks([f for f, _ in visible])
+    ax.set_xticklabels([l for _, l in visible])
+    ax.grid(True, alpha=0.3, which='both')
+
+    if mean_q is None:
+        return
+
+    ax2 = ax.twiny()
+    ax2.set_xscale('logit')
+    ax2.set_xlim(xlim_left, xlim_right)
+
+    if secondary_values is not None:
+        secondary_values = np.asarray(secondary_values, dtype=float)
+        positions = np.interp(secondary_values, mean_q, frac)
+        labels = [f'{v:g}' for v in secondary_values]
+    else:
+        positions, values = even_value_ticks(frac, mean_q)
+        labels = [f'{v:g}' for v in values]
+
+    positions = np.asarray(positions, dtype=float)
+    keep = (positions >= xlim_left) & (positions <= xlim_right)
+    positions = list(positions[keep])
+    labels = [lab for lab, k in zip(labels, keep) if k]
+
+    # Always label the left-hand edge of the visible range.
+    if not positions or positions[0] > xlim_left:
+        edge_val = _round_sig(float(np.interp(xlim_left, frac, mean_q)))
+        positions.insert(0, xlim_left)
+        labels.insert(0, f'{edge_val:g}')
+
+    ax2.set_xticks(positions)
+    ax2.set_xticklabels(labels)
+    if secondary_label:
+        ax2.set_xlabel(secondary_label)
+
+
+def new_percentile_axes(percentile_values: np.ndarray):
+    """Create a figure/axes pair and return it together with the fractional x-values."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    return fig, ax, percentile_values / 100.0
 
 
 def plot_dict_curves(ax, frac, data_dict, labels, colors, lower_clip=None) -> list:

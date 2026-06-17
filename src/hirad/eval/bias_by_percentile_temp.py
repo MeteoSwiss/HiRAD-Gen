@@ -6,7 +6,7 @@ import numpy as np
 
 from hirad.eval.bias_by_percentile_common import (
     BiasByPercentileSpec,
-    even_value_ticks,
+    apply_logit_percentile_xaxis,
     finalize_percentile_plot,
     new_percentile_axes,
     plot_dict_curves,
@@ -16,31 +16,8 @@ from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
 
 
 def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
-    """Apply logit x-axis with labelled percentile ticks (and a °C secondary axis)."""
-    ax.set_xscale('logit')
-    xlim_left = max(float(frac[0]), 0.0001)
-    xlim_right = min(float(frac[-1]), 0.9999)
-    ax.set_xlim(xlim_left, xlim_right)
-    tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
-    tick_labels = ['0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99']
-    # only show ticks within our data range
-    valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
-                   if xlim_left <= f <= xlim_right]
-    ax.set_xticks([f for f, _ in valid_ticks])
-    ax.set_xticklabels([l for _, l in valid_ticks])
-    ax.grid(True, alpha=0.3, which='both')
-
-    if mean_q is not None:
-        ax2 = ax.twiny()
-        ax2.set_xscale('logit')
-        ax2.set_xlim(xlim_left, xlim_right)
-        # The axis is logit in percentile, so a fixed list of round temps bunches
-        # near the median while the tails get no labels; even_value_ticks picks a
-        # nice step and spreads labels evenly across the whole logit axis.
-        tick_positions, tick_temps = even_value_ticks(frac, mean_q)
-        ax2.set_xticks(tick_positions)
-        ax2.set_xticklabels([f'{v:g}' for v in tick_temps])
-        ax2.set_xlabel('Mean target [°C]')
+    """Apply logit percentile x-axis with a °C secondary axis."""
+    apply_logit_percentile_xaxis(ax, frac, mean_q, secondary_label='Mean target [°C]')
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,

@@ -5,7 +5,9 @@ local-then-averaged estimator (see :mod:`hirad.eval.bias_by_percentile_common`).
 import numpy as np
 
 from hirad.eval.bias_by_percentile_common import (
+    LOGIT_PERCENTILE_TICKS_TAIL,
     BiasByPercentileSpec,
+    apply_logit_percentile_xaxis,
     finalize_percentile_plot,
     new_percentile_axes,
     plot_dict_curves,
@@ -14,36 +16,18 @@ from hirad.eval.bias_by_percentile_common import (
 from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
-    """Apply logit x-axis with labelled percentile ticks (and a mm/h secondary axis)."""
-    ax.set_xscale('logit')
-    xlim_right = min(float(frac[-1]), 0.9999)
-    ax.set_xlim(0.5, xlim_right)
-    all_tick_fracs  = [0.50, 0.75, 0.90, 0.99, 0.999, 0.9999]
-    all_tick_labels = ['50', '75', '90', '99', '99.9', '99.99']
-    valid_ticks = [(f, l) for f, l in zip(all_tick_fracs, all_tick_labels)
-                   if f <= xlim_right]
-    ax.set_xticks([f for f, _ in valid_ticks])
-    ax.set_xticklabels([l for _, l in valid_ticks])
-    ax.grid(True, alpha=0.3, which='both')
+_PRECIP_SECONDARY_MMH = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
 
-    if mean_q is not None:
-        ax2 = ax.twiny()
-        ax2.set_xscale('logit')
-        ax2.set_xlim(0.5, xlim_right)
-        nice_mmh = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
-        tick_positions = np.interp(nice_mmh, mean_q, frac)
-        valid = (tick_positions > 0.5) & (tick_positions <= xlim_right)
-        positions = list(tick_positions[valid])
-        labels = [f'{v:g}' for v in nice_mmh[valid]]
-        # Ensure a labelled tick at the left-hand edge of the visible range.
-        if not positions or positions[0] > 0.5:
-            left_mmh = np.interp(0.5, frac, mean_q)
-            positions.insert(0, 0.5)
-            labels.insert(0, f'{left_mmh:.2g}')
-        ax2.set_xticks(positions)
-        ax2.set_xticklabels(labels)
-        ax2.set_xlabel('Mean target [mm/h]')
+
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
+    """Apply logit percentile x-axis (upper tail) with a mm/h secondary axis."""
+    apply_logit_percentile_xaxis(
+        ax, frac, mean_q,
+        xlim_left=0.5,
+        percentile_ticks=LOGIT_PERCENTILE_TICKS_TAIL,
+        secondary_label='Mean target [mm/h]',
+        secondary_values=_PRECIP_SECONDARY_MMH,
+    )
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,
