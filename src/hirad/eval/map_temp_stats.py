@@ -145,7 +145,7 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
             data, filename,
             title=title,
             label='Frequency [% of days]',
-            vmin=0, vmax=50, cmap='OrRd', extend='neither', grid_cfg=grid_cfg
+            vmin=0, vmax=30, cmap='OrRd', extend='neither', grid_cfg=grid_cfg
         )
     elif stype == 'warm_spell':
         plot_map(
