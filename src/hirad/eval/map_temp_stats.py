@@ -49,6 +49,39 @@ def consecutive_spell(data_np, condition_fn):
     return _consecutive_spell_2d(cond)
 
 
+@numba.njit
+def _count_spell_days(x, min_run):
+    """Count total days belonging to runs of at least min_run consecutive True values."""
+    n = x.shape[0]
+    total = 0
+    i = 0
+    while i < n:
+        if x[i]:
+            run_start = i
+            while i < n and x[i]:
+                i += 1
+            run_len = i - run_start
+            if run_len >= min_run:
+                total += run_len
+        else:
+            i += 1
+    return total
+
+
+@numba.njit(parallel=True)
+def _spell_days_2d(condition_3d, min_run):
+    """
+    condition_3d: bool array of shape (T, H, W).
+    Returns int array of shape (H, W) with total spell days per grid point.
+    """
+    T, H, W = condition_3d.shape
+    out = np.empty((H, W), dtype=np.int64)
+    for i in numba.prange(H):
+        for j in range(W):
+            out[i, j] = _count_spell_days(condition_3d[:, i, j], min_run)
+    return out
+
+
 def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
     """
     Apply temperature statistic on array containing time sequence of 2m temperature maps.
@@ -109,16 +142,20 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param=None):
             return np.mean(daily_max - daily_min, axis=0)
 
         if stat_type == 'warm_spell':
-            # WSDI-like: longest consecutive run of days with daily max > 25 °C
-            return consecutive_spell(daily_max, lambda x: x > 25.0)
+            # WSDI: total days in spells ≥6 consecutive days with TX > 90th percentile
+            p90 = np.percentile(daily_max, 90, axis=0)  # (H, W)
+            cond = np.ascontiguousarray(daily_max > p90[np.newaxis, :, :])
+            return _spell_days_2d(cond, 6).astype(np.float32)
 
         if stat_type == 'hot_spell':
-            # longest consecutive run of days with daily max > 35 °C
+            # longest consecutive run of days with daily max > 35 °C (custom, non-ETCCDI)
             return consecutive_spell(daily_max, lambda x: x > 35.0)
 
         if stat_type == 'cold_spell':
-            # CSDI-like: longest consecutive run of days with daily min < 0 °C
-            return consecutive_spell(daily_min, lambda x: x < 0.0)
+            # CSDI: total days in spells ≥6 consecutive days with TN < 10th percentile
+            p10 = np.percentile(daily_min, 10, axis=0)  # (H, W)
+            cond = np.ascontiguousarray(daily_min < p10[np.newaxis, :, :])
+            return _spell_days_2d(cond, 6).astype(np.float32)
 
     raise ValueError(f"Unsupported temperature statistic type: {stat_type}")
 
@@ -245,9 +282,9 @@ def main(cfg: dict):
         'ice_days':        {'type': 'ice_days',        'title': 'Ice Days (daily max < 0°C)'},
         'tropical_nights': {'type': 'tropical_nights', 'title': 'Tropical Nights (daily min > 20°C)'},
         'dtr':             {'type': 'dtr',             'title': 'Mean Diurnal Temperature Range (DTR)'},
-        'warm_spell':      {'type': 'warm_spell',      'title': 'Warm Spell Duration (daily max > 25°C)'},
+        'warm_spell':      {'type': 'warm_spell',      'title': 'WSDI: Warm Spell Duration (TX > 90th pct, ≥6 days)'},
         'hot_spell':       {'type': 'hot_spell',       'title': 'Hot Spell Duration (daily max > 35°C)'},
-        'cold_spell':      {'type': 'cold_spell',      'title': 'Cold Spell Duration (daily min < 0°C)'},
+        'cold_spell':      {'type': 'cold_spell',      'title': 'CSDI: Cold Spell Duration (TN < 10th pct, ≥6 days)'},
     }
     stat_configs = [
         {'stat_name': name, 'title_stat': config['title'], 'param': config.get('param'), **config}
