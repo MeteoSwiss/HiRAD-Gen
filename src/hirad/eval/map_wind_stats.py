@@ -7,8 +7,8 @@ import torch
 
 from hirad.datasets import get_channels_from_strings, get_strings_from_channels
 from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.plotting import plot_map
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir, signed_circular_difference
+from hirad.eval.plotting import plot_difference_map, plot_map
 
 
 def compute_wind_speed(u, v):
@@ -199,6 +199,20 @@ def plot_wind_stat_map(data, filename, stat_config, label, grid_cfg):
         )
 
 
+def _wind_difference_label(stat_type):
+    if stat_type in ['mean_speed', 'max_speed']:
+        return 'Difference [m/s]'
+    if stat_type == 'wind_power':
+        return 'Difference [m^3/s^3]'
+    if stat_type in ['calm_freq', 'light_breeze_freq', 'moderate_breeze_freq', 'strong_breeze_freq', 'gale_freq']:
+        return 'Difference [%]'
+    if stat_type in ['prevailing_direction', 'direction_variability']:
+        return 'Difference [degrees]'
+    if stat_type in ['mean_u', 'mean_v']:
+        return 'Difference [m/s]'
+    return 'Difference'
+
+
 def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -294,6 +308,7 @@ def main(cfg: dict):
     logger.info(f"Generating {len(stat_configs)} statistics for {len(basic_modes)} modes + predictions")
 
     log_interval = cfg.get("log_interval", 100)
+    mode_results = {}
 
     for mode, (wind_channels, label) in basic_modes.items():
         logger.info(f"Processing mode: {mode}")
@@ -323,10 +338,41 @@ def main(cfg: dict):
                     label,
                     grid_cfg
                 )
-            del results
+            mode_results[mode] = results
         except Exception as e:
             logger.error(f"Failed computing statistics for {mode}: {e}")
             continue
+
+    target_results = mode_results.get('target')
+    if target_results is None:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for basic modes")
+    else:
+        for mode, (_, label) in basic_modes.items():
+            if mode == 'target' or mode not in mode_results:
+                continue
+            logger.info(f"Generating {mode} minus target difference maps")
+            for stat_config in stat_configs:
+                stat_key = stat_config['stat_name']
+                if stat_key not in mode_results[mode] or stat_key not in target_results:
+                    continue
+                if stat_config['type'] == 'prevailing_direction':
+                    diff = signed_circular_difference(mode_results[mode][stat_key], target_results[stat_key])
+                else:
+                    diff = mode_results[mode][stat_key] - target_results[stat_key]
+                map_output_dir = output_path / f"maps_wind_{stat_key}"
+                map_output_dir.mkdir(parents=True, exist_ok=True)
+                plot_difference_map(
+                    diff,
+                    str(map_output_dir / f'{mode}_minus_target_{stat_key}'),
+                    title=f'{label} - Target: {stat_config["title_stat"]} Difference',
+                    label=_wind_difference_label(stat_config['type']),
+                    grid_cfg=grid_cfg,
+                    fixed_vmax=180.0 if stat_config['type'] == 'prevailing_direction' else None,
+                )
+
+    has_target_for_diff = target_results is not None
+    if not has_target_for_diff:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for members")
 
 
     logger.info("Processing predictions mode...")
@@ -469,6 +515,22 @@ def main(cfg: dict):
                     map_output_dir.mkdir(parents=True, exist_ok=True)
                     member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_key}')
                     plot_wind_stat_map(member_result, member_filename, stat_config, f'CorrDiff Member {member_idx+1}', grid_cfg)
+                    if has_target_for_diff:
+                        target_result = target_results.get(stat_key)
+                        if target_result is not None:
+                            if stype == 'prevailing_direction':
+                                diff = signed_circular_difference(member_result, target_result)
+                            else:
+                                diff = member_result - target_result
+                            diff_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_minus_target_{stat_key}')
+                            plot_difference_map(
+                                diff,
+                                diff_filename,
+                                title=f'CorrDiff Member {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
+                                label=_wind_difference_label(stype),
+                                grid_cfg=grid_cfg,
+                                fixed_vmax=180.0 if stype == 'prevailing_direction' else None,
+                            )
                     del member_result
                 except Exception as e:
                     logger.error(f"Failed {stat_config['title_stat']} for member {member_idx+1}: {e}")

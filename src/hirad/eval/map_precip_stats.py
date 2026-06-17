@@ -9,7 +9,7 @@ import numba
 
 from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
 from hirad.eval.plotting import (
-    plot_map_precipitation, plot_map
+    plot_difference_map, plot_map, plot_map_precipitation
 )
 
 
@@ -128,6 +128,14 @@ def plot_stat_map(data, filename, stat_config, label, grid_cfg):
         )
 
 
+def _difference_label(stat_type):
+    if stat_type == 'weth_freq':
+        return 'Difference [%]'
+    if stat_type in ('cdd', 'cwd'):
+        return 'Difference [days]'
+    return 'Difference [mm/day]'
+
+
 def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -178,6 +186,8 @@ def main(cfg: dict):
         'regression-prediction': (tp_out, 'Regression Prediction')
     }
 
+    mode_results = {}
+
     for mode, (tp_channel, label) in basic_modes.items():
         logger.info(f"Processing mode: {mode}")
         data_list = []
@@ -195,14 +205,39 @@ def main(cfg: dict):
         mode_data = np.stack(data_list, axis=0).astype(np.float32)
         del data_list
 
+        mode_results[mode] = {}
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for {mode}...")
             result = apply_statistic(mode_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
+            mode_results[mode][stat_config['stat_name']] = result
             map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg)
 
         del mode_data
+
+    target_results = mode_results.get('target')
+    if target_results is None:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for basic modes")
+    else:
+        for mode, (_, label) in basic_modes.items():
+            if mode == 'target' or mode not in mode_results:
+                continue
+            logger.info(f"Generating {mode} minus target difference maps")
+            for stat_config in stat_configs:
+                stat_name = stat_config['stat_name']
+                if stat_name not in mode_results[mode] or stat_name not in target_results:
+                    continue
+                diff = mode_results[mode][stat_name] - target_results[stat_name]
+                map_output_dir = output_path / f"maps_precip_{stat_name}"
+                map_output_dir.mkdir(parents=True, exist_ok=True)
+                plot_difference_map(
+                    diff,
+                    str(map_output_dir / f'{mode}_minus_target_{stat_name}'),
+                    title=f'{label} - Target: {stat_config["title_stat"]} Difference',
+                    label=_difference_label(stat_config['type']),
+                    grid_cfg=grid_cfg,
+                )
 
     # --- Predictions: process ONE member at a time to bound memory usage ---
     logger.info("Processing predictions mode...")
@@ -214,6 +249,9 @@ def main(cfg: dict):
     H: int = cfg["height"]
     W: int = cfg["width"]
     member_data = np.empty((len(times), H, W), dtype=np.float32)
+    has_target_for_diff = target_results is not None
+    if not has_target_for_diff:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for members")
 
     for member_idx in range(n_members):
         logger.info(f"Loading prediction member {member_idx+1}/{n_members} (single pass over files)...")
@@ -234,6 +272,18 @@ def main(cfg: dict):
             member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
             member_label = f'CorrDiff Member {member_idx+1}'
             plot_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg)
+            if has_target_for_diff:
+                target_result = target_results.get(stat_config['stat_name'])
+                if target_result is not None:
+                    diff = member_result - target_result
+                    diff_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_minus_target_{stat_config["stat_name"]}')
+                    plot_difference_map(
+                        diff,
+                        diff_filename,
+                        title=f'CorrDiff Member {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
+                        label=_difference_label(stat_config['type']),
+                        grid_cfg=grid_cfg,
+                    )
 
     del member_data
     logger.info("All precipitation statistics maps generated successfully")

@@ -193,6 +193,15 @@ def resolve_ts_dir(out_root: Path, ts: str) -> Path:
     raise FileNotFoundError(f"Timestamp directory {ts} not found under {out_root}")
 
 
+def signed_circular_difference(prediction: np.ndarray, target: np.ndarray, period: float = 360.0) -> np.ndarray:
+    """Return signed wrapped difference on a circular domain.
+
+    For angles in degrees, this yields values in [-180, 180).
+    """
+    half_period = period / 2.0
+    return ((prediction - target + half_period) % period) - half_period
+
+
 
 def parse_eval_cli(allow_times: bool = False) -> dict:
     """Parse standard eval CLI args (``--config-name``) and return the loaded YAML config.

@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -78,6 +79,39 @@ def plot_map(values: np.array,
     plt.tight_layout()
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def compute_symmetric_vmax(values: np.ndarray, percentile: float = 99.0, fallback: float = 1.0) -> float:
+    """Return a robust symmetric colorbar half-range based on absolute values."""
+    vmax = float(np.nanpercentile(np.abs(values), percentile))
+    if vmax != vmax or vmax <= 0:
+        return fallback
+    return vmax
+
+
+def plot_difference_map(
+    values: np.ndarray,
+    filename: str,
+    title: str = '',
+    label: str = 'Difference',
+    grid_cfg: GridConfig = DEFAULT_GRID_CONFIG,
+    cmap: str = 'RdBu_r',
+    percentile: float = 99.0,
+    fixed_vmax: Optional[float] = None,
+):
+    """Plot a difference map with symmetric diverging bounds around zero."""
+    vmax = fixed_vmax if fixed_vmax is not None else compute_symmetric_vmax(values, percentile=percentile)
+    plot_map(
+        values,
+        filename,
+        title=title,
+        label=label,
+        vmin=-vmax,
+        vmax=vmax,
+        cmap=cmap,
+        extend='both',
+        grid_cfg=grid_cfg,
+    )
 
 def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG):
     """Plot precipitation data with specific colormap and thresholds."""
