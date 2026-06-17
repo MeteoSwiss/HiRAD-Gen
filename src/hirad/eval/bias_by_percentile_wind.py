@@ -24,11 +24,11 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
     """Apply logit x-axis with labelled percentile ticks (and an m/s secondary axis)."""
     ax.set_xscale('logit')
     if xlim_left is None:
-        xlim_left = float(frac[0])
-    xlim_right = frac[-1] + 1e-9
+        xlim_left = max(float(frac[0]), 0.0001)
+    xlim_right = min(float(frac[-1]), 0.9999)
     ax.set_xlim(xlim_left, xlim_right)
-    tick_fracs  = [0.00001, 0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999, 0.99999]
-    tick_labels = ['0.001', '0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99', '99.999']
+    tick_fracs  = [0.0001, 0.001, 0.01, 0.1, 0.50, 0.90, 0.99, 0.999, 0.9999]
+    tick_labels = ['0.01', '0.1', '1', '10', '50', '90', '99', '99.9', '99.99']
     valid_ticks = [(f, l) for f, l in zip(tick_fracs, tick_labels)
                    if xlim_left <= f <= xlim_right]
     ax.set_xticks([f for f, _ in valid_ticks])
