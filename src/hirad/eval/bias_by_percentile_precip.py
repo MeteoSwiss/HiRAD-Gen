@@ -14,15 +14,14 @@ from hirad.eval.bias_by_percentile_common import (
 from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
-                       xlim_left: float = 0.5) -> None:
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
     """Apply logit x-axis with labelled percentile ticks (and a mm/h secondary axis)."""
     ax.set_xscale('logit')
-    ax.set_xlim(xlim_left, frac[-1])
-    all_tick_fracs  = [0.10, 0.25, 0.50, 0.75, 0.90, 0.99, 0.999, 0.9999, 0.99999]
-    all_tick_labels = ['10', '25', '50', '75', '90', '99', '99.9', '99.99', '99.999']
+    ax.set_xlim(0.5, frac[-1])
+    all_tick_fracs  = [0.50, 0.75, 0.90, 0.99, 0.999, 0.9999, 0.99999]
+    all_tick_labels = ['50', '75', '90', '99', '99.9', '99.99', '99.999']
     valid_ticks = [(f, l) for f, l in zip(all_tick_fracs, all_tick_labels)
-                   if xlim_left <= f <= frac[-1]]
+                   if f <= frac[-1]]
     ax.set_xticks([f for f, _ in valid_ticks])
     ax.set_xticklabels([l for _, l in valid_ticks])
     ax.grid(True, alpha=0.3, which='both')
@@ -30,16 +29,16 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
     if mean_q is not None:
         ax2 = ax.twiny()
         ax2.set_xscale('logit')
-        ax2.set_xlim(xlim_left, frac[-1])
+        ax2.set_xlim(0.5, frac[-1])
         nice_mmh = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
         tick_positions = np.interp(nice_mmh, mean_q, frac)
-        valid = (tick_positions > xlim_left) & (tick_positions <= frac[-1])
+        valid = (tick_positions > 0.5) & (tick_positions <= frac[-1])
         positions = list(tick_positions[valid])
         labels = [f'{v:g}' for v in nice_mmh[valid]]
         # Ensure a labelled tick at the left-hand edge of the visible range.
-        if not positions or positions[0] > xlim_left:
-            left_mmh = np.interp(xlim_left, frac, mean_q)
-            positions.insert(0, xlim_left)
+        if not positions or positions[0] > 0.5:
+            left_mmh = np.interp(0.5, frac, mean_q)
+            positions.insert(0, 0.5)
             labels.insert(0, f'{left_mmh:.2g}')
         ax2.set_xticks(positions)
         ax2.set_xticklabels(labels)
@@ -91,8 +90,7 @@ def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors
         ymax = float(max(np.nanmax(v) for v in all_vals)) * 1.5
         ymin = float(min(np.nanmin(v) for v in all_vals)) / 1.5
         ax.set_ylim(max(ymin, 1e-3), max(ymax, 2.0))
-    finalize_percentile_plot(ax, frac,
-                             lambda ax_, frac_, mq: _apply_logit_xaxis(ax_, frac_, mq, xlim_left=0.10),
+    finalize_percentile_plot(ax, frac, _apply_logit_xaxis,
                              mean_q, xlabel, ylabel, title, out_path)
 
 
