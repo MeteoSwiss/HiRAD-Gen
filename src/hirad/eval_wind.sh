@@ -15,6 +15,7 @@ CMDS=(
     "python -m hirad.eval.bias_by_percentile_wind_smoothed"
     # Maps
     "python src/hirad/eval/map_wind_stats.py"
+    "python src/hirad/eval/map_wind_percentiles.py"
 )
 
 for cmd in "${CMDS[@]}"; do
