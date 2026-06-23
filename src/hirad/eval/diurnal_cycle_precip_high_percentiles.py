@@ -76,8 +76,7 @@ def main(cfg: dict):
     # Storage for diurnal cycles: pct_mean[pct_key][mode], pct_std[pct_key]['prediction']
     pct_mean = {key: {} for _, key, _ in percentile_configs}
     pct_std  = {key: {} for _, key, _ in percentile_configs}
-
-    conv_factor = cfg.get("conv_factor")
+    conv_factor = cfg.get("conv_factor_hourly")
     land_idx = land_bool.values  # 1D boolean mask over flattened (lat, lon)
     n_land = int(land_idx.sum())
     quantiles = np.array([q for q, _, _ in percentile_configs])
@@ -233,7 +232,7 @@ def main(cfg: dict):
             hrs_c,
             lines,
             plot_labels,
-            'Precipitation (mm/day)',
+            'Precipitation (mm/h)',
             f'Diurnal Cycle of {label}-Percentile Precipitation',
             fn
         )
