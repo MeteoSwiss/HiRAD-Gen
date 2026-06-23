@@ -7,7 +7,7 @@ import torch
 import xarray as xr
 import numba
 
-from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, precip_conv_factor, resolve_ts_dir
 from hirad.eval.plotting import (
     plot_difference_map, plot_map, plot_map_precipitation
 )
@@ -163,7 +163,7 @@ def main(cfg: dict):
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    conv_factor = cfg.get("conv_factor_hourly", 1000)
+    conv_factor = precip_conv_factor(cfg)  # mm/h
     log_interval = cfg.get("log_interval", 100)
     wet_threshold = cfg.get("wet_threshold", 0.1)
 

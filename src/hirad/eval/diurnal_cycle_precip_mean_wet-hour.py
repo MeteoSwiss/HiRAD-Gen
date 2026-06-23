@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir
 
 ALLHOUR_THRESHOLDS = [0.1, 1.0, 10.0, 100.0]  # mm/h
 
@@ -63,6 +63,8 @@ def main(cfg: dict):
     # Land-sea mask
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
+    conv_factor = precip_conv_factor(cfg)  # mm/h
+
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
     wet_target   = {thr: [] for thr in ALLHOUR_THRESHOLDS}
@@ -73,11 +75,11 @@ def main(cfg: dict):
     # Collect data
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
-        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * cfg.get("conv_factor_hourly")
-        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * cfg.get("conv_factor_hourly")
-        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * cfg.get("conv_factor_hourly")
+        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * conv_factor
+        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * conv_factor
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * conv_factor
         try:
-            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * cfg.get("conv_factor_hourly")
+            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * conv_factor
         except:
             mean_pred = None
 

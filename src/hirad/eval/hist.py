@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir
 from hirad.eval.eval_utils import percentiles_from_histogram
 
 
@@ -122,6 +122,8 @@ def main(cfg: dict):
     # Land-sea mask
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
 
+    conv_factor = precip_conv_factor(cfg)  # mm/h
+
     # Define histogram bins
     # bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
     log_bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
@@ -143,7 +145,7 @@ def main(cfg: dict):
                 if i % cfg.get("log_interval") == 0:
                     logger.info(f"Processing timestep {i+1}/{len(times)}")
                 
-                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * cfg.get("conv_factor_hourly") * land_mask
+                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)[tp_out if mode in ['target', 'regression-prediction'] else tp_in] * conv_factor * land_mask
                 
                 land_values = data.values[~np.isnan(data.values)]
                 
@@ -170,7 +172,7 @@ def main(cfg: dict):
         if i % cfg.get("log_interval") == 0:
             logger.info(f"Processing timestep {i+1}/{len(times)}")
         
-        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False) * cfg.get("conv_factor_hourly")  # [n_members, n_channels, lat, lon]
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False) * conv_factor  # [n_members, n_channels, lat, lon]
         
         if n_members is None:
             n_members = preds.shape[0]

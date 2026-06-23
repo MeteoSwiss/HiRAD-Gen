@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir
 
 def save_plot(hours, lines, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +76,7 @@ def main(cfg: dict):
     # Storage for diurnal cycles: pct_mean[pct_key][mode], pct_std[pct_key]['prediction']
     pct_mean = {key: {} for _, key, _ in percentile_configs}
     pct_std  = {key: {} for _, key, _ in percentile_configs}
-    conv_factor = cfg.get("conv_factor_hourly")
+    conv_factor = precip_conv_factor(cfg)  # mm/h
     land_idx = land_bool.values  # 1D boolean mask over flattened (lat, lon)
     n_land = int(land_idx.sum())
     quantiles = np.array([q for q, _, _ in percentile_configs])

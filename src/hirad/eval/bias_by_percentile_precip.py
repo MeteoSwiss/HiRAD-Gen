@@ -13,7 +13,7 @@ from hirad.eval.bias_by_percentile_common import (
     plot_dict_curves,
     run_bias_by_percentile,
 )
-from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli
+from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli, precip_conv_factor
 
 
 _PRECIP_SECONDARY_MMH = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
@@ -103,7 +103,7 @@ SPEC = BiasByPercentileSpec(
     percentile_values=make_percentile_values(),
     resolve_channels=_resolve_channels,
     make_hist_bins=_make_hist_bins,
-    read_scaling=lambda cfg: (cfg.get("conv_factor_hourly", 1.0), 0.0),
+    read_scaling=lambda cfg: (precip_conv_factor(cfg), 0.0),
     save_bias=save_bias_by_percentile_plot,
     save_mae=save_mae_by_percentile_plot,
     save_spread=save_spread_by_percentile_plot,

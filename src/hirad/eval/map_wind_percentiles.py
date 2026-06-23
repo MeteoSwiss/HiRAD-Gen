@@ -20,11 +20,11 @@ from hirad.eval.plotting import plot_difference_map, plot_map
 # Percentile maps to compute, with fixed colorbar upper bounds (m/s) so that
 # every mode shares the same scale for visual comparison.
 PERCENTILE_CONFIG = {
-    'p50': {'param': 0.50, 'title': '50th Percentile', 'vmax': 12.0},
-    'p90': {'param': 0.90, 'title': '90th Percentile', 'vmax': 18.0},
-    'p99': {'param': 0.99, 'title': '99th Percentile', 'vmax': 28.0},
-    'p99.9': {'param': 0.999, 'title': '99.9th Percentile', 'vmax': 38.0},
-    'p99.99': {'param': 0.9999, 'title': '99.99th Percentile', 'vmax': 48.0},
+    'p50': {'param': 0.50, 'title': '50th Percentile', 'vmax': 6.0},
+    'p90': {'param': 0.90, 'title': '90th Percentile', 'vmax': 12.0},
+    'p99': {'param': 0.99, 'title': '99th Percentile', 'vmax': 18.0},
+    'p99.9': {'param': 0.999, 'title': '99.9th Percentile', 'vmax': 28.0},
+    'p99.99': {'param': 0.9999, 'title': '99.99th Percentile', 'vmax': 38.0},
 }
 
 

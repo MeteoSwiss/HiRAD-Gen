@@ -40,6 +40,18 @@ def grid_cfg_from_cfg(cfg) -> GridConfig:
     )
 
 
+def precip_conv_factor(cfg: dict) -> float:
+    """Return the single factor converting stored precipitation to mm/h.
+
+    ERA5 precipitation is an hourly accumulated depth in metres, so the only
+    physical conversion is metres -> millimetres (x1000), yielding mm/h. This is
+    the *one* precipitation unit used throughout evaluation: per-day and multi-day
+    totals (Rx1day, Rx5day, CDD/CWD, ...) are obtained by summing mm/h values over
+    time, never via a separate scaling factor.
+    """
+    return float(cfg.get("precip_conv_factor", 1000.0))
+
+
 def load_land_sea_mask(path, height=352, width=544):
     """Load and return a land-sea mask as xarray DataArray."""
     lsm_data = np.load(path).reshape(height, width)

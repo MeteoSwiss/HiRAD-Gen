@@ -19,6 +19,7 @@ from hirad.eval.eval_utils import (
     grid_cfg_from_cfg,
     load_generation_setup,
     parse_eval_cli,
+    precip_conv_factor,
     resolve_ts_dir,
 )
 from hirad.eval.plotting import plot_map, plot_map_precipitation
@@ -45,8 +46,7 @@ def main(cfg: dict) -> None:
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    # conv_factor_hourly converts ERA5 accumulated precip (m) to mm/h
-    conv_factor = cfg.get("conv_factor_hourly", 1000)
+    conv_factor = precip_conv_factor(cfg)  # mm/h
     wet_threshold = cfg.get("wet_threshold", 0.1)  # mm/h
     log_interval = cfg.get("log_interval", 24)
 
