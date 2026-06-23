@@ -16,6 +16,7 @@ from hirad.eval.eval_utils import (
     load_generation_setup,
     load_land_sea_mask,
     resolve_ts_dir,
+    FONT_SIZE,
 )
 
 # Deterministic modes plotted alongside the ensemble, and the ensemble styling.
@@ -26,14 +27,8 @@ DET_MODE_CFG = [
 ENSEMBLE_LABEL = 'CorrDiff Ensemble (mean +/- 1 sigma)'
 ENSEMBLE_COLOR = 'green'
 
-_RC_PARAMS = {
-    'font.size':       16,
-    'axes.titlesize':  18,
-    'axes.labelsize':  16,
-    'xtick.labelsize': 14,
-    'ytick.labelsize': 14,
-    'legend.fontsize': 14,
-}
+# Presentation-sized fonts shared across all eval plots.
+_RC_PARAMS = FONT_SIZE
 
 
 def to_flat(arr, conv: float, offset: float = 0.0) -> np.ndarray:

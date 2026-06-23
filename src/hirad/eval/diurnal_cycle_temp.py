@@ -7,7 +7,10 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir, FONT_SIZE
+
+# Presentation-sized fonts for all figures in this script.
+plt.rcParams.update(FONT_SIZE)
 
 def main(cfg: dict):
     # Initialize

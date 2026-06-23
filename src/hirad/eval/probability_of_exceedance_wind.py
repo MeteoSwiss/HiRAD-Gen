@@ -8,7 +8,10 @@ import numpy as np
 import torch
 
 from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.eval_utils import percentiles_from_histogram
+from hirad.eval.eval_utils import percentiles_from_histogram, FONT_SIZE
+
+# Presentation-sized fonts for all figures in this script.
+plt.rcParams.update(FONT_SIZE)
 
 
 def compute_wind_speed(u, v):

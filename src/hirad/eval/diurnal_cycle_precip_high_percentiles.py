@@ -15,7 +15,11 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
+
+# Presentation-sized fonts for all figures in this script.
+plt.rcParams.update(FONT_SIZE)
+
 
 def save_plot(hours, lines, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

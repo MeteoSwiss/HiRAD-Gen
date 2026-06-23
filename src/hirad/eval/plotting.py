@@ -7,7 +7,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG
+from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG, FONT_SIZE
+
+# Use presentation-sized fonts for all maps produced here (and by scripts that
+# delegate to these helpers, e.g. map_*, snapshots, diurnal_cycle_precip_maps).
+plt.rcParams.update(FONT_SIZE)
 
 
 def plot_map(values: np.array,
