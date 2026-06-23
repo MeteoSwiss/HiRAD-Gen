@@ -113,7 +113,7 @@ def plot_difference_map(
         grid_cfg=grid_cfg,
     )
 
-def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG):
+def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG, label='mm/h'):
     """Plot precipitation data with specific colormap and thresholds."""
     # Scale and mask values below threshold
     values = rfac * values # m/h --> mm/h
@@ -135,7 +135,7 @@ def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000
         norm=norm,
         ticks=bounds,
         title=title,
-        label='mm/h',
+        label=label,
         extend='max',
         grid_cfg=grid_cfg,
     )

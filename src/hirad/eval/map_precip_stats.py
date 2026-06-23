@@ -95,7 +95,7 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param, wet_threshold=0.1)
             return consecutive_spell(daily, lambda x: x >= 1.0)
 
     if stat_type == 'weth_freq':
-        return np.mean(data_np / 24.0 > wet_threshold, axis=0) * 100.0
+        return np.mean(data_np > wet_threshold, axis=0) * 100.0
 
     raise ValueError(f"Unsupported statistic type: {stat_type}")
 
@@ -121,10 +121,11 @@ def plot_stat_map(data, filename, stat_config, label, grid_cfg):
             label='Days', vmin=0, vmax=20, cmap='viridis', extend='max', grid_cfg=grid_cfg
         )
     else:
+        unit = {'Rx1day': 'mm/day', 'Rx5day': 'mm'}.get(stat_config['type'], 'mm/h')
         plot_map_precipitation(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]} Precipitation',
-            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg
+            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg, label=unit,
         )
 
 
@@ -133,7 +134,11 @@ def _difference_label(stat_type):
         return 'Difference [%]'
     if stat_type in ('cdd', 'cwd'):
         return 'Difference [days]'
-    return 'Difference [mm/day]'
+    if stat_type == 'Rx1day':
+        return 'Difference [mm/day]'
+    if stat_type == 'Rx5day':
+        return 'Difference [mm]'
+    return 'Difference [mm/h]'
 
 
 def main(cfg: dict):
@@ -158,7 +163,7 @@ def main(cfg: dict):
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    conv_factor = cfg.get("conv_factor")
+    conv_factor = cfg.get("conv_factor_hourly", 1000)
     log_interval = cfg.get("log_interval", 100)
     wet_threshold = cfg.get("wet_threshold", 0.1)
 

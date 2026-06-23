@@ -73,11 +73,11 @@ def main(cfg: dict):
     # Collect data
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
-        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * cfg.get("conv_factor")
-        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * cfg.get("conv_factor")
-        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * cfg.get("conv_factor")
+        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * cfg.get("conv_factor_hourly")
+        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * cfg.get("conv_factor_hourly")
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * cfg.get("conv_factor_hourly")
         try:
-            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * cfg.get("conv_factor")
+            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * cfg.get("conv_factor_hourly")
         except:
             mean_pred = None
 
@@ -102,13 +102,13 @@ def main(cfg: dict):
         if mean_pred is not None:
             mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction per threshold
+        # Wet-hour fraction per threshold (data already in mm/h)
         for thr in ALLHOUR_THRESHOLDS:
-            wet_target[thr].append((da_target / 24 > thr).mean().assign_coords(time=dt))
-            wet_baseline[thr].append((da_baseline / 24 > thr).mean().assign_coords(time=dt))
-            wet_pred[thr].append((da_preds / 24 > thr).mean(dim=('lat', 'lon')).assign_coords(time=dt))
+            wet_target[thr].append((da_target > thr).mean().assign_coords(time=dt))
+            wet_baseline[thr].append((da_baseline > thr).mean().assign_coords(time=dt))
+            wet_pred[thr].append((da_preds > thr).mean(dim=('lat', 'lon')).assign_coords(time=dt))
             if mean_pred is not None:
-                wet_regpred[thr].append((da_mean_pred / 24 > thr).mean().assign_coords(time=dt))
+                wet_regpred[thr].append((da_mean_pred > thr).mean().assign_coords(time=dt))
 
         if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -128,7 +128,7 @@ def main(cfg: dict):
         [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
         ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','CorrDiff ± Std(Members)'],
-        'Precipitation (mm/day)',
+        'Precipitation (mm/h)',
         'Diurnal Cycle of Precip Amount',
         output_path / 'diurnal_cycle_precip_amount.png'
     )
