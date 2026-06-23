@@ -350,6 +350,7 @@ def main(cfg: dict):
                     title=f'{label} - Target: {stat_config["title_stat"]} Difference',
                     label=_difference_label(stat_config['type']),
                     grid_cfg=grid_cfg,
+                    fixed_vmax=1.0 if stat_config['type'] == 'mean' else None,
                 )
 
     # --- Predictions: process ONE member at a time to bound memory usage ---
@@ -407,6 +408,7 @@ def main(cfg: dict):
                         title=f'CorrDiff Member {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
                         label=_difference_label(stat_config['type']),
                         grid_cfg=grid_cfg,
+                        fixed_vmax=1.0 if stat_config['type'] == 'mean' else None,
                     )
 
     del member_data
