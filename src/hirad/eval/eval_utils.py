@@ -32,13 +32,13 @@ DEFAULT_GRID_CONFIG = GridConfig(
 # Enlarged matplotlib font sizes shared across all eval plots so that figures
 # are legible in slides/presentations. Apply via ``plt.rcParams.update(...)``.
 FONT_SIZE = {
-    'font.size':        22,
-    'axes.titlesize':   26,
-    'axes.labelsize':   24,
-    'xtick.labelsize':  20,
-    'ytick.labelsize':  20,
-    'legend.fontsize':  20,
-    'figure.titlesize': 28,
+    'font.size':        15,
+    'axes.titlesize':   18,
+    'axes.labelsize':   16,
+    'xtick.labelsize':  13,
+    'ytick.labelsize':  13,
+    'legend.fontsize':  9,
+    'figure.titlesize': 18,
 }
 
 

@@ -163,7 +163,7 @@ def plot_map_temperature(values, filename, title='', grid_cfg=DEFAULT_GRID_CONFI
         values, filename,
         cmap=cmap,
         norm=norm,
-        ticks=bounds,
+        ticks=bounds[::2],
         title=title,
         label='Temperature [°C]',
         extend='both',
