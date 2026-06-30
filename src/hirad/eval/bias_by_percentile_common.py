@@ -15,6 +15,7 @@ from hirad.eval.eval_utils import (
     get_channel_indices,
     load_generation_setup,
     load_land_sea_mask,
+    relax_zone_interior_mask,
     resolve_ts_dir,
     FONT_SIZE,
 )
@@ -512,9 +513,13 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     in_channels = ch_in if isinstance(ch_in, tuple) else (ch_in,)
     logger.info(f"Channel indices - output: {out_channels}, input: {in_channels}")
 
+    # Land mask (sea = NaN) with the relaxation zone additionally dropped.
     land_da = load_land_sea_mask(
-        cfg.get("land_sea_mask_path"), cfg.get("height") or 352, cfg.get("width") or 544
+        cfg.get("land_sea_mask_path"), cfg.get("height") or 352, cfg.get("width") or 544,
     )
+    land_da = land_da.where(relax_zone_interior_mask(
+        cfg.get("height") or 352, cfg.get("width") or 544, cfg.get("relax_zone") or 0,
+    ))
     land_idx = np.flatnonzero(np.isfinite(land_da.values).ravel())
     n_land = land_idx.size
     logger.info(f"{n_land} land grid points")

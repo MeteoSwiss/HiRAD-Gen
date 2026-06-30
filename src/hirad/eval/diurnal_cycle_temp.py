@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir, FONT_SIZE
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, resolve_ts_dir, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
 plt.rcParams.update(FONT_SIZE)
@@ -40,8 +40,9 @@ def main(cfg: dict):
     def load(ts, fn):
         return torch.load(resolve_ts_dir(out_root, ts) / ts / fn, weights_only=False)
 
-    # Land-sea mask
+    # Land-sea mask (sea = NaN); the relaxation zone is dropped separately.
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
+    land_mask = land_mask.where(relax_zone_interior_mask(cfg.get("height"), cfg.get("width"), cfg.get("relax_zone")))
 
     # Prepare lists to collect DataArrays
     target_temp, baseline_temp, pred_temp, mean_pred_temp = [], [], [], []

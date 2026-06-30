@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
 plt.rcParams.update(FONT_SIZE)
@@ -63,8 +63,9 @@ def main(cfg: dict):
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
-    # Land-sea mask
+    # Land-sea mask (sea = NaN); the relaxation zone is dropped separately.
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
+    land_mask = land_mask.where(relax_zone_interior_mask(cfg.get("height"), cfg.get("width"), cfg.get("relax_zone")))
 
     conv_factor = precip_conv_factor(cfg)  # mm/h
 

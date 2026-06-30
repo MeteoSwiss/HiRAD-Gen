@@ -7,11 +7,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG, FONT_SIZE
+from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG, FONT_SIZE, relax_zone_interior_mask
 
 # Use presentation-sized fonts for all maps produced here (and by scripts that
 # delegate to these helpers, e.g. map_*, snapshots, diurnal_cycle_precip_maps).
 plt.rcParams.update(FONT_SIZE)
+
+
+def _apply_relax_mask(values, relax_zone):
+    """Return *values* as a masked array with the lateral relaxation zone masked out.
+
+    Discards (hides from the plot and from any colour-scale computation) the
+    ``relax_zone`` border cells on every side, while preserving any mask already
+    carried by *values* (e.g. precipitation below threshold).
+    """
+    masked = np.ma.array(values, copy=True)
+    if masked.ndim >= 2:
+        interior = relax_zone_interior_mask(masked.shape[-2], masked.shape[-1], relax_zone)
+        if interior.any() and not interior.all():
+            masked[..., ~interior] = np.ma.masked
+    return masked
 
 
 def plot_map(values: np.array,
@@ -48,6 +63,9 @@ def plot_map(values: np.array,
     latitudes  = grid_cfg.lat[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.height]
     longitudes = grid_cfg.lon[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.width]
     lon2d, lat2d = np.meshgrid(longitudes, latitudes)
+
+    # Discard the lateral relaxation zone so it never appears in the plot.
+    values = _apply_relax_mask(values, grid_cfg.relax_zone)
 
     fig, ax = plt.subplots(
         figsize=(8, 6),
@@ -104,6 +122,8 @@ def plot_difference_map(
     fixed_vmax: Optional[float] = None,
 ):
     """Plot a difference map with symmetric diverging bounds around zero."""
+    # Drop the relaxation zone so it skews neither the colour scale nor the plot.
+    values = np.where(grid_cfg.interior_mask(), values, np.nan)
     vmax = fixed_vmax if fixed_vmax is not None else compute_symmetric_vmax(values, percentile=percentile)
     plot_map(
         values,
@@ -199,6 +219,10 @@ def plot_map_wind_precip(
 
     precip = tp_rfac * tp
     precip_masked = np.ma.masked_where(precip <= tp_threshold, precip)
+
+    # Discard the lateral relaxation zone from both overlaid fields.
+    wind_speed = _apply_relax_mask(wind_speed, grid_cfg.relax_zone)
+    precip_masked = _apply_relax_mask(precip_masked, grid_cfg.relax_zone)
 
     precip_colors = ['powderblue', 'dodgerblue', 'mediumblue',
                      'forestgreen', 'limegreen', 'lawngreen',

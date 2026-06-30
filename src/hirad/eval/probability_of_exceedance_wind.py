@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, relax_zone_interior_mask, resolve_ts_dir
 from hirad.eval.eval_utils import percentiles_from_histogram, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
@@ -193,6 +193,14 @@ def main(cfg: dict):
     # Interior edges used by searchsorted+bincount (equivalent to np.histogram)
     hist_interior = hist_bins[1:-1]
 
+    # Lateral relaxation zone to discard from every grid-point reduction below.
+    relax_zone = cfg.get("relax_zone") or 0
+    height, width = cfg.get("height"), cfg.get("width")
+    relax_interior = (
+        relax_zone_interior_mask(height, width, relax_zone)
+        if relax_zone and height and width else None
+    )
+
     det_modes = ('target', 'baseline', 'regression-prediction')
     VARS = ('speed', 'u', 'v')
 
@@ -247,6 +255,8 @@ def main(cfg: dict):
 
             wind_speed = compute_wind_speed(u, v)
             valid_mask = ~np.isnan(wind_speed)
+            if relax_interior is not None:
+                valid_mask &= relax_interior
             speed_vals = wind_speed[valid_mask].ravel()
             u_vals     = u[valid_mask].ravel()
             v_vals     = v[valid_mask].ravel()
@@ -283,6 +293,8 @@ def main(cfg: dict):
                 v = preds[m, v10_out]
                 wind_speed = compute_wind_speed(u, v)
                 valid_mask = ~np.isnan(wind_speed)
+                if relax_interior is not None:
+                    valid_mask &= relax_interior
                 speed_vals = wind_speed[valid_mask].ravel()
                 u_vals     = u[valid_mask].ravel()
                 v_vals     = v[valid_mask].ravel()

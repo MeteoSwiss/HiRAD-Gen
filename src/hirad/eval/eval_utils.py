@@ -19,13 +19,17 @@ class GridConfig:
     width: int
     relax_zone: int
 
+    def interior_mask(self) -> np.ndarray:
+        """Boolean ``(height, width)`` mask that is ``True`` outside the relaxation zone."""
+        return relax_zone_interior_mask(self.height, self.width, self.relax_zone)
+
 
 DEFAULT_GRID_CONFIG = GridConfig(
     lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
     lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
     height=352,
     width=544,
-    relax_zone=19,
+    relax_zone=19+100, # relax + spinup
 )
 
 
@@ -65,11 +69,32 @@ def precip_conv_factor(cfg: dict) -> float:
     return float(cfg.get("precip_conv_factor", 1000.0))
 
 
-def load_land_sea_mask(path, height=352, width=544):
-    """Load and return a land-sea mask as xarray DataArray."""
+def relax_zone_interior_mask(height: int, width: int, relax_zone: int) -> np.ndarray:
+    """Return a boolean ``(height, width)`` mask that is ``True`` outside the relaxation zone.
+
+    The ``relax_zone`` lateral border cells form the regional model's relaxation
+    (and spin-up) zone and must be discarded from every evaluation statistic. This
+    is the single relaxation-zone primitive; derive the form you need at the call site:
+
+    * boolean combine: ``valid &= relax_zone_interior_mask(h, w, rz)``
+    * xarray drop:     ``da.where(relax_zone_interior_mask(h, w, rz))``
+    * numpy fill:      ``np.where(relax_zone_interior_mask(h, w, rz), field, np.nan)``
+    """
+    mask = np.zeros((int(height), int(width)), dtype=bool)
+    relax = int(relax_zone or 0)
+    if relax <= 0:
+        mask[:] = True
+    elif 2 * relax < height and 2 * relax < width:
+        mask[relax:int(height) - relax, relax:int(width) - relax] = True
+    return mask
+
+
+def load_land_sea_mask(path: str | Path, height: int = 352, width: int = 544) -> xr.DataArray:
+    """Load and return a land-sea mask as an xarray ``(lat, lon)`` DataArray."""
     lsm_data = np.load(path).reshape(height, width)
+    mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
     return xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
+        mask,
         dims=['lat', 'lon'],
         coords={"lat": np.arange(height), "lon": np.arange(width)},
     )
@@ -225,7 +250,6 @@ def signed_circular_difference(prediction: np.ndarray, target: np.ndarray, perio
     """
     half_period = period / 2.0
     return ((prediction - target + half_period) % period) - half_period
-
 
 
 def parse_eval_cli(allow_times: bool = False) -> dict:
