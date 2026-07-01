@@ -108,7 +108,7 @@ def main(cfg: dict):
         plt.close()
 
     data = [temp_target_mean, temp_baseline_mean, temp_pred_mean, temp_mean_pred_mean] if mean_pred_temp else [temp_target_mean, temp_baseline_mean, temp_pred_mean]
-    labels = ['Target', 'Input', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_temp else ['Target', 'Input', 'CorrDiff ± Std(Members)']
+    labels = ['Target', 'Input', 'Pred. ± Std', 'Regression Prediction'] if mean_pred_temp else ['Target', 'Input', 'Pred. ± Std']
     stds = [None, None, temp_pred_std, None] if mean_pred_temp else [None, None, temp_pred_std]
 
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")

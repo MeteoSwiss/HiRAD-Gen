@@ -133,7 +133,7 @@ def main(cfg: dict):
         amount_target_mean.hour,
         [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
-        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','CorrDiff ± Std(Members)'],
+        ['Target','Input','Pred. ± Std', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','Pred. ± Std'],
         'Precipitation (mm/h)',
         'Diurnal Cycle of Precip Amount',
         output_path / 'diurnal_cycle_precip_amount.png'
@@ -153,7 +153,7 @@ def main(cfg: dict):
             wet_target_mean.hour,
             [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if has_regpred else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
             [None, None, wet_pred_std, None] if has_regpred else [None, None, wet_pred_std],
-            ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if has_regpred else ['Target','Input','CorrDiff ± Std(Members)'],
+            ['Target','Input','Pred. ± Std', 'Regression Prediction'] if has_regpred else ['Target','Input','Pred. ± Std'],
             'Wet-Hour Fraction [%]',
             f'Diurnal Cycle of Wet-Hours (>{thr:g} mm/h)',
             fn_wet,

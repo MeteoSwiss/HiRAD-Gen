@@ -395,7 +395,7 @@ def main(cfg: dict):
             map_output_dir = output_path / f"maps_temp_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
-            member_label = f'CorrDiff Member {member_idx+1}'
+            member_label = f'Pred. {member_idx+1}'
             plot_temp_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg)
             if has_target_for_diff:
                 target_result = target_results.get(stat_config['stat_name'])
@@ -405,7 +405,7 @@ def main(cfg: dict):
                     plot_difference_map(
                         diff,
                         diff_filename,
-                        title=f'CorrDiff Member {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
+                        title=f'Pred. {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
                         label=_difference_label(stat_config['type']),
                         grid_cfg=grid_cfg,
                         fixed_vmax=1.0 if stat_config['type'] == 'mean' else None,

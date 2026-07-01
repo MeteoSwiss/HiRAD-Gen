@@ -110,7 +110,7 @@ def main(cfg: dict):
         plt.close()
 
     data = [wind_target_mean, wind_baseline_mean, wind_pred_mean, wind_mean_pred_mean] if mean_pred_wind else [wind_target_mean, wind_baseline_mean, wind_pred_mean]
-    labels = ['Target', 'Input', 'CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wind else ['Target', 'Input', 'CorrDiff ± Std(Members)']
+    labels = ['Target', 'Input', 'Pred. ± Std', 'Regression Prediction'] if mean_pred_wind else ['Target', 'Input', 'Pred. ± Std']
     stds = [None, None, wind_pred_std, None] if mean_pred_wind else [None, None, wind_pred_std]
 
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")

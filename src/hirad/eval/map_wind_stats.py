@@ -514,7 +514,7 @@ def main(cfg: dict):
                     map_output_dir = output_path / f"maps_wind_{stat_key}"
                     map_output_dir.mkdir(parents=True, exist_ok=True)
                     member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_key}')
-                    plot_wind_stat_map(member_result, member_filename, stat_config, f'CorrDiff Member {member_idx+1}', grid_cfg)
+                    plot_wind_stat_map(member_result, member_filename, stat_config, f'Pred. {member_idx+1}', grid_cfg)
                     if has_target_for_diff:
                         target_result = target_results.get(stat_key)
                         if target_result is not None:
@@ -526,7 +526,7 @@ def main(cfg: dict):
                             plot_difference_map(
                                 diff,
                                 diff_filename,
-                                title=f'CorrDiff Member {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
+                                title=f'Pred. {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
                                 label=_wind_difference_label(stype),
                                 grid_cfg=grid_cfg,
                                 fixed_vmax=180.0 if stype == 'prevailing_direction' else None,

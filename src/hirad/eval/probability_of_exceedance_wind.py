@@ -353,7 +353,7 @@ def main(cfg: dict):
                 )
     
     # Create exceedance plots
-    labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['Target', 'Input', 'CorrDiff Ensemble']
+    labels = ['Target', 'Input', 'Regression Prediction', 'Pred. Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['Target', 'Input', 'Pred. Ensemble']
     colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in exceedance_data['speed'] else ['blue', 'orange', 'green']
     
     # Define plot configurations

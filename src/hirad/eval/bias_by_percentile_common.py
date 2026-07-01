@@ -25,7 +25,7 @@ DET_MODE_CFG = [
     ('baseline',              'Input',                 'orange'),
     ('regression-prediction', 'Regression Prediction', 'red'),
 ]
-ENSEMBLE_LABEL = 'CorrDiff Ensemble (mean +/- 1 sigma)'
+ENSEMBLE_LABEL = 'Pred. Ensemble Mean ± Std)'
 ENSEMBLE_COLOR = 'green'
 
 # Presentation-sized fonts shared across all eval plots.
@@ -608,7 +608,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     fn = output_path / f'{spec.output_prefix}_bias_by_percentile{suffix}.png'
     spec.save_bias(
         bias_data, percentile_values, labels, colors,
-        title=spec.bias_title + title_note, xlabel='Percentile', ylabel=spec.bias_ylabel,
+        title=spec.bias_title + title_note, xlabel='All-hour Percentile', ylabel=spec.bias_ylabel,
         out_path=fn, mean_q=target_mean_q,
     )
     logger.info(f"Bias-by-percentile plot saved: {fn}")
@@ -616,7 +616,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     fn_mae = output_path / f'{spec.output_prefix}_mae_by_percentile{suffix}.png'
     spec.save_mae(
         mae_data, percentile_values, labels, colors,
-        title=spec.mae_title + title_note, xlabel='Percentile', ylabel=spec.mae_ylabel,
+        title=spec.mae_title + title_note, xlabel='All-hour Percentile', ylabel=spec.mae_ylabel,
         out_path=fn_mae, mean_q=target_mean_q,
     )
     logger.info(f"MAE-by-percentile plot saved: {fn_mae}")
@@ -625,7 +625,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         fn_fbi = output_path / f'{spec.output_prefix}_fbi_by_percentile{suffix}.png'
         spec.save_fbi(
             fbi_data, percentile_values, labels, colors,
-            title=spec.fbi_title + title_note, xlabel='Percentile', ylabel=spec.fbi_ylabel,
+            title=spec.fbi_title + title_note, xlabel='All-hour Percentile', ylabel=spec.fbi_ylabel,
             out_path=fn_fbi, mean_q=target_mean_q,
         )
         logger.info(f"FBI-by-percentile plot saved: {fn_fbi}")
@@ -634,7 +634,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         fn_spread = output_path / f'{spec.output_prefix}_spread_by_percentile{suffix}.png'
         spec.save_spread(
             spread, percentile_values,
-            title=spec.spread_title + title_note, xlabel='Percentile', ylabel=spec.spread_ylabel,
+            title=spec.spread_title + title_note, xlabel='All-hour Percentile', ylabel=spec.spread_ylabel,
             out_path=fn_spread, mean_q=target_mean_q,
         )
         logger.info(f"Spread-by-percentile plot saved: {fn_spread}")

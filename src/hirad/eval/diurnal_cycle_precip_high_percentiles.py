@@ -227,7 +227,7 @@ def main(cfg: dict):
             plot_labels.append('Input')
         if 'prediction' in m:
             lines.append((cycle_fn(m['prediction']), cycle_fn(s['prediction'])))
-            plot_labels.append(f'CorrDiff {label} Pct ± Std')
+            plot_labels.append(f'Pred {label} Pct ± Std')
         if 'regression-prediction' in m:
             lines.append(cycle_fn(m['regression-prediction']))
             plot_labels.append('Regression Prediction')

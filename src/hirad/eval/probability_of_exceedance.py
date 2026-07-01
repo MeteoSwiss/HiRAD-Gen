@@ -243,7 +243,7 @@ def main(cfg: dict):
             )
     
     # Create exceedance plots
-    labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data else ['Target', 'Input', 'CorrDiff Ensemble']
+    labels = ['Target', 'Input', 'Regression Prediction', 'Pred. Ensemble'] if 'regression-prediction' in exceedance_data else ['Target', 'Input', 'Pred. Ensemble']
     colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in exceedance_data else ['blue', 'orange', 'green']
     
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
