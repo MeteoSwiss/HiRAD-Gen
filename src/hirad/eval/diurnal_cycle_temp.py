@@ -118,8 +118,8 @@ def main(cfg: dict):
         data,
         stds,
         labels,
-        '2m Temperature [°C]',
-        'Diurnal Cycle of 2m Temperature',
+        '[°C]',
+        'Diurnal Cycle of T2m',
         output_path / 'diurnal_cycle_2t.png'
     )
 

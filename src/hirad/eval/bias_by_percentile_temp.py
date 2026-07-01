@@ -80,9 +80,9 @@ def _make_hist_bins(cfg: dict) -> np.ndarray:
 SPEC = BiasByPercentileSpec(
     var_label='2m temperature',
     output_prefix='temperature',
-    bias_title='2m Temperature Bias Over Land',
-    mae_title='2m Temperature MAE Over Land',
-    spread_title='2m Temperature Ensemble Spread Over Land',
+    bias_title='T2m Bias Over Land',
+    mae_title='T2m MAE Over Land',
+    spread_title='T2m Ensemble Spread Over Land',
     bias_ylabel='Bias [°C]',
     mae_ylabel='MAE [°C]',
     spread_ylabel='Ensemble Spread [°C]',

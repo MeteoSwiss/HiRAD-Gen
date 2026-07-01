@@ -213,7 +213,7 @@ def plot_temp_stat_map(data, filename, stat_config, label, grid_cfg):
         plot_map(
             data, filename,
             title=title,
-            label='Temperature [°C]',
+            label='T2m [°C]',
             vmin=None, vmax=None, cmap='RdBu_r', extend='both', grid_cfg=grid_cfg
         )
 
@@ -234,7 +234,7 @@ def main(cfg: dict):
 
     grid_cfg = grid_cfg_from_cfg(cfg)
 
-    logger.info("Starting 2m temperature statistics generation")
+    logger.info("Starting T2m statistics generation")
     try:
         generation_dir, gen_cfg, times = load_generation_setup(cfg)
     except ValueError as exc:
@@ -266,25 +266,25 @@ def main(cfg: dict):
     log_interval = cfg.get("log_interval", 100)
 
     STATISTICS_CONFIG = {
-        'mean':            {'type': 'mean',            'title': 'Mean Temperature'},
-        'std':             {'type': 'std',             'title': 'Temperature Variability (Std Dev)'},
-        'txx':             {'type': 'max',             'title': 'Maximum Temperature (TXx)'},
-        'tnn':             {'type': 'min',             'title': 'Minimum Temperature (TNn)'},
-        'p99.99':          {'type': 'quantile', 'param': 0.9999, 'title': '99.99th Percentile Temperature'},
-        'p99.9':           {'type': 'quantile', 'param': 0.999, 'title': '99.9th Percentile Temperature'},
-        'p99':             {'type': 'quantile', 'param': 0.99,  'title': '99th Percentile Temperature'},
-        'p01':             {'type': 'quantile', 'param': 0.01,  'title': '1st Percentile Temperature'},
-        'p0.1':            {'type': 'quantile', 'param': 0.001,  'title': '0.1th Percentile Temperature'},
-        'p0.01':           {'type': 'quantile', 'param': 0.0001, 'title': '0.01th Percentile Temperature'},
-        'warm_days':       {'type': 'warm_days',       'title': 'Summer Days (daily max > 25°C)'},
-        'hot_days':        {'type': 'hot_days',        'title': 'Hot Days (daily max > 35°C)'},
-        'frost_days':      {'type': 'frost_days',      'title': 'Frost Days (daily min < 0°C)'},
-        'ice_days':        {'type': 'ice_days',        'title': 'Ice Days (daily max < 0°C)'},
-        'tropical_nights': {'type': 'tropical_nights', 'title': 'Tropical Nights (daily min > 20°C)'},
-        'dtr':             {'type': 'dtr',             'title': 'Mean Diurnal Temperature Range (DTR)'},
-        'warm_spell':      {'type': 'warm_spell',      'title': 'WSDI: Warm Spell Duration (TX > 90th pct, ≥6 days)'},
-        'hot_spell':       {'type': 'hot_spell',       'title': 'Hot Spell Duration (daily max > 35°C)'},
-        'cold_spell':      {'type': 'cold_spell',      'title': 'CSDI: Cold Spell Duration (TN < 10th pct, ≥6 days)'},
+        'mean':            {'type': 'mean',            'title': 'Mean T2m'},
+        'std':             {'type': 'std',             'title': 'T2m Variability (Std Dev)'},
+        'txx':             {'type': 'max',             'title': 'Maximum T2m (TXx)'},
+        'tnn':             {'type': 'min',             'title': 'Minimum T2m (TNn)'},
+        'p99.99':          {'type': 'quantile', 'param': 0.9999, 'title': 'P99.99 T2m'},
+        'p99.9':           {'type': 'quantile', 'param': 0.999, 'title': 'P99.9 T2m'},
+        'p99':             {'type': 'quantile', 'param': 0.99,  'title': 'P99 T2m'},
+        'p01':             {'type': 'quantile', 'param': 0.01,  'title': 'P1 T2m'},
+        'p0.1':            {'type': 'quantile', 'param': 0.001,  'title': 'P0.1 T2m'},
+        'p0.01':           {'type': 'quantile', 'param': 0.0001, 'title': 'P0.01 T2m'},
+        'warm_days':       {'type': 'warm_days',       'title': 'Summer Days'},
+        'hot_days':        {'type': 'hot_days',        'title': 'Hot Days)'},
+        'frost_days':      {'type': 'frost_days',      'title': 'Frost Days'},
+        'ice_days':        {'type': 'ice_days',        'title': 'Ice Days'},
+        'tropical_nights': {'type': 'tropical_nights', 'title': 'Tropical Nights'},
+        'dtr':             {'type': 'dtr',             'title': 'Mean Diurnal T2m Range (DTR)'},
+        'warm_spell':      {'type': 'warm_spell',      'title': 'WSDI: Warm Spell Duration'},
+        'hot_spell':       {'type': 'hot_spell',       'title': 'Hot Spell Duration'},
+        'cold_spell':      {'type': 'cold_spell',      'title': 'CSDI: Cold Spell Duration'},
     }
     stat_configs = [
         {'stat_name': name, 'title_stat': config['title'], 'param': config.get('param'), **config}
@@ -412,7 +412,7 @@ def main(cfg: dict):
                     )
 
     del member_data
-    logger.info("All 2m temperature statistics maps generated successfully")
+    logger.info("All T2m statistics maps generated successfully")
 
 
 if __name__ == '__main__':
