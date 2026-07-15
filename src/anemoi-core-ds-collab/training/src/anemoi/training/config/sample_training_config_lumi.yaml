@@ -1,6 +1,7 @@
 name: example_era5_to_cerra_downscaling_diffusion_training
 description: |
   Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core. 
+  Pulling some data paths from https://mlflow.ecmwf.int/#/experiments/627/runs/8d4cc9b9537a4f6597806f602aaec2e5/artifacts
 
 config_validation: False
 
@@ -61,13 +62,13 @@ dataloader:
 
   dataset:
     zip:
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_x}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
         name: lres
         select: ${dataloader.select_in}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
         name: hres
         select: ${dataloader.select_in_hres}
-      - dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+      - dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
         name: out
         select: ${dataloader.select_out}
     adjust: dates
@@ -151,8 +152,8 @@ diagnostics:
   log:
     interval: 500
     mlflow:
-      project_name: 'my_mlflow_project'
-      experiment_name: 'my_mlflow_project'
+      project_name: 'downscaling_test'
+      experiment_name: 'downscaling_test'
       run_name: ${name}
       enabled: True
       offline: False
@@ -206,14 +207,14 @@ hardware:
       tensorboard: ... /path/to/tensorboard/logs/dir/
 
   files:
-    dataset_x: input_dataset_name
-    dataset_y: output_dataset_name
-    dataset_y_forcings: hres_forcings_dataset_name #can be the same as output_dataset
+    dataset_x: era-accum/caerraml-ea-an-oper-atos-n320crop2cerra-1983-2023-3h-v2-accum.zarr
+    dataset_y:  cerra/cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v3.zarr
+    dataset_y_forcings:  cerra/cerra-rr-an-oper-se-al-ec-mars-5p5km-1985-2023-3h-v3.zarr #can be the same as output_dataset
     warm_start: null
     graph: ${graph.name}.pt
-    residual_statistics: residual_statistics_file_name
-    truncation: lres_to_hres_interpolation_matrix_file.npz # lres to hres !
-    truncation_inv: hres_to_lres_interpolation_matrix_file.npz # hres to lres
+    residual_statistics:  cerra_residuals_2t_10u_10v_100u_100v_sp_2d_msl_tcc_tp_ssrd_strd_1990_2019.npy
+    truncation:  era5crop2cerra_to_cerra_interpolation_nearest_3.npz # lres to hres !
+    truncation_inv: cerra_to_era5crop2cerra_interpolation_nearest_3.npz # hres to lres
     checkpoint:
       every_n_epochs: anemoi-by_epoch-epoch_{epoch:03d}-step_{step:06d}
       every_n_train_steps: anemoi-by_step-epoch_{epoch:03d}-step_{step:06d}
@@ -234,13 +235,13 @@ graph:
     lres:
       node_builder:
         _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
-        dataset: ${hardware.paths.data}/${hardware.files.dataset_x}
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_x}
       attributes: ${graph.attributes.nodes}
     # in_hres nodes
     data:
       node_builder:
         _target_: anemoi.graphs.nodes.AnemoiDatasetNodes
-        dataset: ${hardware.paths.data}/${hardware.files.dataset_y}
+        dataset: ${hardware.paths.inputs}/${hardware.files.dataset_y}
       attributes: ${graph.attributes.nodes}
     # Hidden nodes 
     hidden:

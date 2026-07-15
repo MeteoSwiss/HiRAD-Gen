@@ -1,4 +1,4 @@
-name: 2t_determinstic_overfitting_example_era5_to_cerra_downscaling
+name: 2t_probabilistic_with_logging_overfitting_example_era5_to_cerra_downscaling
 description: |
   Example recipe for training ERA5 to CERRA downscaling diffusion model on LUMI, using the core-ds branch of anemoi-core.
 
@@ -10,8 +10,8 @@ config_validation: False
 variables:
   in_lres_variables: [2t] # [2t, sp]
   out_hres_variables: [2t] #[2t, sp]
-  residual_variables: [sp]
-  direct_prediction_fields: [2t]
+  residual_variables: [2t]
+  direct_prediction_fields: []
   hres_forcings: [cos_latitude, cos_longitude, sin_latitude, sin_longitude, cos_julian_day, cos_local_time, sin_julian_day, sin_local_time, insolation, lsm, orog]
 
 data:
@@ -158,7 +158,7 @@ diagnostics:
       experiment_name: 'mmcglohon_mlflow_project'
       run_name: ${name}
       enabled: True
-      offline: True # False
+      offline: False # True
       system: True
       authentication: True
       on_resume_create_child: True
@@ -421,7 +421,7 @@ training:
 
   # run in deterministic mode ; slows down
   # run_alias: null
-  deterministic: True # False
+  deterministic: False
   predict_residuals: False
   #precision: bf16-mixed
   #precision: 16
@@ -440,7 +440,7 @@ training:
   metrics: [2t, 10u, 10v, t_850, tp]
 
   model_task: anemoi.training.train.tasks.GraphDiffusionDownscaler
-  training_approach: deterministic #probabilistic_low_noise probabilistic_high_noise # deterministic
+  training_approach: probabilistic_low_noise #probabilistic_high_noise # deterministic
 
   # Training loss
   training_loss:

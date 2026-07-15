@@ -419,7 +419,7 @@ model:
 # Training config
 # ===================
 training:
-  max_epochs: 1000
+  max_epochs: 10000
   max_steps: 1000000 #=> must match epoch and number of steps by using training number of samples and effective batch size : steps = epoch * samples_per_eopchs / effective_batch_size
 
   # run in deterministic mode ; slows down

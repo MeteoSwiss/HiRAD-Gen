@@ -73,9 +73,10 @@ class TopNormalizer(BasePreprocessor):
         dataset: str,
         in_place: bool = True,
         inverse: bool = False,
+        data_index: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if inverse:
-            return self.inverse_transform(x, dataset, in_place=in_place)
+            return self.inverse_transform(x, dataset, in_place=in_place, data_index=data_index)
         return self.transform(x, dataset, in_place=in_place)
 
     def transform(self, data, dataset: str, in_place: bool = True):

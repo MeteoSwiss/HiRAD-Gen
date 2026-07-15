@@ -664,9 +664,11 @@ class AnemoiDownscalingModelEncProcDec(AnemoiDiffusionTendModelEncProcDec):
         """
         state_outp = post_processors_state(residuals, dataset="output", in_place=False)
 
+        output_idx = self.data_indices.data.output.full
         state_outp += post_processors_state(
-            state_inp,
+            state_inp[..., output_idx],
             dataset="input_lres",
+            data_index=output_idx,
             in_place=False,
         )
         return state_outp
