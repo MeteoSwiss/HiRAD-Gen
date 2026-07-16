@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_era_real_test
+  run:
+    dir: ./outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/era_real_inference
+  - sampler/stochastic
+  - generation/era_real_test

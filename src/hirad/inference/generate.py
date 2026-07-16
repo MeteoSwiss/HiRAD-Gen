@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results_as_torch
+from hirad.utils.inference_utils import save_results
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
@@ -46,14 +46,12 @@ def main(cfg: DictConfig) -> None:
     input_dtype = torch.float16 if cfg.generation.perf.get("force_fp16", False) and use_apex_gn else torch.float32
 
     # Parse the inference input times
-    if cfg.generation.get("times_range", None) and cfg.generation.get("times", None):
+    if cfg.generation.times_range and cfg.generation.times:
         raise ValueError("Either times_range or times must be provided, but not both")
-    if cfg.generation.get("times_range", None):
+    if cfg.generation.times_range:
         times = get_time_from_range(cfg.generation.times_range, time_format="%Y%m%d-%H%M") #TODO check what time formats we are using and adapt
-    elif cfg.generation.get("times", None):
-        times = cfg.generation.times
     else:
-        raise ValueError("Either times_range or times must be provided")
+        times = cfg.generation.times
 
     # Create dataset object
     dataset_cfg = OmegaConf.to_container(cfg.dataset)
@@ -68,7 +66,7 @@ def main(cfg: DictConfig) -> None:
     is_real_target = dataset_cfg.get("type").split("_")[-1] == "real"
     if is_real_target:
         dataset.regrid_indices_real = dataset.regrid_indices_real.to(dist.device)
-        dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)      
+        dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)
     img_shape = dataset.image_shape()
     img_out_channels = len(dataset.output_channels())
 
@@ -179,7 +177,12 @@ def main(cfg: DictConfig) -> None:
     generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
     # generate images
-    output_path = getattr(cfg.generation.io, "output_path", "./outputs")
+    _io_cfg = getattr(cfg.generation, "io", None)
+    output_path = getattr(_io_cfg, "output_path", "./outputs")
+    output_format = getattr(_io_cfg, "output_format", "torch")
+    if output_format not in ['torch', 'grib', 'both']:
+        raise ValueError(f'Invalid output format {output_format}, must be \'torch\', \'grib\' or \'both\'')
+    grib_template_path = getattr(_io_cfg, "grib_template_path", "")
     logger0.info(f"Generating images, saving results to {output_path}...")
     batch_size = 1
     warmup_steps = min(len(times) - 1, 2)
@@ -227,7 +230,6 @@ def main(cfg: DictConfig) -> None:
                 start = end = DummyEvent()
 
             dataset.interpolator.to_torch(device=dist.device)
-
             static_channels = dataset.get_static_data()
             if static_channels is not None:
                 static_channels = static_channels[None, ::].flip(-2)
@@ -235,8 +237,8 @@ def main(cfg: DictConfig) -> None:
                     static_channels = static_channels.to(
                         dist.device,
                         dtype=input_dtype,
-                        non_blocking=True,
-                    ).to(memory_format=torch.channels_last)
+                        non_blocking=True)
+                    .to(memory_format=torch.channels_last)
                 else:
                     static_channels = (
                         static_channels.to(dist.device)
@@ -258,7 +260,6 @@ def main(cfg: DictConfig) -> None:
 
                 savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
                 os.makedirs(savedir,exist_ok=True)
-                # continue
                 if is_real_target:
                     image_tar = regrid_icon_to_rotlatlon(
                         image_tar.to(dist.device, dtype=input_dtype),
@@ -267,43 +268,45 @@ def main(cfg: DictConfig) -> None:
                     )
                     if dataset.trim_edge > 0:
                         image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
-                if lead_time_label:
-                    lead_time_label = lead_time_label[0].to(dist.device).contiguous()
+                    image_tar = image_tar.flip(-2)
                 else:
-                    lead_time_label = None
-                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
+                    image_tar = image_tar.to(device=device).to(input_dtype)
+                image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype))
+                image_lr = image_lr.reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
                 image_lr = dataset.normalize_input(image_lr)
                 image_lr = image_lr.to(memory_format=torch.channels_last)
-                random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
                 date_embedding = None
                 if dataset._n_month_hour_channels:
                     date_embedding = dataset.make_time_grids(*date_str, dist.device, dtype=input_dtype)
+                random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
                 image_out, image_reg = generator.generate(
-                                            image_lr,
-                                            static_channels=static_channels,
-                                            date_embedding=date_embedding,
-                                            lead_time_label=lead_time_label,
-                                            randomize=cfg.generation.get("randomize", False),
-                                            random_seed=random_seed
-                                        )
+                    image_lr,
+                    static_channels=static_channels,
+                    date_embedding=date_embedding,
+                    lead_time_label=lead_time_label,
+                    randomize=cfg.generation.get("randomize", False),
+                    random_seed=random_seed,
+                    use_apex_gn=use_apex_gn,
+                )
 
                 if dist.rank == 0:
                     batch_size = image_out.shape[0]
-                    # write out data in a seperate thread so we don't hold up inferencing
-                    image_tar = image_tar[0].squeeze().cpu().numpy()
-                    prediction_ensemble = dataset.denormalize_output(image_out).squeeze().flip(-2).cpu().numpy()
-                    baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
-                    if image_reg is not None:
-                        mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
+                    target_np = image_tar[0].squeeze().cpu().numpy()
+                    pred_np = dataset.denormalize_output(image_out).squeeze().flip(-2).cpu().numpy()
+                    baseline_np = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).contiguous().cpu().numpy()
+                    mean_pred_np = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy() if image_reg is not None else None
                     writer_threads.append(
                         writer_executor.submit(
-                            save_results_as_torch,
+                            save_results,
                             savedir,
                             times[sampler[time_index]],
-                            prediction_ensemble,
-                            image_tar,
-                            baseline,
-                            mean_pred if image_reg is not None else None,
+                            dataset,
+                            pred_np,
+                            target_np,
+                            baseline_np,
+                            mean_pred_np,
+                            output_format=output_format,
+                            grib_template_path=grib_template_path,
                         )
                     )
             end.record()

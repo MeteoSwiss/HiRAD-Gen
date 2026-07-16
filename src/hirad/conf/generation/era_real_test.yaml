@@ -1,0 +1,34 @@
+num_ensembles: 8
+  # Number of ensembles to generate per input
+seed_batch_size: 4
+  # Size of the batched inference
+inference_mode: all
+  # Choose between "all" (regression + diffusion), "regression" or "diffusion"
+
+randomize: True
+random_seed: 2578458
+
+# Patching parameters
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+hr_mean_conditioning: True
+
+times_range: ['20211015-0000','20211015-2300',1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: False
+  num_writer_workers: 8
+
+io:
+  res_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/latest_diffusion_era_realch1
+  reg_ckpt_path: /capstor/store/cscs/swissai/a161/training_checkpoints/latest_regression_era_realch1
+  output_path: ./outputs/evaluation/era_real_test/
+  output_format: 'grib'
+  grib_template_path: '~/evalml/resources/inference/templates'

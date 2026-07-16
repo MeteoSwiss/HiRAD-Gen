@@ -33,10 +33,12 @@ perf:
     # To support multiple workers a threadsafe version of the netCDF library must be used
 
 io:
-  res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_test/checkpoints_diffusion
-    # Checkpoint filename for the diffusion model  
-  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/regression_test/checkpoints_regression
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_cosmo/diffusion
+    # Checkpoint filename for the diffusion model
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_cosmo/regression
     # Checkpoint filename for the mean predictor model
-  output_path: ./outputs/evaluation
+  output_path: ./outputs/evaluation/era_cosmo_test/
+  output_format: 'grib'
+  grib_template_path: '~/evalml/resources/inference/templates'
 
 
