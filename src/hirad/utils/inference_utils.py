@@ -287,17 +287,17 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
 
     # Target
     output_file = os.path.join(output_path, f'{time_step}-target.grib')
-    save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
+    save_image_as_grib(output_file, time_step, grib_template_path, output_fields, target, grid=grid)
 
     # Prediction - 1 file per ensemble?
     if len(prediction_ensemble.shape) == 4:
         for i in range(prediction_ensemble.shape[0]):
             output_file = os.path.join(output_path, f'{time_step}-pred{i:02}.grib')
-            save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble[i,:], grid=grid)
+            save_image_as_grib(output_file, time_step, grib_template_path, output_fields, prediction_ensemble[i,:], grid=grid)
     else:
         # no ensemble dimension
         output_file = os.path.join(output_path, f'{time_step}-pred.grib')
-        save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
+        save_image_as_grib(output_file, time_step, grib_template_path, output_fields, prediction_ensemble, grid=grid)
 
     # Baseline
     output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
@@ -322,15 +322,18 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
         padding_margin = 41
     else:
         raise ValueError("only co1e and co2 grid supported")
-    
+
     with open(output_filename, 'wb') as f_out:
         for i, channel in enumerate(channels):
-            ds = get_grib_template(grib_template_path, channel, time_step, grid)
-            if ds is None:
+            result = get_grib_template(grib_template_path, channel, time_step, grid)
+            if result is None:
                 continue
+            template_field, grib_keys = result
             values = pad_image(image[i, ::], padding_margin, np.nan)
-            grib_id = eccodes.codes_new_from_message(ds.message())
+            grib_id = eccodes.codes_new_from_message(template_field.message())
             try:
+                for key, val in grib_keys.items():
+                    eccodes.codes_set(grib_id, key, val)
                 flat = values.flatten().astype(float)
                 missing = 9999.0
                 eccodes.codes_set(grib_id, 'bitmapPresent', 1)
@@ -342,29 +345,35 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
                 eccodes.codes_release(grib_id)
 
 # grid: co2 (COSMO-2), or co1e (COSMO-1E)
+# Returns (template_field, grib_keys_dict) or None if channel has no template.
+# grib_keys are applied via eccodes after codes_new_from_message to avoid
+# earthkit clone() silently dropping key overrides.
 def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
-    [date,time]=datetime.split('-')
-    # Get index of the channels types
+    [date, time] = datetime.split('-')
+    date, time = int(date), int(time)
     levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
     levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
     if channel.name == 'tp':
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
-        return ds[0].clone(shortName=channel.name, dataDate=date, dataTime=time)
+        return ds[0], {'dataDate': date, 'dataTime': time}
     elif channel.name in levtype_index_sfc.metadata("shortName") and (channel.level==None or channel.level=='' or int(channel.level) < 50):
         idx = levtype_index_sfc.metadata("shortName").index(channel.name)
         levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
         levelval = levtype_index_sfc[idx].metadata("level")
+        param_id = levtype_index_sfc[idx].metadata("paramId")
         try:
             ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
         except FileNotFoundError as e:
             logging.warning(f'Channel {channel.name} not found in GRIB templates: {e}')
             logging.warning(f'Skipping channel {channel.name}')
             return None
-        return ds[0].clone(shortName=channel.name, level=levelval, dataDate=date, dataTime=time)
+        return ds[0], {'paramId': param_id, 'level': levelval, 'dataDate': date, 'dataTime': time}
     elif channel.name in levtype_index_pl.metadata("shortName") and channel.level:
         levtype='isobaricInhPa'
+        idx = levtype_index_pl.metadata("shortName").index(channel.name)
+        param_id = levtype_index_pl[idx].metadata("paramId")
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
-        return ds[0].clone(shortName=channel.name, level=channel.level, dataDate=date, dataTime=time) 
+        return ds[0], {'paramId': param_id, 'level': int(channel.level), 'dataDate': date, 'dataTime': time}
     else:
         logging.warning(f'channel {channel.name} not found in grib index; skipping')
         return None
