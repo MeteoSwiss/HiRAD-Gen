@@ -13,7 +13,7 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/generation_test.log
+#SBATCH --output=./logs/generation_test_%j.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a161

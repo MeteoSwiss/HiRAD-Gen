@@ -17,7 +17,7 @@ boundary_pix: 2
 
 hr_mean_conditioning: True
 
-times_range: ['20211015-0000','20211015-2300',1]
+times_range: ['20230115-0000','20230115-2300',1]
 times: null
 has_lead_time: False
 
