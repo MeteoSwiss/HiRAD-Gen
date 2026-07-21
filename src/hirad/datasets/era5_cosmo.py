@@ -12,8 +12,7 @@ from hirad.utils.console import PythonLogger
 
 logger = PythonLogger(__name__)
 
-# DATASET_ORIG_PATH = '/capstor/store/mch/msopr/hirad-gen/basic-torch/era5-cosmo-1h-linear-interpolation-full'
-DATASET_ORIG_PATH = "/capstor/store/cscs/pasc/c38/basic-numpy/basic-numpy/era5-cosmo-1h-all-channels/train"
+DATASET_ORIG_PATH = '/capstor/store/cscs/pasc/c38/old-input-data/basic-torch/era5-cosmo-1h-all-channels/'
 
 class ERA5_COSMO(DownscalingDataset):
     def __init__(self, 
@@ -71,6 +70,7 @@ class ERA5_COSMO(DownscalingDataset):
         with open(os.path.join(self._info_path,'cosmo.yaml'), 'r') as file:
             self._cosmo_info = yaml.safe_load(file)
             if output_channel_names:
+                logger.info(f'output channel names: {output_channel_names}')
                 self._cosmo_indeces = [self._cosmo_info['select'].index(name) for name in output_channel_names]
             else:
                 self._cosmo_indeces = list(range(len(self._cosmo_info['select'])))
@@ -217,6 +217,9 @@ class ERA5_COSMO(DownscalingDataset):
     def output_channels(self) -> List[ChannelMetadata]:
         """Metadata for the output channels. A list of ChannelMetadata, one for each channel"""
         return self._cosmo_channels
+
+    def static_channels(self) -> List[ChannelMetadata]:
+        return self._static_channels
 
 
     def time(self) -> List:
