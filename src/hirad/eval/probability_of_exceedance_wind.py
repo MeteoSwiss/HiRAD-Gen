@@ -1,17 +1,17 @@
 """Probability of exceedance for wind speed and components."""
 import logging
+import time
 from pathlib import Path
 
-import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import xarray as xr
 
-from hirad.datasets import get_channels_from_strings, get_strings_from_channels
-from hirad.utils.function_utils import get_time_from_range
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, resolve_ts_dir
-from hirad.eval.eval_utils import percentiles_from_histogram
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, parse_eval_cli, relax_zone_interior_mask, resolve_ts_dir
+from hirad.eval.eval_utils import percentiles_from_histogram, FONT_SIZE
+
+# Presentation-sized fonts for all figures in this script.
+plt.rcParams.update(FONT_SIZE)
 
 
 def compute_wind_speed(u, v):
@@ -28,18 +28,21 @@ def compute_exceedance_probs(values, thresholds, use_abs=False):
 
 
 def update_exceedance_counts(counts, total, values, thresholds, use_abs=False):
-    """Update exceedance counts incrementally."""
+    """Update exceedance counts incrementally via searchsorted (O(n log k))."""
     data = np.abs(values) if use_abs else values
-    counts += (data[:, None] > thresholds[None, :]).sum(axis=0)
-    total += len(values)
+    # idx[i] = number of thresholds strictly less than data[i] (side='left')
+    # data[i] > thresholds[j]  iff  idx[i] > j
+    idx = np.searchsorted(thresholds, data, side='left')
+    bin_counts = np.bincount(idx, minlength=len(thresholds) + 1)
+    counts += len(data) - np.cumsum(bin_counts)[: len(thresholds)]
+    total += len(data)
     return counts, total
 
 
 def compute_percentiles(values, percentile_dict, use_abs=False):
     """Compute percentiles."""
     data = np.abs(values) if use_abs else values
-    data_array = xr.DataArray(data)
-    return {key: data_array.quantile(p).item() for key, p in percentile_dict.items()}
+    return {key: float(np.quantile(data, p)) for key, p in percentile_dict.items()}
 
 
 def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title, ylabel, out_path, percentiles_data=None):
@@ -119,6 +122,34 @@ def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title
     plt.close()
 
 
+def _accumulate(exc_counts, h_counts, speed_vals, u_vals, v_vals,
+                thresholds, hist_interior, n_hist_bins):
+    """Update exceedance and histogram count arrays in-place."""
+    abs_u = np.abs(u_vals)
+    abs_v = np.abs(v_vals)
+    n_thr = len(thresholds)
+
+    # Exceedance counts: O(n log k) via searchsorted+bincount
+    for counts, data in [
+        (exc_counts['speed'], speed_vals),
+        (exc_counts['u'], abs_u),
+        (exc_counts['v'], abs_v),
+    ]:
+        idx = np.searchsorted(thresholds, data, side='left')
+        bin_counts = np.bincount(idx, minlength=n_thr + 1)
+        counts += len(data) - np.cumsum(bin_counts)[:n_thr]
+
+    # Histogram counts: searchsorted+bincount, no temporary bool array
+    for hcounts, data in [
+        (h_counts['speed'], speed_vals),
+        (h_counts['u'], abs_u),
+        (h_counts['v'], abs_v),
+    ]:
+        hcounts += np.bincount(
+            np.searchsorted(hist_interior, data, side='right'), minlength=n_hist_bins
+        )
+
+
 def main(cfg: dict):
     # Setup logging
     logging.basicConfig(level=logging.INFO)
@@ -141,12 +172,13 @@ def main(cfg: dict):
     v10_out = indices['output'].get('10v')
     u10_in = indices['input'].get('10u', u10_out)
     v10_in = indices['input'].get('10v', v10_out)
-    
+
     if u10_out is None or v10_out is None:
         logger.error("Wind components (10u, 10v) not found in dataset!")
         return
-    
-    logger.info(f"Wind component channel indices - output: 10u={u10_out}, 10v={v10_out}, input: 10u={u10_in}, 10v={v10_in}")
+
+    logger.info(f"Wind component channel indices - output: 10u={u10_out}, 10v={v10_out}, "
+                f"input: 10u={u10_in}, 10v={v10_in}")
 
     # Define thresholds for exceedance calculation (same for all variables)
     thresholds = np.logspace(-1, 2, 200)  # From 0.1 to ~100 m/s
@@ -155,123 +187,135 @@ def main(cfg: dict):
     # Histogram bins for percentile estimation (fine-grained log-spaced)
     hist_bins = np.concatenate([
         np.array([0.0]),
-        np.logspace(-1, 2.5, 5000) # From 0.1 to ~316 m/s
+        np.logspace(-1, 2.5, 5000)  # From 0.1 to ~316 m/s
     ])
     n_hist_bins = len(hist_bins) - 1
-    
-    # Storage for exceedance counts (incremental computation)
-    exceedance_counts = {
-        'speed': {}, 'u': {}, 'v': {}
-    }
-    totals = {'speed': {}, 'u': {}, 'v': {}}
-    hist_counts = {
-        'speed': {}, 'u': {}, 'v': {}
-    }
-    
-    # -- Process target and baseline --
-    for mode in ['target', 'baseline', 'regression-prediction']:
-        logger.info(f"Processing mode: {mode}")
-        
-        # Initialize counts
-        for var in ['speed', 'u', 'v']:
-            exceedance_counts[var][mode] = np.zeros(n_thresholds, dtype=np.int64)
-            totals[var][mode] = 0
-            hist_counts[var][mode] = np.zeros(n_hist_bins, dtype=np.int64)
-        
-        try:
-            for i, ts in enumerate(times):
-                if i % cfg.get("log_interval") == 0:
-                    logger.info(f"Processing timestep {i+1}/{len(times)}")
-                
-                data = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-{mode}", weights_only=False)
-                
-                # Extract wind components
-                if mode in ['target', 'regression-prediction']:
-                    u = data[u10_out]
-                    v = data[v10_out]
-                else:  # baseline
-                    u = data[u10_in]
-                    v = data[v10_in]
-                
-                wind_speed = compute_wind_speed(u, v)
-                
-                # Get valid values
-                valid_mask = ~np.isnan(wind_speed)
-                speed_vals = wind_speed[valid_mask].flatten()
-                u_vals = u[valid_mask].flatten()
-                v_vals = v[valid_mask].flatten()
-                
-                # Update exceedance counts incrementally
-                exceedance_counts['speed'][mode], totals['speed'][mode] = update_exceedance_counts(
-                    exceedance_counts['speed'][mode], totals['speed'][mode], speed_vals, thresholds, use_abs=False
-                )
-                exceedance_counts['u'][mode], totals['u'][mode] = update_exceedance_counts(
-                    exceedance_counts['u'][mode], totals['u'][mode], u_vals, thresholds, use_abs=True
-                )
-                exceedance_counts['v'][mode], totals['v'][mode] = update_exceedance_counts(
-                    exceedance_counts['v'][mode], totals['v'][mode], v_vals, thresholds, use_abs=True
-                )
-                
-                # Collect samples for percentiles (subsample to save memory)
-                hist_counts['speed'][mode] += np.histogram(speed_vals, bins=hist_bins)[0]
-                hist_counts['u'][mode] += np.histogram(np.abs(u_vals), bins=hist_bins)[0]
-                hist_counts['v'][mode] += np.histogram(np.abs(v_vals), bins=hist_bins)[0]
-                
-        except Exception as e:
-            logger.warning(f"{mode} data not found or error occurred, skipping: {e}")
-            continue
+    # Interior edges used by searchsorted+bincount (equivalent to np.histogram)
+    hist_interior = hist_bins[1:-1]
 
-        logger.info(f"Processed {totals['speed'][mode]} values for {mode}")
-            
-    # -- Process predictions: compute exceedance for each ensemble member --
-    logger.info("Processing predictions")
-    
-    n_members = None
-    member_counts = {'speed': [], 'u': [], 'v': []}
-    member_totals = {'speed': [], 'u': [], 'v': []}
-    member_hist_counts = {'speed': [], 'u': [], 'v': []}
-    
+    # Lateral relaxation zone to discard from every grid-point reduction below.
+    relax_zone = cfg.get("relax_zone") or 0
+    height, width = cfg.get("height"), cfg.get("width")
+    relax_interior = (
+        relax_zone_interior_mask(height, width, relax_zone)
+        if relax_zone and height and width else None
+    )
+
+    det_modes = ('target', 'baseline', 'regression-prediction')
+    VARS = ('speed', 'u', 'v')
+
+    # Storage for exceedance counts and histograms
+    exceedance_counts = {var: {} for var in VARS}
+    totals            = {var: {} for var in VARS}
+    hist_counts       = {var: {} for var in VARS}
+    for mode in det_modes:
+        for var in VARS:
+            exceedance_counts[var][mode] = np.zeros(n_thresholds, dtype=np.int64)
+            totals[var][mode]            = 0
+            hist_counts[var][mode]       = np.zeros(n_hist_bins,  dtype=np.int64)
+
+    n_members         = None
+    member_counts     = {var: [] for var in VARS}
+    member_totals     = {var: [] for var in VARS}
+    member_hist_counts = {var: [] for var in VARS}
+
+    skip_det  = set()   # modes whose files were missing
+    skip_preds = False
+
+    log_interval = cfg.get("log_interval", 24)
+
+    # Pre-resolve timestamp directories once (avoids 4× filesystem glob per timestep)
+    logger.info(f"Resolving {len(times)} timestep directories ...")
+    ts_dirs = {ts: resolve_ts_dir(out_root, ts) / ts for ts in times}
+
+    # -- Single pass over all timesteps --
+    t0 = time.perf_counter()
     for i, ts in enumerate(times):
-        if i % cfg.get("log_interval") == 0:
-            logger.info(f"Processing timestep {i+1}/{len(times)}")
-        
-        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)  # [n_members, n_channels, lat, lon]
-        
-        if n_members is None:
-            n_members = preds.shape[0]
-            for var in ['speed', 'u', 'v']:
-                member_counts[var] = [np.zeros(n_thresholds, dtype=np.int64) for _ in range(n_members)]
-                member_totals[var] = [0 for _ in range(n_members)]
-                member_hist_counts[var] = [np.zeros(n_hist_bins, dtype=np.int64) for _ in range(n_members)]
-        
-        for member_idx in range(n_members):
-            u = preds[member_idx, u10_out]
-            v = preds[member_idx, v10_out]
+        if i % log_interval == 0:
+            elapsed = time.perf_counter() - t0
+            logger.info(f"Processing timestep {i+1}/{len(times)}  ({elapsed:.1f}s elapsed)")
+
+        ts_dir = ts_dirs[ts]
+
+        # Deterministic modes: target, baseline, regression-prediction
+        for mode in det_modes:
+            if mode in skip_det:
+                continue
+            try:
+                data = torch.load(ts_dir / f"{ts}-{mode}", weights_only=False)
+            except FileNotFoundError:
+                logger.warning(f"[{mode}] file not found at {ts}, skipping mode entirely")
+                skip_det.add(mode)
+                continue
+
+            ch_u = u10_in if mode == 'baseline' else u10_out
+            ch_v = v10_in if mode == 'baseline' else v10_out
+            u = data[ch_u]
+            v = data[ch_v]
+
             wind_speed = compute_wind_speed(u, v)
-            
             valid_mask = ~np.isnan(wind_speed)
-            speed_vals = wind_speed[valid_mask].flatten()
-            u_vals = u[valid_mask].flatten()
-            v_vals = v[valid_mask].flatten()
-            
-            # Update counts
-            member_counts['speed'][member_idx], member_totals['speed'][member_idx] = update_exceedance_counts(
-                member_counts['speed'][member_idx], member_totals['speed'][member_idx], speed_vals, thresholds, use_abs=False
+            if relax_interior is not None:
+                valid_mask &= relax_interior
+            speed_vals = wind_speed[valid_mask].ravel()
+            u_vals     = u[valid_mask].ravel()
+            v_vals     = v[valid_mask].ravel()
+
+            _accumulate(
+                {var: exceedance_counts[var][mode] for var in VARS},
+                {var: hist_counts[var][mode] for var in VARS},
+                speed_vals, u_vals, v_vals,
+                thresholds, hist_interior, n_hist_bins,
             )
-            member_counts['u'][member_idx], member_totals['u'][member_idx] = update_exceedance_counts(
-                member_counts['u'][member_idx], member_totals['u'][member_idx], u_vals, thresholds, use_abs=True
-            )
-            member_counts['v'][member_idx], member_totals['v'][member_idx] = update_exceedance_counts(
-                member_counts['v'][member_idx], member_totals['v'][member_idx], v_vals, thresholds, use_abs=True
-            )
-            
-            # Collect samples for percentiles
-            member_hist_counts['speed'][member_idx] += np.histogram(speed_vals, bins=hist_bins)[0]
-            member_hist_counts['u'][member_idx] += np.histogram(np.abs(u_vals), bins=hist_bins)[0]
-            member_hist_counts['v'][member_idx] += np.histogram(np.abs(v_vals), bins=hist_bins)[0]
-    
-    logger.info(f"Collected {n_members} ensemble members for predictions")
-    
+            totals['speed'][mode] += len(speed_vals)
+            totals['u'][mode]     += len(u_vals)
+            totals['v'][mode]     += len(v_vals)
+
+        # Predictions (ensemble)
+        if not skip_preds:
+            try:
+                preds = torch.load(ts_dir / f"{ts}-predictions", weights_only=False)  # [M, C, H, W]
+            except FileNotFoundError:
+                logger.warning(f"[predictions] file not found at {ts}, skipping ensemble entirely")
+                skip_preds = True
+                continue
+
+            if n_members is None:
+                n_members = preds.shape[0]
+                logger.info(f"Detected {n_members} ensemble members")
+                for var in VARS:
+                    member_counts[var]      = [np.zeros(n_thresholds, dtype=np.int64) for _ in range(n_members)]
+                    member_totals[var]      = [0] * n_members
+                    member_hist_counts[var] = [np.zeros(n_hist_bins,  dtype=np.int64) for _ in range(n_members)]
+
+            for m in range(n_members):
+                u = preds[m, u10_out]
+                v = preds[m, v10_out]
+                wind_speed = compute_wind_speed(u, v)
+                valid_mask = ~np.isnan(wind_speed)
+                if relax_interior is not None:
+                    valid_mask &= relax_interior
+                speed_vals = wind_speed[valid_mask].ravel()
+                u_vals     = u[valid_mask].ravel()
+                v_vals     = v[valid_mask].ravel()
+
+                _accumulate(
+                    {var: member_counts[var][m] for var in VARS},
+                    {var: member_hist_counts[var][m] for var in VARS},
+                    speed_vals, u_vals, v_vals,
+                    thresholds, hist_interior, n_hist_bins,
+                )
+                member_totals['speed'][m] += len(speed_vals)
+                member_totals['u'][m]     += len(u_vals)
+                member_totals['v'][m]     += len(v_vals)
+
+    total_elapsed = time.perf_counter() - t0
+    logger.info(f"Single-pass loop completed in {total_elapsed:.1f}s for {len(times)} timesteps")
+    if n_members is not None:
+        logger.info(f"Collected {n_members} ensemble members for predictions")
+    else:
+        n_members = 0  # no predictions found; guard range() calls below
+
     # Convert counts to probabilities
     exceedance_data = {'speed': {}, 'u': {}, 'v': {}}
     
@@ -309,7 +353,7 @@ def main(cfg: dict):
                 )
     
     # Create exceedance plots
-    labels = ['Target', 'Input', 'Regression Prediction', 'CorrDiff Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['Target', 'Input', 'CorrDiff Ensemble']
+    labels = ['Target', 'Input', 'Regression Prediction', 'Pred. Ensemble'] if 'regression-prediction' in exceedance_data['speed'] else ['Target', 'Input', 'Pred. Ensemble']
     colors = ['blue', 'orange', 'red', 'green'] if 'regression-prediction' in exceedance_data['speed'] else ['blue', 'orange', 'green']
     
     # Define plot configurations

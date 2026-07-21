@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -6,7 +7,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG
+from hirad.eval.eval_utils import GridConfig, DEFAULT_GRID_CONFIG, FONT_SIZE, relax_zone_interior_mask
+
+# Use presentation-sized fonts for all maps produced here (and by scripts that
+# delegate to these helpers, e.g. map_*, snapshots, diurnal_cycle_precip_maps).
+plt.rcParams.update(FONT_SIZE)
+
+
+def _apply_relax_mask(values, relax_zone):
+    """Return *values* as a masked array with the lateral relaxation zone masked out.
+
+    Discards (hides from the plot and from any colour-scale computation) the
+    ``relax_zone`` border cells on every side, while preserving any mask already
+    carried by *values* (e.g. precipitation below threshold).
+    """
+    masked = np.ma.array(values, copy=True)
+    if masked.ndim >= 2:
+        interior = relax_zone_interior_mask(masked.shape[-2], masked.shape[-1], relax_zone)
+        if interior.any() and not interior.all():
+            masked[..., ~interior] = np.ma.masked
+    return masked
 
 
 def plot_map(values: np.array,
@@ -44,6 +64,9 @@ def plot_map(values: np.array,
     longitudes = grid_cfg.lon[grid_cfg.relax_zone : grid_cfg.relax_zone + grid_cfg.width]
     lon2d, lat2d = np.meshgrid(longitudes, latitudes)
 
+    # Discard the lateral relaxation zone so it never appears in the plot.
+    values = _apply_relax_mask(values, grid_cfg.relax_zone)
+
     fig, ax = plt.subplots(
         figsize=(8, 6),
         subplot_kw={"projection": ccrs.RotatedPole(pole_longitude=-170.0,
@@ -79,7 +102,42 @@ def plot_map(values: np.array,
     fig.savefig(f"{filename}.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG):
+
+def compute_symmetric_vmax(values: np.ndarray, percentile: float = 99.0, fallback: float = 1.0) -> float:
+    """Return a robust symmetric colorbar half-range based on absolute values."""
+    vmax = float(np.nanpercentile(np.abs(values), percentile))
+    if vmax != vmax or vmax <= 0:
+        return fallback
+    return vmax
+
+
+def plot_difference_map(
+    values: np.ndarray,
+    filename: str,
+    title: str = '',
+    label: str = 'Difference',
+    grid_cfg: GridConfig = DEFAULT_GRID_CONFIG,
+    cmap: str = 'RdBu_r',
+    percentile: float = 99.0,
+    fixed_vmax: Optional[float] = None,
+):
+    """Plot a difference map with symmetric diverging bounds around zero."""
+    # Drop the relaxation zone so it skews neither the colour scale nor the plot.
+    values = np.where(grid_cfg.interior_mask(), values, np.nan)
+    vmax = fixed_vmax if fixed_vmax is not None else compute_symmetric_vmax(values, percentile=percentile)
+    plot_map(
+        values,
+        filename,
+        title=title,
+        label=label,
+        vmin=-vmax,
+        vmax=vmax,
+        cmap=cmap,
+        extend='both',
+        grid_cfg=grid_cfg,
+    )
+
+def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG, label='mm/h'):
     """Plot precipitation data with specific colormap and thresholds."""
     # Scale and mask values below threshold
     values = rfac * values # m/h --> mm/h
@@ -101,10 +159,37 @@ def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000
         norm=norm,
         ticks=bounds,
         title=title,
-        label='mm/h',
+        label=label,
         extend='max',
         grid_cfg=grid_cfg,
     )
+
+def plot_map_temperature(values, filename, title='', grid_cfg=DEFAULT_GRID_CONFIG):
+    """Plot 2m temperature data with Meteoswiss-style colormap."""
+    colors = [
+        "#3366FF", "#4C97FF", "#4CA8FF", "#00CCFF",
+        "#DEE699", "#A6D473", "#6BBF4D", "#33AB26", "#009900",
+        "#33B300", "#66CC00", "#99E600", "#CCFF00", "#FFFF00",
+        "#FFCC00", "#FF9900", "#FF6600", "#FF3300", "#FF0000",
+        "#EB00EB", "#FF40FF", "#FF80FF", "#FFBFFF", "#FFE0FF", "#FFF5FF",
+        "#D9D9D9", "#A6A6A6", "#737373",
+    ]
+    bounds = np.arange(-8, 49, 2)
+
+    cmap = ListedColormap(colors)
+    norm = BoundaryNorm(bounds, ncolors=len(colors), clip=False)
+
+    plot_map(
+        values, filename,
+        cmap=cmap,
+        norm=norm,
+        ticks=bounds[::2],
+        title=title,
+        label='Temperature [°C]',
+        extend='both',
+        grid_cfg=grid_cfg,
+    )
+
 
 def plot_map_wind_precip(
     u: np.ndarray,
@@ -134,6 +219,10 @@ def plot_map_wind_precip(
 
     precip = tp_rfac * tp
     precip_masked = np.ma.masked_where(precip <= tp_threshold, precip)
+
+    # Discard the lateral relaxation zone from both overlaid fields.
+    wind_speed = _apply_relax_mask(wind_speed, grid_cfg.relax_zone)
+    precip_masked = _apply_relax_mask(precip_masked, grid_cfg.relax_zone)
 
     precip_colors = ['powderblue', 'dodgerblue', 'mediumblue',
                      'forestgreen', 'limegreen', 'lawngreen',

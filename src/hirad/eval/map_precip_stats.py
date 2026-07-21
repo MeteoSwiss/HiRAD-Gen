@@ -7,9 +7,9 @@ import torch
 import xarray as xr
 import numba
 
-from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, precip_conv_factor, resolve_ts_dir
 from hirad.eval.plotting import (
-    plot_map_precipitation, plot_map
+    plot_difference_map, plot_map, plot_map_precipitation
 )
 
 
@@ -95,7 +95,7 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param, wet_threshold=0.1)
             return consecutive_spell(daily, lambda x: x >= 1.0)
 
     if stat_type == 'weth_freq':
-        return np.mean(data_np / 24.0 > wet_threshold, axis=0) * 100.0
+        return np.mean(data_np > wet_threshold, axis=0) * 100.0
 
     raise ValueError(f"Unsupported statistic type: {stat_type}")
 
@@ -121,16 +121,24 @@ def plot_stat_map(data, filename, stat_config, label, grid_cfg):
             label='Days', vmin=0, vmax=20, cmap='viridis', extend='max', grid_cfg=grid_cfg
         )
     else:
+        unit = {'Rx1day': 'mm/day', 'Rx5day': 'mm'}.get(stat_config['type'], 'mm/h')
         plot_map_precipitation(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]} Precipitation',
-            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg
+            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg, label=unit,
         )
 
 
-def _load_predictions_all_members(filepath, conv_factor):
-    """Load prediction file once and return (n_members, C, H, W) tensor."""
-    return torch.load(filepath, weights_only=False) * conv_factor
+def _difference_label(stat_type):
+    if stat_type == 'weth_freq':
+        return 'Difference [%]'
+    if stat_type in ('cdd', 'cwd'):
+        return 'Difference [days]'
+    if stat_type == 'Rx1day':
+        return 'Difference [mm/day]'
+    if stat_type == 'Rx5day':
+        return 'Difference [mm]'
+    return 'Difference [mm/h]'
 
 
 def main(cfg: dict):
@@ -155,7 +163,7 @@ def main(cfg: dict):
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    conv_factor = cfg.get("conv_factor")
+    conv_factor = precip_conv_factor(cfg)  # mm/h
     log_interval = cfg.get("log_interval", 100)
     wet_threshold = cfg.get("wet_threshold", 0.1)
 
@@ -183,6 +191,8 @@ def main(cfg: dict):
         'regression-prediction': (tp_out, 'Regression Prediction')
     }
 
+    mode_results = {}
+
     for mode, (tp_channel, label) in basic_modes.items():
         logger.info(f"Processing mode: {mode}")
         data_list = []
@@ -196,54 +206,91 @@ def main(cfg: dict):
             logger.warning(f"{mode} not available, skipping")
             continue
 
-        # Stack into (T, H, W) numpy array
-        mode_data = np.stack(data_list, axis=0).astype(np.float64)
+        # Stack into (T, H, W) numpy array. float32 to save memory.
+        mode_data = np.stack(data_list, axis=0).astype(np.float32)
         del data_list
 
+        mode_results[mode] = {}
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for {mode}...")
             result = apply_statistic(mode_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
-            map_output_dir = output_path / f"maps_{stat_config['stat_name']}"
+            mode_results[mode][stat_config['stat_name']] = result
+            map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg)
 
-    # --- Predictions: load each file ONCE, distribute to all members ---
+        del mode_data
+
+    target_results = mode_results.get('target')
+    if target_results is None:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for basic modes")
+    else:
+        for mode, (_, label) in basic_modes.items():
+            if mode == 'target' or mode not in mode_results:
+                continue
+            logger.info(f"Generating {mode} minus target difference maps")
+            for stat_config in stat_configs:
+                stat_name = stat_config['stat_name']
+                if stat_name not in mode_results[mode] or stat_name not in target_results:
+                    continue
+                diff = mode_results[mode][stat_name] - target_results[stat_name]
+                map_output_dir = output_path / f"maps_precip_{stat_name}"
+                map_output_dir.mkdir(parents=True, exist_ok=True)
+                plot_difference_map(
+                    diff,
+                    str(map_output_dir / f'{mode}_minus_target_{stat_name}'),
+                    title=f'{label} - Target: {stat_config["title_stat"]} Difference',
+                    label=_difference_label(stat_config['type']),
+                    grid_cfg=grid_cfg,
+                )
+
+    # --- Predictions: process ONE member at a time to bound memory usage ---
     logger.info("Processing predictions mode...")
     sample_data = torch.load(resolve_ts_dir(out_root, times[0]) / times[0] / f"{times[0]}-predictions", weights_only=False)
     n_members = sample_data.shape[0]
     del sample_data
     logger.info(f"Found {n_members} ensemble members")
 
-    # Pre-allocate arrays for ALL members at once: (n_members, T, H, W)
-    # If memory is tight, we can do this in chunks. For 16 members × 2200 × 704 × 1088 × 4 bytes ≈ 107 GB
-    # Instead we can do cummulative statistics on the fly without storing all members in memory (like in map_wind_stats), but this works for now.
-    H, W = cfg.get("height"), cfg.get("width")
-    member_arrays = [np.empty((len(times), H, W), dtype=np.float32) for _ in range(n_members)]
-
-    logger.info("Loading all prediction timesteps (single pass over files)...")
-    for i, ts in enumerate(times):
-        if i % log_interval == 0:
-            logger.info(f"Loading predictions timestep {i+1}/{len(times)}: {ts}")
-        pred_data = torch.load(out_root / ts / f"{ts}-predictions", weights_only=False) * conv_factor
-        for m in range(n_members):
-            member_arrays[m][i] = (pred_data[m, tp_out].numpy() if isinstance(pred_data, torch.Tensor)
-                                   else pred_data[m, tp_out])
-    del pred_data
+    H: int = cfg["height"]
+    W: int = cfg["width"]
+    member_data = np.empty((len(times), H, W), dtype=np.float32)
+    has_target_for_diff = target_results is not None
+    if not has_target_for_diff:
+        logger.warning("Target mode not available; skipping prediction-minus-target difference maps for members")
 
     for member_idx in range(n_members):
-        logger.info(f"Computing statistics for prediction member {member_idx+1}/{n_members}")
-        member_data = member_arrays[member_idx].astype(np.float64)
+        logger.info(f"Loading prediction member {member_idx+1}/{n_members} (single pass over files)...")
+        for i, ts in enumerate(times):
+            if i % log_interval == 0:
+                logger.info(f"Loading predictions member {member_idx+1} timestep {i+1}/{len(times)}: {ts}")
+            pred_data = torch.load(resolve_ts_dir(out_root, ts) / ts / f"{ts}-predictions", weights_only=False)
+            member_slice = pred_data[member_idx, tp_out]
+            member_data[i] = (member_slice.numpy() if isinstance(member_slice, torch.Tensor) else member_slice) * conv_factor
+            del pred_data
 
+        logger.info(f"Computing statistics for prediction member {member_idx+1}/{n_members}")
         for stat_config in stat_configs:
             logger.info(f"Computing {stat_config['title_stat']} for member {member_idx+1}...")
             member_result = apply_statistic(member_data, times_dt, stat_config['type'], stat_config['param'], wet_threshold)
-            map_output_dir = output_path / f"maps_{stat_config['stat_name']}"
+            map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
             member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
-            member_label = f'CorrDiff Member {member_idx+1}'
+            member_label = f'Pred. {member_idx+1}'
             plot_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg)
+            if has_target_for_diff:
+                target_result = target_results.get(stat_config['stat_name'])
+                if target_result is not None:
+                    diff = member_result - target_result
+                    diff_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_minus_target_{stat_config["stat_name"]}')
+                    plot_difference_map(
+                        diff,
+                        diff_filename,
+                        title=f'Pred. {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
+                        label=_difference_label(stat_config['type']),
+                        grid_cfg=grid_cfg,
+                    )
 
-    del member_arrays
+    del member_data
     logger.info("All precipitation statistics maps generated successfully")
 
 

@@ -19,14 +19,31 @@ class GridConfig:
     width: int
     relax_zone: int
 
+    def interior_mask(self) -> np.ndarray:
+        """Boolean ``(height, width)`` mask that is ``True`` outside the relaxation zone."""
+        return relax_zone_interior_mask(self.height, self.width, self.relax_zone)
+
 
 DEFAULT_GRID_CONFIG = GridConfig(
     lat=np.arange(-4.42, 3.36 + 0.02, 0.02),
     lon=np.arange(-6.82, 4.80 + 0.02, 0.02),
     height=352,
     width=544,
-    relax_zone=19,
+    relax_zone=19+100, # relax + spinup
 )
+
+
+# Enlarged matplotlib font sizes shared across all eval plots so that figures
+# are legible in slides/presentations. Apply via ``plt.rcParams.update(...)``.
+FONT_SIZE = {
+    'font.size':        15,
+    'axes.titlesize':   18,
+    'axes.labelsize':   16,
+    'xtick.labelsize':  13,
+    'ytick.labelsize':  13,
+    'legend.fontsize':  9,
+    'figure.titlesize': 18,
+}
 
 
 def grid_cfg_from_cfg(cfg) -> GridConfig:
@@ -40,11 +57,44 @@ def grid_cfg_from_cfg(cfg) -> GridConfig:
     )
 
 
-def load_land_sea_mask(path, height=352, width=544):
-    """Load and return a land-sea mask as xarray DataArray."""
+def precip_conv_factor(cfg: dict) -> float:
+    """Return the single factor converting stored precipitation to mm/h.
+
+    ERA5 precipitation is an hourly accumulated depth in metres, so the only
+    physical conversion is metres -> millimetres (x1000), yielding mm/h. This is
+    the *one* precipitation unit used throughout evaluation: per-day and multi-day
+    totals (Rx1day, Rx5day, CDD/CWD, ...) are obtained by summing mm/h values over
+    time, never via a separate scaling factor.
+    """
+    return float(cfg.get("precip_conv_factor", 1000.0))
+
+
+def relax_zone_interior_mask(height: int, width: int, relax_zone: int) -> np.ndarray:
+    """Return a boolean ``(height, width)`` mask that is ``True`` outside the relaxation zone.
+
+    The ``relax_zone`` lateral border cells form the regional model's relaxation
+    (and spin-up) zone and must be discarded from every evaluation statistic. This
+    is the single relaxation-zone primitive; derive the form you need at the call site:
+
+    * boolean combine: ``valid &= relax_zone_interior_mask(h, w, rz)``
+    * xarray drop:     ``da.where(relax_zone_interior_mask(h, w, rz))``
+    * numpy fill:      ``np.where(relax_zone_interior_mask(h, w, rz), field, np.nan)``
+    """
+    mask = np.zeros((int(height), int(width)), dtype=bool)
+    relax = int(relax_zone or 0)
+    if relax <= 0:
+        mask[:] = True
+    elif 2 * relax < height and 2 * relax < width:
+        mask[relax:int(height) - relax, relax:int(width) - relax] = True
+    return mask
+
+
+def load_land_sea_mask(path: str | Path, height: int = 352, width: int = 544) -> xr.DataArray:
+    """Load and return a land-sea mask as an xarray ``(lat, lon)`` DataArray."""
     lsm_data = np.load(path).reshape(height, width)
+    mask = np.where(lsm_data >= 0.5, 1.0, np.nan)
     return xr.DataArray(
-        np.where(lsm_data >= 0.5, 1.0, np.nan),
+        mask,
         dims=['lat', 'lon'],
         coords={"lat": np.arange(height), "lon": np.arange(width)},
     )
@@ -174,6 +224,15 @@ def get_channel_indices(gen_cfg: dict, channels=None) -> dict:
     }
 
 
+def make_percentile_values(per_decade: int = 20) -> np.ndarray:
+    """Percentiles sampled equidistantly on the logit (log-exceedance) axis."""
+    tail = np.logspace(-3, 1, 4 * per_decade + 1)   # 0.001 ... 10
+    lower = tail                                     # low tail:  0.001 ... 10
+    upper = 100.0 - tail[::-1]                       # high tail: 90 ... 99.999
+    center = np.linspace(10.0, 90.0, 2 * per_decade + 1)
+    return np.unique(np.concatenate([lower, center, upper]))
+
+
 def resolve_ts_dir(out_root: Path, ts: str) -> Path:
     """Return the directory under *out_root* that contains the timestamp folder *ts*."""
     if (out_root / ts).is_dir():
@@ -183,6 +242,14 @@ def resolve_ts_dir(out_root: Path, ts: str) -> Path:
         return matches[0]
     raise FileNotFoundError(f"Timestamp directory {ts} not found under {out_root}")
 
+
+def signed_circular_difference(prediction: np.ndarray, target: np.ndarray, period: float = 360.0) -> np.ndarray:
+    """Return signed wrapped difference on a circular domain.
+
+    For angles in degrees, this yields values in [-180, 180).
+    """
+    half_period = period / 2.0
+    return ((prediction - target + half_period) % period) - half_period
 
 
 def parse_eval_cli(allow_times: bool = False) -> dict:

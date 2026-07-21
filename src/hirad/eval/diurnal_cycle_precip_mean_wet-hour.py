@@ -8,7 +8,13 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, parse_eval_cli, resolve_ts_dir
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
+
+# Presentation-sized fonts for all figures in this script.
+plt.rcParams.update(FONT_SIZE)
+
+ALLHOUR_THRESHOLDS = [0.1, 1.0, 10.0, 100.0]  # mm/h
+
 
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     hrs = np.concatenate([hour.values, [24]])
@@ -30,6 +36,7 @@ def save_plot(hour, means, stds, labels, ylabel, title, out_path):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path)
     plt.close()
+
 
 def main(cfg: dict):
     # Setup logging
@@ -56,21 +63,27 @@ def main(cfg: dict):
     tp_in = indices['input'].get('tp', tp_out)
     logger.info(f"TP channel indices - output: {tp_out}, input: {tp_in}")
 
-    # Land-sea mask
+    # Land-sea mask (sea = NaN); the relaxation zone is dropped separately.
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
+    land_mask = land_mask.where(relax_zone_interior_mask(cfg.get("height"), cfg.get("width"), cfg.get("relax_zone")))
+
+    conv_factor = precip_conv_factor(cfg)  # mm/h
 
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
-    target_wet, baseline_wet, pred_wet, mean_pred_wet = [], [], [], []
+    wet_target   = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_baseline = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_pred     = {thr: [] for thr in ALLHOUR_THRESHOLDS}
+    wet_regpred  = {thr: [] for thr in ALLHOUR_THRESHOLDS}
 
     # Collect data
     for idx, ts in enumerate(times, 1):
         dt = datetimes[idx-1]
-        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * cfg.get("conv_factor")
-        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * cfg.get("conv_factor")
-        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * cfg.get("conv_factor")
+        target = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-target", weights_only=False)[tp_out] * conv_factor
+        baseline = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-baseline", weights_only=False)[tp_in] * conv_factor
+        preds = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-predictions", weights_only=False)[:, tp_out, :, :] * conv_factor
         try:
-            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * cfg.get("conv_factor")
+            mean_pred = torch.load(resolve_ts_dir(out_root, ts)/ts/f"{ts}-regression-prediction", weights_only=False)[tp_out] * conv_factor
         except:
             mean_pred = None
 
@@ -95,12 +108,13 @@ def main(cfg: dict):
         if mean_pred is not None:
             mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction, i.e., freq(precip) > wet_threshold
-        target_wet.append(((da_target / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
-        baseline_wet.append(((da_baseline / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
-        pred_wet.append(((da_preds / 24> cfg.get("wet_threshold")).mean(dim=("lat","lon")).assign_coords(time=dt)))
-        if mean_pred is not None:
-            mean_pred_wet.append(((da_mean_pred / 24 > cfg.get("wet_threshold")).mean().assign_coords(time=dt)))
+        # Wet-hour fraction per threshold (data already in mm/h)
+        for thr in ALLHOUR_THRESHOLDS:
+            wet_target[thr].append((da_target > thr).mean().assign_coords(time=dt))
+            wet_baseline[thr].append((da_baseline > thr).mean().assign_coords(time=dt))
+            wet_pred[thr].append((da_preds > thr).mean(dim=('lat', 'lon')).assign_coords(time=dt))
+            if mean_pred is not None:
+                wet_regpred[thr].append((da_mean_pred > thr).mean().assign_coords(time=dt))
 
         if idx % cfg.get("log_interval") == 0 or idx == len(times):
             logger.info(f"Processed {idx}/{len(times)} timesteps ({ts})")
@@ -112,12 +126,6 @@ def main(cfg: dict):
     if mean_pred_precip:
         amount_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_precip)
 
-    wet_target_mean, _ = concat_and_group_diurnal(target_wet, scale=100.0) # scale to obtain percentages
-    wet_baseline_mean, _ = concat_and_group_diurnal(baseline_wet, scale=100.0)
-    wet_pred_mean, wet_pred_std = concat_and_group_diurnal(pred_wet, is_member=True, scale=100.0)
-    if mean_pred_wet:
-        wet_mean_pred_mean, _ = concat_and_group_diurnal(mean_pred_wet, scale=100.0)
-
     # Generate plots
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
@@ -125,20 +133,32 @@ def main(cfg: dict):
         amount_target_mean.hour,
         [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
-        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','CorrDiff ± Std(Members)'],
-        'Precipitation (mm/day)',
+        ['Target','Input','Pred. ± Std', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','Pred. ± Std'],
+        'Precipitation (mm/h)',
         'Diurnal Cycle of Precip Amount',
         output_path / 'diurnal_cycle_precip_amount.png'
     )
-    save_plot(
-        wet_target_mean.hour,
-        [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if mean_pred_wet else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
-        [None, None, wet_pred_std, None] if mean_pred_wet else [None, None, wet_pred_std],
-        ['Target','Input','CorrDiff ± Std(Members)', 'Regression Prediction'] if mean_pred_wet else ['Target','Input','CorrDiff ± Std(Members)'],
-        'Wet-Hour Fraction [%]',
-        'Diurnal Cycle of Wet-Hours (>0.1 mm/h)',
-        output_path / 'diurnal_cycle_precip_wethours.png'
-    )
+
+    # Diurnal cycle of wet-hours, one plot per threshold
+    for thr in ALLHOUR_THRESHOLDS:
+        wet_target_mean, _ = concat_and_group_diurnal(wet_target[thr], scale=100.0)
+        wet_baseline_mean, _ = concat_and_group_diurnal(wet_baseline[thr], scale=100.0)
+        wet_pred_mean, wet_pred_std = concat_and_group_diurnal(wet_pred[thr], is_member=True, scale=100.0)
+        has_regpred = bool(wet_regpred[thr])
+        if has_regpred:
+            wet_mean_pred_mean, _ = concat_and_group_diurnal(wet_regpred[thr], scale=100.0)
+
+        fn_wet = output_path / f'diurnal_cycle_precip_wethours_{thr:g}mmh.png'
+        save_plot(
+            wet_target_mean.hour,
+            [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if has_regpred else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
+            [None, None, wet_pred_std, None] if has_regpred else [None, None, wet_pred_std],
+            ['Target','Input','Pred. ± Std', 'Regression Prediction'] if has_regpred else ['Target','Input','Pred. ± Std'],
+            'Wet-Hour Fraction [%]',
+            f'Diurnal Cycle of Wet-Hours (>{thr:g} mm/h)',
+            fn_wet,
+        )
+        logger.info(f"Diurnal wet-hour plot saved: {fn_wet}")
 
     logger.info("Plots saved.")
 

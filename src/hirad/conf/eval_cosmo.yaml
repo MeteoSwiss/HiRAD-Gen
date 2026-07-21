@@ -4,8 +4,7 @@ results_dir_name: 'evaluation_maps'
 
 # Constants for evaluation depend on dataset specifics and should be modified accordingly
 
-conv_factor_hourly: 1000  # Convert precip of ERA5 from meters to mm/h
-conv_factor: 24000 # Convert the precip of ERA5 from meters/h to mm/day
+precip_conv_factor: 1000  # ERA5 precip (hourly accumulation in m) -> mm/h; daily/multi-day totals are summed, never rescaled
 wet_threshold: 0.1 # Threshold for wet-hour in mm/h
 log_interval: 24 # Log progress every N timesteps
 land_sea_mask_path: '/capstor/store/mch/msopr/hirad-gen/eval/lsm.npy' # Path to land-sea mask numpy file
