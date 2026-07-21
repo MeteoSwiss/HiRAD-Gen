@@ -271,6 +271,10 @@ def main(cfg: DictConfig) -> None:
                     image_tar = image_tar.flip(-2)
                 else:
                     image_tar = image_tar.to(device=device).to(input_dtype)
+                if lead_time_label:
+                        lead_time_label = lead_time_label[0].to(dist.device).contiguous()
+                else:
+                    lead_time_label = None
                 image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype))
                 image_lr = image_lr.reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
                 image_lr = dataset.normalize_input(image_lr)
