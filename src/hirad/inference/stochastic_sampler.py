@@ -199,24 +199,22 @@ def stochastic_sampler(
 
     # input and position padding + patching
     if patching:
-        # print(f"Input for generator beofre patching {x_lr.shape}")
         # Patched conditioning [x_lr, mean_hr]
         if static_channels is not None:
             img_lr = torch.cat(
                 (img_lr, static_channels.expand(img_lr.shape[0], *static_channels.shape[1:])),
                 dim=1,
             )
-        # print(f"Shape of img_lr after static channels diffusion patching: img_lr {img_lr.shape}")
         if date_embedding is not None:
             date_embedding = date_embedding[:, :, None, None].expand(img_lr.shape[0], date_embedding.shape[1], *img_lr.shape[2:])
             if use_apex_gn:
                 date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
             else:
-                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+                date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous()
             img_lr = torch.cat((img_lr, date_embedding), dim=1)
+            x_lr = torch.cat((x_lr, date_embedding), dim=1)
         # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
         x_lr = patching.apply(input=x_lr, additional_input=img_lr)
-        # print(f"Input for generator after patching {x_lr.shape}")
         # Function to select the correct positional embedding for each patch
         def patch_embedding_selector(emb):
             # emb: (N_pe, image_shape_y, image_shape_x)
