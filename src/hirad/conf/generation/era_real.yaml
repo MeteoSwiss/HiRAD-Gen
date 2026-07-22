@@ -49,8 +49,10 @@ perf:
     # which improves throughput for production runs.
 
 io:
-  res_ckpt_path: /path/to/diffusion/checkpoint
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion/
   # Checkpoint filename for the residual predictor model
-  reg_ckpt_path: /path/to/regression/checkpoint
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression/
   # Checkpoint filename for the mean predictor model
   output_path: .
+  output_format: 'both'
+  grib_template_path: '/users/mmcgloho/evalml/resources/inference/templates'

@@ -19,10 +19,13 @@ import os
 import logging
 import time
 
+import eccodes
 import nvtx
 import numpy as np
 import torch
 import tqdm
+import earthkit.data as ekd
+from earthkit.data import FieldList
 
 from .function_utils import StackedRandomGenerator
 
@@ -206,7 +209,7 @@ def diffusion_step(
     if mean_hr is not None:
         if mean_hr.shape[-2:] != img_shape:
             raise ValueError(
-                f"mean_hr shape {mean_hr.shape[2:]} does not match expected shape img_shape {img_shape}"
+                f"mean_hr shape {mean_hr.shape[-2:]} does not match expected shape img_shape {img_shape}"
             )
         if mean_hr.shape[0] != 1:
             raise ValueError(f"mean_hr must have batch size 1, got {mean_hr.shape[0]}")
@@ -279,13 +282,249 @@ def diffusion_step(
 ############################################################################
 
 
-def save_results_as_torch(output_path, time_step, image_pred, image_hr, image_lr, mean_pred):
+def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, output_format='torch', grib_template_path=''):
     os.makedirs(output_path, exist_ok=True)
+    # Data arrives already denormalized and spatially oriented (physical units, numpy)
+    target = image_hr
+    prediction_ensemble = image_pred
+    baseline = image_lr
+    if output_format == 'torch':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+    elif output_format == 'grib':
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+    elif output_format == 'both':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+    else:
+        raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
+
+def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1)
+    if output_format == 'torch':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+    elif output_format == 'grib':
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+    elif output_format == 'both':
+        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+    else:
+        raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
+
+def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:
         torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
-    torch.save(image_hr, os.path.join(output_path, f'{time_step}-target'))
-    torch.save(image_pred, os.path.join(output_path, f'{time_step}-predictions'))
-    torch.save(image_lr, os.path.join(output_path, f'{time_step}-baseline'))
+    torch.save(target, os.path.join(output_path, f'{time_step}-target'))
+    torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
+    torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+# Takes templates from EvalML
+def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
+    dataset, grib_template_path):
+
+    # Somewhat kludgey way of getting the grid.
+    if target.shape[1] == 352:
+        grid='co2'
+    else:
+        grid='co1e'
+
+    input_fields = dataset.input_channels()
+    output_fields = dataset.output_channels()
+    static_fields = dataset.static_channels()
+
+    # Target
+    output_file = os.path.join(output_path, f'{time_step}-target.grib')
+    save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
+
+    # Prediction - 1 file per ensemble?
+    if len(prediction_ensemble.shape) == 4:
+        for i in range(prediction_ensemble.shape[0]):
+            output_file = os.path.join(output_path, f'{time_step}-pred{i:02}.grib')
+            save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble[i,:], grid=grid)
+    else:
+        # no ensemble dimension
+        output_file = os.path.join(output_path, f'{time_step}-pred.grib')
+        save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
+
+    # Baseline
+    output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
+    save_image_as_grib(output_file, time_step, grib_template_path, input_fields, baseline, grid=grid)
+
+    return
+
+
+def save_image_as_grib(output_filename, time_step, grib_template_path, channels, image, grid):
+    if grid == "co2":
+        padding_margin = 19
+    elif grid == "co1e":
+        padding_margin = 41
+    else:
+        raise ValueError("only co1e and co2 grid supported")
+
+    ds_r = ekd.FieldList()
+    for i in range(len(channels)):
+        channel = channels[i]
+
+        # raise ValueError if not found
+        ds = get_grib_template(grib_template_path, channel, time_step, grid)
+        if ds:
+            md_new = ds.metadata()
+            values = pad_image(image[i,::], padding_margin, np.nan)
+            ds_new = ekd.FieldList.from_array(values, md_new)
+            ds_r += ds_new
+    #output_file = os.path.join(output_path, f'{time_step}.grib')
+    # Metadata is shown (correctly) as different channels here.
+    logging.debug(f'ds_r is {ds_r.ls()}')
+    # Metadata is not propagated, for some reason-- all channels have same metadata as ds[0] (2t).
+    # However, values are preserved properly.
+    with ekd.create_target("file",output_filename) as t:
+        for f in ds_r:
+            t.write(f)
+
+# grid: co2 (COSMO-2), or co1e (COSMO-1E)
+def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
+    [date,time]=datetime.split('-')
+    # Get index of the channels types
+    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
+    levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
+    if channel.name == 'tp':
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
+        return ds[0].clone(shortName=channel.name, dataDate=date, dataTime=time)
+    elif channel.name in levtype_index_sfc.metadata("shortName") and (channel.level==None or channel.level=='' or int(channel.level) < 50):
+        idx = levtype_index_sfc.metadata("shortName").index(channel.name)
+        levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
+        levelval = levtype_index_sfc[idx].metadata("level")
+        try:
+            ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        except FileNotFoundError as e:
+            logging.warning(f'Channel {channel.name} not found in GRIB templates: {e}')
+            logging.warning(f'Skipping channel {channel.name}')
+            return None
+        return ds[0].clone(shortName=channel.name, level=levelval, dataDate=date, dataTime=time)
+    elif channel.name in levtype_index_pl.metadata("shortName") and channel.level:
+        levtype='isobaricInhPa'
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        return ds[0].clone(shortName=channel.name, level=channel.level, dataDate=date, dataTime=time) 
+    else:
+        logging.warning(f'channel {channel.name} not found in grib index; skipping')
+        return None
+
+
+def pad_image(image, padding_margin, fill_value):
+    new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
+    new_image[padding_margin:-padding_margin, padding_margin:-padding_margin] = image
+    return new_image
+
+@DeprecationWarning
+def save_images(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred):   
+
+    os.makedirs(output_path, exist_ok=True)
+
+    longitudes = dataset.longitude()
+    latitudes = dataset.latitude()
+    input_channels = dataset.input_channels()
+    output_channels = dataset.output_channels()
+
+    target = np.flip(dataset.denormalize_output(image_hr[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+    prediction = np.flip(dataset.denormalize_output(image_pred),-2) #.reshape(len(output_channels),-1)
+    baseline = np.flip(dataset.denormalize_input(image_lr[0,::].squeeze()),1)# .reshape(len(input_channels),-1) 
+    if mean_pred is not None:
+        mean_pred = np.flip(dataset.denormalize_output(mean_pred[0,::].squeeze()),1) #.reshape(len(output_channels),-1)
+
+    # Prediction - 1 file per ensemble?
+    if len(prediction_ensemble.shape) == 4:
+        for i in range(prediction_ensemble.shape[0]):
+            output_file = os.path.join(output_path, f'{time_step}-pred{i:02}.grib')
+            save_image_as_grib(output_file, time_step, grib_template_path, output_fields, prediction_ensemble[i,:], grid=grid)
+    else:
+        # no ensemble dimension
+        output_file = os.path.join(output_path, f'{time_step}-pred.grib')
+        save_image_as_grib(output_file, time_step, grib_template_path, output_fields, prediction_ensemble, grid=grid)
+
+    # Baseline
+    output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
+    save_image_as_grib(output_file, time_step, grib_template_path, input_fields, baseline, grid=grid)
+
+    # EvalML-compatible output: one file per init time, step 000
+    # Use mean prediction (regression) if available, otherwise first ensemble member
+    evalml_data = mean_pred if mean_pred is not None else (
+        prediction_ensemble[0] if len(prediction_ensemble.shape) == 4 else prediction_ensemble
+    )
+    init_time = time_step.replace('-', '')
+    evalml_file = os.path.join(output_path, f'{init_time}_000.grib')
+    save_image_as_grib(evalml_file, time_step, grib_template_path, output_fields, evalml_data, grid=grid)
+
+    return
+
+
+def save_image_as_grib(output_filename, time_step, grib_template_path, channels, image, grid):
+    if grid == "co2":
+        padding_margin = 19
+    elif grid == "co1e":
+        padding_margin = 41
+    else:
+        raise ValueError("only co1e and co2 grid supported")
+
+    with open(output_filename, 'wb') as f_out:
+        for i, channel in enumerate(channels):
+            result = get_grib_template(grib_template_path, channel, time_step, grid)
+            if result is None:
+                continue
+            template_field, grib_keys = result
+            values = pad_image(image[i, ::], padding_margin, np.nan)
+            grib_id = eccodes.codes_new_from_message(template_field.message())
+            try:
+                for key, val in grib_keys.items():
+                    eccodes.codes_set(grib_id, key, val)
+                flat = values.flatten().astype(float)
+                missing = 9999.0
+                eccodes.codes_set(grib_id, 'bitmapPresent', 1)
+                eccodes.codes_set(grib_id, 'missingValue', missing)
+                flat[np.isnan(flat)] = missing
+                eccodes.codes_set_values(grib_id, flat)
+                eccodes.codes_write(grib_id, f_out)
+            finally:
+                eccodes.codes_release(grib_id)
+
+# grid: co2 (COSMO-2), or co1e (COSMO-1E)
+# Returns (template_field, grib_keys_dict) or None if channel has no template.
+# grib_keys are applied via eccodes after codes_new_from_message to avoid
+# earthkit clone() silently dropping key overrides.
+def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
+    [date, time] = datetime.split('-')
+    date, time = int(date), int(time)
+    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
+    levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
+    if channel.name == 'tp':
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
+        return ds[0], {'dataDate': date, 'dataTime': time}
+    elif channel.name in levtype_index_sfc.metadata("shortName") and (channel.level==None or channel.level=='' or int(channel.level) < 50):
+        idx = levtype_index_sfc.metadata("shortName").index(channel.name)
+        levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
+        levelval = levtype_index_sfc[idx].metadata("level")
+        param_id = levtype_index_sfc[idx].metadata("paramId")
+        try:
+            ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        except FileNotFoundError as e:
+            logging.warning(f'Channel {channel.name} not found in GRIB templates: {e}')
+            logging.warning(f'Skipping channel {channel.name}')
+            return None
+        return ds[0], {'paramId': param_id, 'level': levelval, 'dataDate': date, 'dataTime': time}
+    elif channel.name in levtype_index_pl.metadata("shortName") and channel.level:
+        levtype='isobaricInhPa'
+        idx = levtype_index_pl.metadata("shortName").index(channel.name)
+        param_id = levtype_index_pl[idx].metadata("paramId")
+        ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
+        return ds[0], {'paramId': param_id, 'level': int(channel.level), 'dataDate': date, 'dataTime': time}
+    else:
+        logging.warning(f'channel {channel.name} not found in grib index; skipping')
+        return None
+
+
+def pad_image(image, padding_margin, fill_value):
+    new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
+    new_image[padding_margin:-padding_margin, padding_margin:-padding_margin] = image
+    return new_image
 
 
 def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
@@ -312,3 +551,4 @@ def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
     vmin = min(all_values)
     vmax = max(all_values)
     return vmin, vmax
+    

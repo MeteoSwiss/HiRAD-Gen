@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results_as_torch
+from hirad.utils.inference_utils import save_results
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
@@ -106,7 +106,9 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in diffusion_model_args:
             diffusion_model_args["amp_mode"] = False
-        use_apex_gn = diffusion_model_args.get("use_apex_gn", False)
+        use_apex_gn = diffusion_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
+        #use_apex_gn = False
+        #diffusion_model_args["use_apex_gn"] = use_apex_gn
 
         net_res = EDMPrecondSuperResolution(**diffusion_model_args)
 
@@ -138,7 +140,9 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in regression_model_args:
             regression_model_args["amp_mode"] = False
-        use_apex_gn_reg = regression_model_args.get("use_apex_gn", False)
+        use_apex_gn_reg = regression_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
+        #use_apex_gn_reg = False
+        #regression_model_args["use_apex_gn"] = use_apex_gn_reg
 
         net_reg = UNet(**regression_model_args)
 
@@ -197,7 +201,12 @@ def main(cfg: DictConfig) -> None:
     generator.initialize_sampler(cfg.sampler.type, **sampler_params)
     
     # generate images
-    output_path = getattr(cfg.generation.io, "output_path", "./outputs")
+    _io_cfg = getattr(cfg.generation, "io", None)
+    output_path = getattr(_io_cfg, "output_path", "./outputs")
+    output_format = getattr(_io_cfg, "output_format", "torch")
+    if output_format not in ['torch', 'grib', 'both']:
+        raise ValueError(f'Invalid output format {output_format}, must be \'torch\', \'grib\' or \'both\'')
+    grib_template_path = getattr(_io_cfg, "grib_template_path", "")
     logger0.info(f"Generating images, saving results to {output_path}...")
     batch_size = 1
     warmup_steps = min(len(times) - 1, 2)
@@ -302,6 +311,7 @@ def main(cfg: DictConfig) -> None:
                         )
                         if dataset.trim_edge > 0:
                             image_tar = image_tar[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
+                        #image_tar = image_tar.flip(-2)  # May be needed
                     else:
                         image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())
                     if lead_time_label:
@@ -346,13 +356,16 @@ def main(cfg: DictConfig) -> None:
                     if dist.rank == 0:
                         writer_threads.append(
                             writer_executor.submit(
-                                save_results_as_torch,
+                                save_results,
                                 savedir,
                                 times[sampler[time_index]],
+                                dataset,
                                 prediction_ensemble,
                                 image_tar,
                                 baseline,
                                 mean_pred if image_reg is not None else None,
+                                output_format=output_format,
+                                grib_template_path=grib_template_path,
                             )
                         )
                     t_write_end = _t()
