@@ -13,8 +13,8 @@
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/train_dit.log
-#SBATCH --error=./logs/train_dit.err
+#SBATCH --output=./logs/train_dit_new.log
+#SBATCH --error=./logs/train_dit_new.err
 
 ### ENVIRONMENT ####
 #SBATCH -A c38
