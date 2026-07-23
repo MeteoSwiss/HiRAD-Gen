@@ -563,6 +563,7 @@ class DiffusionLoss:
         P_mean: float = -1.2,
         P_std: float = 1.2,
         sigma_data: float = 0.5,
+        channel_weights: Optional[list] = None,
     ):
         """
         Arguments
@@ -575,10 +576,30 @@ class DiffusionLoss:
 
         sigma_data : float, optional
             Standard deviation for data weighting, by default 0.5.
+
+        channel_weights : Optional[list], optional
+            Per-output-channel multipliers applied to the loss (e.g. [1, 1, 1, 3]
+            to upweight precipitation). None (default) applies uniform weighting.
         """
         self.P_mean = P_mean
         self.P_std = P_std
         self.sigma_data = sigma_data
+        self.channel_weights = channel_weights
+        self._channel_weights_t = None
+
+    def apply_channel_weights(self, loss: torch.Tensor) -> torch.Tensor:
+        """Multiply the per-pixel loss (B, C, H, W) by the per-channel weights."""
+        if self.channel_weights is None:
+            return loss
+        if (
+            self._channel_weights_t is None
+            or self._channel_weights_t.device != loss.device
+        ):
+            # list() handles plain lists and OmegaConf ListConfig alike
+            self._channel_weights_t = torch.as_tensor(
+                list(self.channel_weights), device=loss.device, dtype=loss.dtype
+            ).view(1, -1, 1, 1)
+        return loss * self._channel_weights_t
 
     def get_noise_params(self, y: torch.Tensor) -> torch.Tensor:
         """
@@ -707,4 +728,318 @@ class DiffusionLoss:
 
         loss = weight * ((D_yn - y) ** 2)
 
-        return loss
+        return self.apply_channel_weights(loss)
+
+
+class AnchoredDiffusionLoss(DiffusionLoss):
+    """
+    Anchored (residual) EDM loss for the DiT: CorrDiff's two-stage mechanism on the
+    diffusion-transformer backbone.
+
+    A frozen pre-trained regression network provides a deterministic mean; the
+    diffusion target is the per-channel STANDARDIZED residual
+
+        y = (img_clean - y_mean) / residual_stds
+
+    so every channel is ~unit variance and scalar ``sigma_data=1.0`` is correct.
+    The regression mean is channel-wise concatenated to the conditioning
+    (`hr_mean_conditioning`, as in :class:`ResidualLoss`), while the date embedding
+    stays a global AdaLN `condition` vector (as in :class:`DiffusionLoss`).
+
+    At inference the prediction is reconstructed as
+    ``regression_mean + residual_stds * D_x`` before denormalization.
+
+    The regression input is built exactly as in :class:`ResidualLoss` /
+    :class:`RegressionLoss`: cat(img_lr, static_channels, date broadcast to HxW).
+    """
+
+    def __init__(
+        self,
+        regression_net: torch.nn.Module,
+        residual_stds: list,
+        P_mean: float = 0.0,
+        P_std: float = 1.2,
+        sigma_data: float = 1.0,
+        hr_mean_conditioning: bool = True,
+        channel_weights: Optional[list] = None,
+    ):
+        """
+        Arguments
+        ----------
+        regression_net : torch.nn.Module
+            Frozen pre-trained regression network (eval, requires_grad=False).
+            Same call signature as in :class:`ResidualLoss`.
+
+        residual_stds : list
+            Per-output-channel std of (normalized target - regression output),
+            measured over a season-spanning training-period sample. The residual is
+            divided by these so the diffusion target is unit variance per channel.
+
+        P_mean, P_std : float, optional
+            EDM noise-level distribution; defaults follow :class:`ResidualLoss`
+            (P_mean=0.0), which trains harder at high sigma than the plain
+            DiffusionLoss default (-1.2).
+
+        sigma_data : float, optional
+            1.0 by default -- correct for the standardized residual. Must match the
+            EDMPrecondSuperResolution preconditioner.
+
+        hr_mean_conditioning : bool, optional
+            Concatenate the regression mean to the conditioning channels.
+
+        channel_weights : Optional[list], optional
+            Per-channel loss multipliers (see :class:`DiffusionLoss`).
+        """
+        super().__init__(P_mean=P_mean, P_std=P_std, sigma_data=sigma_data,
+                         channel_weights=channel_weights)
+        self.regression_net = regression_net
+        self.residual_stds = residual_stds
+        self._residual_stds_t = None
+        self.hr_mean_conditioning = hr_mean_conditioning
+        # Compatibility with the validation loop, which resets loss_fn.y_mean.
+        self.y_mean = None
+
+    def _stds(self, ref: torch.Tensor) -> torch.Tensor:
+        if self._residual_stds_t is None or self._residual_stds_t.device != ref.device:
+            self._residual_stds_t = torch.as_tensor(
+                list(self.residual_stds), device=ref.device, dtype=torch.float32
+            ).view(1, -1, 1, 1)
+        return self._residual_stds_t.to(ref.dtype)
+
+    def __call__(
+        self,
+        net: torch.nn.Module,
+        img_clean: torch.Tensor,
+        img_lr: torch.Tensor,
+        static_channels: Optional[torch.Tensor] = None,
+        date_embedding: Optional[torch.Tensor] = None,
+        lead_time_label: Optional[torch.Tensor] = None,
+        use_apex_gn: bool = False,
+        **kwargs,
+    ) -> torch.Tensor:
+        # Safety check: enforce shapes
+        if (
+            img_clean.shape[0] != img_lr.shape[0]
+            or img_clean.shape[2:] != img_lr.shape[2:]
+        ):
+            raise ValueError(
+                f"Shape mismatch between img_clean {img_clean.shape} and "
+                f"img_lr {img_lr.shape}. "
+                f"Batch size, height and width must match."
+            )
+
+        # ---- Frozen regression mean (input built exactly as in ResidualLoss) ----
+        y_lr_res = img_lr
+        if static_channels is not None:
+            y_lr_res = torch.cat(
+                (y_lr_res, static_channels.expand(y_lr_res.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+        if date_embedding is not None:
+            date_embedding_reg = date_embedding[:, :, None, None].expand(
+                *date_embedding.shape[:2], *y_lr_res.shape[2:]
+            )
+            if use_apex_gn:
+                date_embedding_reg = date_embedding_reg.to(
+                    y_lr_res.dtype, non_blocking=True
+                ).to(memory_format=torch.channels_last)
+            else:
+                date_embedding_reg = date_embedding_reg.to(
+                    y_lr_res.dtype, non_blocking=True
+                ).contiguous()
+            y_lr_res = torch.cat((y_lr_res, date_embedding_reg), dim=1)
+
+        with torch.no_grad():
+            if lead_time_label is not None:
+                y_mean = self.regression_net(
+                    torch.zeros_like(img_clean), y_lr_res,
+                    lead_time_label=lead_time_label,
+                )
+            else:
+                y_mean = self.regression_net(
+                    torch.zeros_like(img_clean), y_lr_res,
+                )
+        self.y_mean = y_mean
+
+        # ---- Standardized residual target ----
+        y = (img_clean - y_mean) / self._stds(img_clean)
+
+        # ---- Conditioning: [y_mean, img_lr, static]; date stays a condition vector ----
+        y_lr = torch.cat((y_mean, img_lr), dim=1) if self.hr_mean_conditioning else img_lr
+        if static_channels is not None:
+            y_lr = torch.cat(
+                (y_lr, static_channels.expand(y_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+
+        condition = None
+        if date_embedding is not None:
+            condition = date_embedding
+        if lead_time_label is not None:
+            condition = (
+                torch.cat((condition, lead_time_label), dim=1)
+                if condition is not None else lead_time_label
+            )
+
+        n, sigma, weight = self.get_noise_params(y)
+
+        D_yn = net(
+            y + n,
+            y_lr,
+            sigma,
+            condition=condition,
+        )
+
+        loss = weight * ((D_yn - y) ** 2)
+
+        return self.apply_channel_weights(loss)
+
+
+class FlowMatchingLoss:
+    """Rectified-flow (linear-path conditional flow matching) loss for the DiT.
+
+    The flow-matching counterpart of :class:`DiffusionLoss`. Instead of EDM
+    denoising score matching, it trains the network to predict the constant
+    velocity of the linear probability path connecting data (``t=0``) and
+    Gaussian noise (``t=1``):
+
+        x_t = (1 - t) * img_clean + t * eps,    eps ~ N(0, I)
+        v_target = d x_t / d t = eps - img_clean
+
+    The network (:class:`~hirad.models.FlowMatchingSuperResolution` wrapping a
+    DiT) predicts ``v_theta(x_t, t)`` and the loss is a plain (unweighted) MSE
+    ``||v_theta - v_target||^2``.
+
+    Conditioning mirrors :class:`DiffusionLoss` exactly: ``y_lr =
+    cat(img_lr, static_channels)`` is the spatial conditioning that gets
+    channel-concatenated to ``x_t`` inside the wrapper, while the date / lead-time
+    embedding is passed as a global AdaLN ``condition`` vector.
+
+    Timestep sampling follows Stable Diffusion 3 (Esser et al. 2024): ``t`` is
+    drawn from a logit-normal distribution ``t = sigmoid(m + s * N(0,1))`` which
+    concentrates samples near the middle of the path. Set
+    ``time_sampling="uniform"`` for the plain rectified-flow schedule.
+
+    Attributes
+    ----------
+    time_sampling : str
+        ``"logit_normal"`` (default) or ``"uniform"``.
+    logit_m, logit_s : float
+        Location/scale of the logit-normal timestep distribution (SD3 defaults
+        ``m=0.0``, ``s=1.0``). Ignored when ``time_sampling="uniform"``.
+    channel_weights : Optional[list]
+        Per-output-channel multipliers applied to the loss, e.g. ``[1, 1, 1, 3]``
+        to upweight precipitation. ``None`` applies uniform weighting.
+    """
+
+    def __init__(
+        self,
+        time_sampling: str = "logit_normal",
+        logit_m: float = 0.0,
+        logit_s: float = 1.0,
+        channel_weights: Optional[list] = None,
+    ):
+        if time_sampling not in ("logit_normal", "uniform"):
+            raise ValueError(
+                f"time_sampling must be 'logit_normal' or 'uniform', got {time_sampling!r}"
+            )
+        self.time_sampling = time_sampling
+        self.logit_m = logit_m
+        self.logit_s = logit_s
+        self.channel_weights = channel_weights
+        self._channel_weights_t = None
+
+    def apply_channel_weights(self, loss: torch.Tensor) -> torch.Tensor:
+        """Multiply the per-pixel loss (B, C, H, W) by the per-channel weights."""
+        if self.channel_weights is None:
+            return loss
+        if (
+            self._channel_weights_t is None
+            or self._channel_weights_t.device != loss.device
+        ):
+            self._channel_weights_t = torch.as_tensor(
+                list(self.channel_weights), device=loss.device, dtype=loss.dtype
+            ).view(1, -1, 1, 1)
+        return loss * self._channel_weights_t
+
+    def sample_time(
+        self, batch_size: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        """Draw flow times ``t`` of shape (B, 1, 1, 1) in (0, 1)."""
+        if self.time_sampling == "uniform":
+            return torch.rand([batch_size, 1, 1, 1], device=device, dtype=dtype)
+        # logit-normal (SD3)
+        rnd = torch.randn([batch_size, 1, 1, 1], device=device, dtype=dtype)
+        return torch.sigmoid(self.logit_m + self.logit_s * rnd)
+
+    def __call__(
+        self,
+        net: torch.nn.Module,
+        img_clean: torch.Tensor,
+        img_lr: torch.Tensor,
+        static_channels: Optional[torch.Tensor] = None,
+        date_embedding: Optional[torch.Tensor] = None,
+        lead_time_label: Optional[torch.Tensor] = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        """Compute the per-pixel rectified-flow velocity-matching loss.
+
+        Parameters
+        ----------
+        net : torch.nn.Module
+            Flow-matching network. Expected signature
+            ``net(x_t, y_lr, t, condition=...)`` returning the predicted velocity
+            of shape (B, C_hr, H, W).
+        img_clean : torch.Tensor
+            High-resolution target of shape (B, C_hr, H, W).
+        img_lr : torch.Tensor
+            Low-resolution conditioning of shape (B, C_lr, H, W).
+        static_channels : Optional[torch.Tensor]
+            Static channels of shape (1, C_static, H, W), by default None.
+        date_embedding : Optional[torch.Tensor]
+            Date embedding of shape (B, C_date), by default None.
+        lead_time_label : Optional[torch.Tensor]
+            Lead-time embedding, by default None.
+
+        Returns
+        -------
+        torch.Tensor
+            Per-pixel loss of shape (B, C_hr, H, W) (no reduction).
+        """
+        if (
+            img_clean.shape[0] != img_lr.shape[0]
+            or img_clean.shape[2:] != img_lr.shape[2:]
+        ):
+            raise ValueError(
+                f"Shape mismatch between img_clean {img_clean.shape} and "
+                f"img_lr {img_lr.shape}. Batch size, height and width must match."
+            )
+
+        y = img_clean
+        y_lr = img_lr
+        if static_channels is not None:
+            y_lr = torch.cat(
+                (y_lr, static_channels.expand(y_lr.shape[0], *static_channels.shape[1:])),
+                dim=1,
+            )
+
+        # Global AdaLN condition vector (date + optional lead-time)
+        condition = None
+        if date_embedding is not None:
+            condition = date_embedding
+        if lead_time_label is not None:
+            condition = (
+                torch.cat((condition, lead_time_label), dim=1)
+                if condition is not None else lead_time_label
+            )
+
+        # Linear probability path: t=0 -> data, t=1 -> noise
+        t = self.sample_time(y.shape[0], y.device, y.dtype)
+        eps = torch.randn_like(y)
+        x_t = (1.0 - t) * y + t * eps
+        v_target = eps - y
+
+        v_pred = net(x_t, y_lr, t, condition=condition)
+
+        loss = (v_pred - v_target) ** 2
+        return self.apply_channel_weights(loss)

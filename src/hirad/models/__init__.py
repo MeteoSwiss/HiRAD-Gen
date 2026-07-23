@@ -11,4 +11,5 @@ from .layers import (
 from .song_unet import SongUNet, SongUNetPosEmbd
 from .unet import UNet
 from .preconditioning import EDMPrecondSuperResolution
+from .flow_matching import FlowMatchingSuperResolution
 from .diffusion_transformer import DiT

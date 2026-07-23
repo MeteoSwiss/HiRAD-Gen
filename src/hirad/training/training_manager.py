@@ -8,7 +8,7 @@ import json
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger
 from hirad.datasets import DownscalingDataset
-from hirad.models import UNet, EDMPrecondSuperResolution
+from hirad.models import UNet, EDMPrecondSuperResolution, FlowMatchingSuperResolution
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.utils.checkpoint import load_checkpoint
 
@@ -153,6 +153,44 @@ class TrainingManagerBase(ABC):
 
         return average_valid_loss
 
+    def load_regression_model(self, regression_checkpoint_path: str):
+        """Load the frozen pre-trained regression model (for ResidualLoss /
+        AnchoredDiffusionLoss). Lives on the base class because both the CorrDiff
+        diffusion and the anchored DiT managers need it."""
+
+        if not os.path.isdir(regression_checkpoint_path):
+            raise FileNotFoundError(
+                f"Expected this regression checkpoint but not found: {regression_checkpoint_path}"
+            )
+        #TODO make regression model loading more robust (model type is both in rergession_checkpoint_path and regression_name)
+        #TODO add the option to choose epoch to load from / regression_checkpoint_path is now a folder
+        regression_model_args_path = os.path.join(regression_checkpoint_path, 'model_args.json')
+        if not os.path.isfile(regression_model_args_path):
+            raise FileNotFoundError(f"Missing config file at '{regression_model_args_path}'.")
+
+        with open(regression_model_args_path, 'r') as f:
+            regression_model_args = json.load(f)
+
+        regression_model_args.update({
+            "use_apex_gn": self.use_apex_gn,
+            "profile_mode": getattr(self, "profile_mode", False),
+            "amp_mode": self.enable_amp,
+        })
+
+        regression_net = UNet(**regression_model_args)
+
+        _ = load_checkpoint(
+            path=regression_checkpoint_path,
+            model=regression_net,
+            device=self.dist.device
+        )
+        regression_net.eval().requires_grad_(False).to(self.dist.device)
+        if self.use_apex_gn:
+            regression_net.to(memory_format=torch.channels_last)
+        self.logger.success("Loaded the pre-trained regression model")
+
+        return regression_net
+
 
 class TrainingManagerCorrDiff(TrainingManagerBase):
     def __init__(
@@ -258,44 +296,6 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
 
         return model, model_args
-
-    def load_regression_model(self, regression_checkpoint_path: str):
-        """Load the regression model for the residual loss if applicable."""
-
-        if not os.path.isdir(regression_checkpoint_path):
-            raise FileNotFoundError(
-                f"Expected this regression checkpoint but not found: {regression_checkpoint_path}"
-            )
-        #TODO make regression model loading more robust (model type is both in rergession_checkpoint_path and regression_name)
-        #TODO add the option to choose epoch to load from / regression_checkpoint_path is now a folder
-        regression_model_args_path = os.path.join(regression_checkpoint_path, 'model_args.json')
-        if not os.path.isfile(regression_model_args_path):
-            raise FileNotFoundError(f"Missing config file at '{regression_model_args_path}'.")
-
-        with open(regression_model_args_path, 'r') as f:
-            regression_model_args = json.load(f)
-
-        regression_model_args.update({
-            "use_apex_gn": self.use_apex_gn,
-            "profile_mode": self.profile_mode,
-            "amp_mode": self.enable_amp,
-        })
-
-        regression_net = UNet(**regression_model_args)
-
-        _ = load_checkpoint(
-            path=regression_checkpoint_path,
-            model=regression_net,
-            device=self.dist.device
-        )
-        regression_net.eval().requires_grad_(False).to(self.dist.device)
-        if self.use_apex_gn:
-            regression_net.to(memory_format=torch.channels_last)
-        self.logger.success("Loaded the pre-trained regression model")
-
-        return regression_net
-
-
 
 class TrainingManagerDiT(TrainingManagerBase):
     def __init__(
@@ -453,3 +453,117 @@ class TrainingManagerDiT(TrainingManagerBase):
             img_lr = img_lr.to(self.dist.device).to(self.input_dtype).contiguous()
 
         return img_clean, img_lr, date_embedding
+
+
+class TrainingManagerAnchoredDiT(TrainingManagerDiT):
+    """DiT conditioned on a frozen regression mean (anchored / residual formulation).
+
+    Identical to TrainingManagerDiT except:
+      * the conditioning gains the regression mean's channels
+        (img_in_channels += img_out_channels when hr_mean_conditioning), and
+      * the anchor metadata (residual_stds, hr_mean_conditioning) is persisted in the
+        returned model_args (-> model_args.json) but POPPED before constructing
+        EDMPrecondSuperResolution -- it is consumed by AnchoredDiffusionLoss and the
+        anchored generator, not by the network. Inference must pop these keys too.
+    """
+
+    ANCHOR_META_KEYS = ("residual_stds", "hr_mean_conditioning")
+
+    def create_model(self, cfg_model_name: str, cfg_model_args: dict):
+        """Instantiate the anchored DiT."""
+        n_input_channels = len(self.dataset.input_channels())
+        n_static_channels = len(self.dataset.static_channels())
+        n_output_channels = len(self.dataset.output_channels())
+
+        cfg_model_args = dict(cfg_model_args or {})
+        anchor_meta = {
+            k: cfg_model_args.pop(k) for k in self.ANCHOR_META_KEYS if k in cfg_model_args
+        }
+        if "residual_stds" not in anchor_meta:
+            raise ValueError(
+                "anchored DiT requires model_args.residual_stds (per-channel std of "
+                "the regression residual, measured on a training-period sample)."
+            )
+        if len(anchor_meta["residual_stds"]) != n_output_channels:
+            raise ValueError(
+                f"model_args.residual_stds has {len(anchor_meta['residual_stds'])} entries "
+                f"but the dataset has {n_output_channels} output channels."
+            )
+        hr_mean_conditioning = anchor_meta.setdefault("hr_mean_conditioning", True)
+
+        img_in_channels = (n_input_channels + n_static_channels
+                           + self.n_prev_hr_frames * n_output_channels
+                           + (n_output_channels if hr_mean_conditioning else 0))
+        img_out_channels = n_output_channels
+
+        self.logger.info(
+            f"Creating model {cfg_model_name} with {img_in_channels} input channels "
+            f"({n_input_channels} ERA5, {n_static_channels} static, "
+            f"{n_output_channels if hr_mean_conditioning else 0} regression-mean, "
+            f"{self.n_prev_hr_frames * n_output_channels} prev_hr) "
+            f"and {img_out_channels} output channels."
+        )
+
+        model_args = {  # default parameters for all networks
+            "model_type": "DiT",
+            "img_in_channels": img_in_channels,
+            "img_out_channels": img_out_channels,
+            "img_resolution": list(self.img_shape),
+            "use_fp16": self.fp16,
+            "amp_mode": self.enable_amp,
+            "condition_dim": self.n_month_hour_channels,
+        }
+        model_args.update(cfg_model_args)
+
+        model = EDMPrecondSuperResolution(**model_args)
+
+        # Persist anchor metadata with the checkpoint so inference can reconstruct
+        # output = regression_mean + residual_stds * D_x without manual bookkeeping.
+        model_args.update(anchor_meta)
+
+        return model, model_args
+
+
+class TrainingManagerFlowMatchingDiT(TrainingManagerDiT):
+    """Plain single-stage DiT trained with rectified flow matching.
+
+    Identical to :class:`TrainingManagerDiT` except the network is wrapped in
+    :class:`~hirad.models.FlowMatchingSuperResolution` (velocity prediction, no EDM
+    preconditioning) instead of ``EDMPrecondSuperResolution``. Channel bookkeeping,
+    data loading and preprocessing are inherited unchanged, so the flow-matching DiT
+    consumes exactly the same conditioning as the EDM DiT.
+    """
+
+    def create_model(self, cfg_model_name: str, cfg_model_args: dict):
+        """Instantiate the flow-matching DiT."""
+        n_input_channels = len(self.dataset.input_channels())
+        n_static_channels = len(self.dataset.static_channels())
+        n_output_channels = len(self.dataset.output_channels())
+
+        img_in_channels = (n_input_channels + n_static_channels
+                           + self.n_prev_hr_frames * n_output_channels)
+        img_out_channels = n_output_channels
+
+        self.logger.info(
+            f"Creating model {cfg_model_name} (flow matching) with {img_in_channels} "
+            f"input channels ({n_input_channels} ERA5, {n_static_channels} static, "
+            f"{self.n_prev_hr_frames * n_output_channels} prev_hr) "
+            f"and {img_out_channels} output channels."
+        )
+
+        model_args = {  # default parameters for all networks
+            "model_type": "DiT",
+            "img_in_channels": img_in_channels,
+            "img_out_channels": img_out_channels,
+            "img_resolution": list(self.img_shape),
+            "use_fp16": self.fp16,
+            "amp_mode": self.enable_amp,
+            "condition_dim": self.n_month_hour_channels,
+        }
+
+        if cfg_model_args:  # override defaults from config file
+            model_args.update(cfg_model_args)
+
+        model = FlowMatchingSuperResolution(**model_args)
+
+        return model, model_args

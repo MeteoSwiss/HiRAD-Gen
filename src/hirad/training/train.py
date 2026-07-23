@@ -14,7 +14,7 @@ from hydra.utils import to_absolute_path
 # from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel
 import mlflow
-from torchinfo import summary
+# from torchinfo import summary
 
 from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
@@ -27,9 +27,9 @@ from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
 from hirad.utils.patching import RandomPatching2D
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.models import UNet
-from hirad.losses import ResidualLoss, RegressionLoss, DiffusionLoss
+from hirad.losses import ResidualLoss, RegressionLoss, DiffusionLoss, AnchoredDiffusionLoss, FlowMatchingLoss
 from hirad.datasets import init_train_valid_datasets_from_config, get_dataset_and_sampler_inference
-from hirad.training.training_manager import TrainingManagerCorrDiff, TrainingManagerDiT
+from hirad.training.training_manager import TrainingManagerCorrDiff, TrainingManagerDiT, TrainingManagerAnchoredDiT, TrainingManagerFlowMatchingDiT
 
 
 
@@ -210,10 +210,17 @@ def main(cfg: DictConfig) -> None:
         "logging_method": cfg.logging.get("method", None),
         "use_apex_gn": use_apex_gn,
     }
-    if cfg.model.name in {"diffusion_transformer"}:
+    if cfg.model.name in {"diffusion_transformer", "anchored_diffusion_transformer",
+                           "flow_matching_transformer"}:
         training_manager_args["n_prev_hr_frames"] = dataset_cfg.get("n_prev_hr_frames", 0)
         training_manager_args["prev_hr_dropout"] = cfg.training.hp.get("prev_hr_dropout", 0.0)
-        training_manager = TrainingManagerDiT(**training_manager_args)
+        if cfg.model.name == "anchored_diffusion_transformer":
+            manager_cls = TrainingManagerAnchoredDiT
+        elif cfg.model.name == "flow_matching_transformer":
+            manager_cls = TrainingManagerFlowMatchingDiT
+        else:
+            manager_cls = TrainingManagerDiT
+        training_manager = manager_cls(**training_manager_args)
     else:
         training_manager = TrainingManagerCorrDiff(
                                             **training_manager_args,
@@ -227,11 +234,14 @@ def main(cfg: DictConfig) -> None:
     # Create the model and move it to the appropriate device and memory format based on the optimization configuration
     model, model_args = training_manager.create_model(cfg.model.name, cfg.model.get("model_args", None))
 
-    logger0.info(f"Model attention backend: {model.model.attn_kwargs_forward}")
+    # attn_kwargs_forward is DiT-specific; the CorrDiff regression/diffusion UNets
+    # (SongUNetPosEmbd) don't have it, so only log it when present.
+    if hasattr(model.model, "attn_kwargs_forward"):
+        logger0.info(f"Model attention backend: {model.model.attn_kwargs_forward}")
 
     # Print the model summary
-    if dist.rank == 0:
-        summary(model, input_size=[(1, 4, *img_shape), (1, 13+1, *img_shape), (1,1)], device=dist.device)
+    # if dist.rank == 0:
+    #     summary(model, input_size=[(1, 4, *img_shape), (1, 13+1, *img_shape), (1,1)], device=dist.device)
 
     # raise NotImplementedError("Check if model_args are correct when using patching - img_in_channels should include global channels and lead time channels if applicable")
 
@@ -314,8 +324,51 @@ def main(cfg: DictConfig) -> None:
         )
     elif cfg.model.name == "regression":
         loss_fn = RegressionLoss()
-    elif cfg.model.name == "diffusion_transformer":
-        loss_fn = DiffusionLoss()
+    elif cfg.model.name in ("diffusion_transformer", "anchored_diffusion_transformer"):
+        # sigma_data must match the EDMPrecondSuperResolution preconditioner, which is
+        # built from the same model_args (and round-trips to model_args.json for inference).
+        # P_mean/P_std/channel_weights are training-signal knobs (cfg.training.hp); they
+        # are declared as null in the config ("use the loss's own default", which differs
+        # per family), so resolve None -> family default here.
+        def _hp(key, default):
+            v = cfg.training.hp.get(key, None)
+            return default if v is None else v
+
+        if cfg.model.name == "diffusion_transformer":
+            loss_fn = DiffusionLoss(
+                P_mean=_hp("P_mean", -1.2),
+                P_std=_hp("P_std", 1.2),
+                sigma_data=model_args.get("sigma_data", 0.5),
+                channel_weights=_hp("channel_weights", None),
+            )
+        else:
+            if regression_net is None:
+                raise ValueError(
+                    "anchored_diffusion_transformer requires "
+                    "cfg.training.io.regression_checkpoint_path (the frozen anchor)."
+                )
+            loss_fn = AnchoredDiffusionLoss(
+                regression_net=regression_net,
+                residual_stds=list(model_args["residual_stds"]),
+                P_mean=_hp("P_mean", 0.0),
+                P_std=_hp("P_std", 1.2),
+                sigma_data=model_args.get("sigma_data", 1.0),
+                hr_mean_conditioning=model_args.get("hr_mean_conditioning", True),
+                channel_weights=_hp("channel_weights", None),
+            )
+    elif cfg.model.name == "flow_matching_transformer":
+        # Rectified-flow loss. Time-sampling knobs live in cfg.training.hp (declared
+        # null there so they are CLI-overridable); resolve None -> FM defaults here.
+        def _hp(key, default):
+            v = cfg.training.hp.get(key, None)
+            return default if v is None else v
+
+        loss_fn = FlowMatchingLoss(
+            time_sampling=_hp("fm_time_sampling", "logit_normal"),
+            logit_m=_hp("fm_logit_m", 0.0),
+            logit_s=_hp("fm_logit_s", 1.0),
+            channel_weights=_hp("channel_weights", None),
+        )
 
     # Instantiate the optimizer
     optimizer = torch.optim.AdamW(

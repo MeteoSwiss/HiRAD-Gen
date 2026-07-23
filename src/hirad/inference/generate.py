@@ -13,8 +13,8 @@ from hirad.distributed import DistributedManager
 from hirad.utils.console import PythonLogger, RankZeroLoggingWrapper
 from concurrent.futures import ThreadPoolExecutor
 
-from hirad.models import EDMPrecondSuperResolution, UNet, DiT
-from hirad.inference import GeneratorCorrDiff, GeneratorDiT
+from hirad.models import EDMPrecondSuperResolution, FlowMatchingSuperResolution, UNet, DiT
+from hirad.inference import GeneratorCorrDiff, GeneratorDiT, GeneratorAnchoredDiT
 from hirad.utils.inference_utils import save_results_as_torch
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
@@ -115,6 +115,12 @@ def main(cfg: DictConfig) -> None:
         load_net_reg, load_net_res, load_model = True, True, False
     elif cfg.generation.inference_mode == "dit":
         load_net_reg, load_net_res, load_model = False, False, True
+    elif cfg.generation.inference_mode == "fm":
+        # single-stage flow-matching DiT (velocity model, ODE sampler)
+        load_net_reg, load_net_res, load_model = False, False, True
+    elif cfg.generation.inference_mode == "dit_anchored":
+        # frozen regression anchor + DiT residual model
+        load_net_reg, load_net_res, load_model = True, False, True
     else:
         raise ValueError(f"Invalid inference mode {cfg.generation.inference_mode}")
     use_apex_gn = False
@@ -196,7 +202,23 @@ def main(cfg: DictConfig) -> None:
             dit_model_args["amp_mode"] = False
         use_apex_gn = True
 
-        net_dit = EDMPrecondSuperResolution(**dit_model_args)
+        # Anchored-DiT metadata (persisted by TrainingManagerAnchoredDiT) is consumed
+        # by the generator, not the network — pop before construction.
+        anchored_meta = {
+            k: dit_model_args.pop(k)
+            for k in ("residual_stds", "hr_mean_conditioning")
+            if k in dit_model_args
+        }
+        if cfg.generation.inference_mode == "dit_anchored" and "residual_stds" not in anchored_meta:
+            raise ValueError(
+                f"inference_mode=dit_anchored but '{dit_model_args_path}' has no "
+                "residual_stds — is this checkpoint really an anchored DiT?"
+            )
+
+        if cfg.generation.inference_mode == "fm":
+            net_dit = FlowMatchingSuperResolution(**dit_model_args)
+        else:
+            net_dit = EDMPrecondSuperResolution(**dit_model_args)
 
         _ = load_checkpoint(
             path=dit_ckpt_path,
@@ -224,7 +246,17 @@ def main(cfg: DictConfig) -> None:
         if net_dit:
             net_dit = torch.compile(net_dit)
 
-    if net_reg is not None or net_res is not None:
+    if cfg.generation.inference_mode == "dit_anchored":
+        generator = GeneratorAnchoredDiT(
+            net_reg=net_reg,
+            net_dit=net_dit,
+            residual_stds=anchored_meta["residual_stds"],
+            batch_size=cfg.generation.seed_batch_size,
+            ensemble_size=cfg.generation.num_ensembles,
+            n_out_channels=img_out_channels,
+            dist=dist,
+        )
+    elif net_reg is not None or net_res is not None:
         generator = GeneratorCorrDiff(
             net_reg=net_reg,
             net_res=net_res,

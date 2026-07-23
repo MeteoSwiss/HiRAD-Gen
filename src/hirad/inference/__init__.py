@@ -1,3 +1,4 @@
 from .deterministic_sampler import deterministic_sampler
 from .stochastic_sampler import stochastic_sampler
-from .generator import GeneratorCorrDiff, GeneratorDiT
+from .flow_matching_sampler import flow_matching_sampler
+from .generator import GeneratorCorrDiff, GeneratorDiT, GeneratorAnchoredDiT

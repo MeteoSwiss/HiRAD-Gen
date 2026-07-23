@@ -12,7 +12,7 @@ stateless generation identical to generate.py.
 
 Usage
 -----
-python generate_autoregressive.py --config-name=generate_era_real_autoregressive
+python generate_autoregressive.py --config-name=generate generation=ardit
 """
 import hydra
 import os
@@ -150,10 +150,22 @@ def main(cfg: DictConfig) -> None:
     # but does NOT store n_prev_hr_frames explicitly in model_args.json.
     # We store it in the generation config instead so the user controls it.
     n_prev_hr_frames = cfg.generation.get("n_prev_hr_frames", 0)
+    # How the previous-HR condition is sourced each step (diagnostic switch):
+    #   "self"   – the model's own previous prediction (default; true AR rollout)
+    #   "zeros"  – always unconditional (drop the prev-HR condition every step);
+    #              isolates whether the AR condition causes the diurnal damping
+    #   "target" – teacher-force with the TRUE previous-HR target; the gap vs
+    #              "self" quantifies exposure bias (train/inference mismatch)
+    prev_hr_source = cfg.generation.get("prev_hr_source", "self")
+    if n_prev_hr_frames > 0 and prev_hr_source not in ("self", "zeros", "target"):
+        raise ValueError(
+            f"generation.prev_hr_source must be one of 'self', 'zeros', 'target'; "
+            f"got '{prev_hr_source}'."
+        )
     if n_prev_hr_frames > 0:
         logger0.info(
-            f"Autoregressive mode: conditioning on previous {n_prev_hr_frames} HR frame(s). "
-            f"First step will use zeros (unconditional)."
+            f"Autoregressive mode: conditioning on previous {n_prev_hr_frames} HR frame(s) "
+            f"[prev_hr_source='{prev_hr_source}']. First step is always zeros (unconditional)."
         )
     else:
         logger0.info("Standard (non-autoregressive) mode: no previous-HR conditioning.")
@@ -381,14 +393,31 @@ def main(cfg: DictConfig) -> None:
                     t_gen_end = _t()
 
                     # ---- Update prev_hr for the next step ----
-                    # Each rank already produced its own output slice BEFORE the
-                    # gather (stored as generator._last_local_output).  We use
-                    # that directly as the per-member prev_hr — no inter-rank
-                    # broadcast needed.  GeneratorDiT.generate() receives it as
-                    # an already-local tensor and concatenates it to img_lr for
-                    # the samples on that rank only.
                     if n_prev_hr_frames > 0:
-                        prev_hr = generator._last_local_output
+                        if prev_hr_source == "self":
+                            # True AR rollout: each rank already produced its own
+                            # output slice BEFORE the gather (stored as
+                            # generator._last_local_output). Use it directly as the
+                            # per-member prev_hr — no inter-rank broadcast needed.
+                            prev_hr = generator._last_local_output
+                        elif prev_hr_source == "target":
+                            # Teacher-forcing diagnostic: condition the next step on
+                            # the TRUE current-step target, preprocessed exactly as
+                            # in training (training_manager.load_and_preprocess_batch):
+                            # normalize_output of the flipped regridded/trimmed target.
+                            # Shape (1, C, H, W) → shared across all members.
+                            prev_hr_tf = dataset.normalize_output(
+                                image_tar.to(dist.device, dtype=input_dtype).flip(-2)
+                            )
+                            if use_apex_gn:
+                                prev_hr_tf = prev_hr_tf.to(memory_format=torch.channels_last)
+                            else:
+                                prev_hr_tf = prev_hr_tf.contiguous()
+                            prev_hr = prev_hr_tf
+                        elif prev_hr_source == "zeros":
+                            # Unconditional every step: leave prev_hr as the initial
+                            # zeros so the AR condition is never supplied.
+                            pass
 
                     # ---- Post-process and save (rank 0 only) ----
                     t_postproc_start = _t()

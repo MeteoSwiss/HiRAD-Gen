@@ -10,7 +10,7 @@ from torch.distributed import gather
 from hirad.utils.inference_utils import regression_step, diffusion_step
 from hirad.distributed import DistributedManager
 from hirad.utils.patching import GridPatching2D
-from hirad.inference import stochastic_sampler, deterministic_sampler
+from hirad.inference import stochastic_sampler, deterministic_sampler, flow_matching_sampler
 
 
 def _sync_t() -> float:
@@ -54,6 +54,8 @@ class GeneratorBase():
             )
         elif sampler_type == "stochastic":
             self.sampler = partial(stochastic_sampler, patching=self.patching, **sampler_args)
+        elif sampler_type == "flow_matching":
+            self.sampler = partial(flow_matching_sampler, patching=self.patching, **sampler_args)
         else:
             raise ValueError(f"Unknown sampling method {sampler_type}")
 
@@ -201,6 +203,154 @@ class GeneratorCorrDiff(GeneratorBase):
                 if self.inference_mode != "regression":
                     return image_out, image_reg[0:1,::]
                 return image_out, None
+
+class GeneratorAnchoredDiT(GeneratorBase):
+    """Anchored DiT (EXP3): frozen regression mean + DiT residual diffusion.
+
+    Runs the regression exactly like GeneratorCorrDiff, conditions the DiT on
+    [mean_hr, img_lr, static] (the stochastic_sampler's mean_hr path — identical
+    order to AnchoredDiffusionLoss training) with the date embedding as the AdaLN
+    `condition` vector, then reconstructs
+
+        output = regression_mean + residual_stds * sampled_residual
+
+    since the DiT was trained on the per-channel STANDARDIZED residual.
+    """
+
+    def __init__(self,
+                net_reg: torch.nn.Module,
+                net_dit: torch.nn.Module,
+                residual_stds: list,
+                batch_size: int,
+                ensemble_size: int,
+                n_out_channels: int,
+                dist: DistributedManager):
+        super().__init__(
+            batch_size=batch_size,
+            ensemble_size=ensemble_size,
+            n_out_channels=n_out_channels,
+            dist=dist
+        )
+        self.net_reg = net_reg
+        self.net_dit = net_dit
+        self.residual_stds = list(residual_stds)
+        self._res_std_t: Optional[torch.Tensor] = None
+        # initialize_sampler's deterministic-sampler check reads this.
+        self.hr_mean_conditioning = True
+
+    def generate(self, image_lr, static_channels=None, date_embedding=None,
+                 lead_time_label=None, randomize=False, random_seed=None,
+                 use_apex_gn=True, skip_timing=False):
+        with nvtx.annotate("generate_fn", color="green"):
+            # (1, C, H, W)
+            img_shape = image_lr.shape[-2:]
+
+            _step_timings: dict = {} if not skip_timing else None
+            _t = _sync_t if not skip_timing else (lambda: 0.0)
+
+            # ---- Frozen regression mean (identical to GeneratorCorrDiff) ----
+            with nvtx.annotate("regression_model", color="yellow"):
+                _t0 = _t()
+                image_reg = regression_step(
+                    net=self.net_reg,
+                    img_lr=image_lr,
+                    latents_shape=(
+                        self.batch_size,
+                        self.n_out_channels,
+                        img_shape[0],
+                        img_shape[1],
+                    ),
+                    lead_time_label=lead_time_label,
+                    static_channels=static_channels,
+                    date_embedding=date_embedding,
+                    use_apex_gn=use_apex_gn,
+                    _timings=_step_timings,
+                )
+                if not skip_timing:
+                    self._timings["regression"] += _t() - _t0
+                    self._timing_counts["regression"] += 1
+            mean_hr = image_reg[0:1]
+
+            if randomize:
+                if random_seed is not None:
+                    np.random.seed((random_seed) % (1 << 31))
+                seeds = np.random.randint(0, 1 << 31, size=self.ensemble_size)
+                self.get_rank_batches(seeds=seeds)
+
+            # Date embedding goes to the DiT as the AdaLN condition vector
+            # (matches AnchoredDiffusionLoss training).
+            model_args = {}
+            if date_embedding is not None:
+                model_args = {"condition": date_embedding}
+
+            # ---- Residual diffusion, conditioned on [mean_hr, img_lr, static] ----
+            with nvtx.annotate("anchored DiT model", color="purple"):
+                _t0 = _t()
+                image_res = diffusion_step(
+                    net=self.net_dit,
+                    sampler_fn=self.sampler,
+                    img_shape=img_shape,
+                    img_out_channels=self.n_out_channels,
+                    rank_batches=self.rank_batches,
+                    img_lr=image_lr.expand(
+                        self.batch_size, -1, -1, -1
+                    ).to(memory_format=torch.channels_last),
+                    rank=self.dist.rank,
+                    device=image_lr.device,
+                    mean_hr=mean_hr,
+                    static_channels=static_channels,
+                    use_apex_gn=use_apex_gn,
+                    additional_model_args=model_args,
+                    _timings=_step_timings,
+                )
+                if not skip_timing:
+                    self._timings["diffusion"] += _t() - _t0
+                    self._timing_counts["diffusion"] += 1
+
+            if not skip_timing and _step_timings:
+                for k, v in _step_timings.items():
+                    self._timings[k] += v
+                    self._timing_counts[k] += 1
+
+            # ---- Un-standardize the residual and add the mean ----
+            if self._res_std_t is None or self._res_std_t.device != image_res.device:
+                self._res_std_t = torch.as_tensor(
+                    self.residual_stds, device=image_res.device, dtype=torch.float32
+                ).view(1, -1, 1, 1)
+            image_out = mean_hr + self._res_std_t.to(image_res.dtype) * image_res
+
+            # Gather tensors on rank 0
+            if self.dist.world_size > 1:
+                if self.dist.rank == 0:
+                    gathered_tensors = [
+                        torch.zeros_like(
+                            image_out, dtype=image_out.dtype, device=image_out.device
+                        )
+                        for _ in range(self.dist.world_size)
+                    ]
+                else:
+                    gathered_tensors = None
+
+                _t0 = _t()
+                torch.distributed.barrier()
+                gather(
+                    image_out,
+                    gather_list=gathered_tensors if self.dist.rank == 0 else None,
+                    dst=0,
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                if not skip_timing:
+                    self._timings["gather"] += _t() - _t0
+                    self._timing_counts["gather"] += 1
+
+                if self.dist.rank == 0:
+                    return torch.cat(gathered_tensors), image_reg[0:1, ::]
+                else:
+                    return None, None
+            else:
+                return image_out, image_reg[0:1, ::]
+
 
 class GeneratorDiT(GeneratorBase):
     def __init__(self,

@@ -1,1 +1,1 @@
-from .loss import ResidualLoss, RegressionLoss, DiffusionLoss
+from .loss import ResidualLoss, RegressionLoss, DiffusionLoss, AnchoredDiffusionLoss, FlowMatchingLoss
