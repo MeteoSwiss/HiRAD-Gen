@@ -1,5 +1,5 @@
 # Path to the inference output directory
-inference_output_dir: /users/pstamenk/HiRAD-Gen/outputs/generation/generation_era_real_dit_cosine_lr_18.75m
+inference_output_dir: /capstor/scratch/cscs/pstamenk/outputs/generation/corrdiff_euler_JJA2023
 results_dir_name: 'evaluation_maps'
 
 # Constants for evaluation depend on dataset specifics and should be modified accordingly
@@ -25,7 +25,13 @@ width: 1088
 # If you don't want to evaluate all generated samples, you can specify a range of time steps to evaluate. 
 # This is useful for debugging or if you only want to evaluate a subset of the generated data.
 # Make sure that generated samples are available for the specified time steps.
-# times_range: ['20200721-1900','20200721-1900',1]
+# times_range: ['20230824-1400','20230824-1500',1]
 
 # List of channels to evaluate/plot - comment out if all channels are to be used
 # plot_channels:  ['2t', '10u', '10v', 'tp', 't_700', 'u_700', 'v_700', 'z_700', 'q_700', 'w_700']
+
+# Set to false to skip MAE/ME error maps (only plot raw fields)
+plot_errors: False
+
+# Set to false to skip derived wind fields (FF10m wind speed, DD10m wind direction)
+plot_wind_derived: False

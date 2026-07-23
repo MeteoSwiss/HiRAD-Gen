@@ -1,0 +1,26 @@
+# Snapshot config for the flow-matching DiT benchmark generation.
+# Same constants as eval_real.yaml; only inference_output_dir + times_range differ.
+inference_output_dir: /users/pstamenk/HiRAD-Gen/outputs/generation/dit_fm_bench
+results_dir_name: 'evaluation_maps'
+
+conv_factor_hourly: 1000
+conv_factor: 24000
+wet_threshold: 0.1
+log_interval: 24
+land_sea_mask_path: '/capstor/store/cscs/pasc/c38/real_grid_info/lsm_real.npy'
+
+lat_start: -4.42
+lat_end: 3.36
+lat_step: 0.01
+lon_start: -6.82
+lon_end: 4.80
+lon_step: 0.01
+relax_zone: 41
+height: 704
+width: 1088
+
+times_range: ['20230726-1600', '20230726-1700', 1]
+
+# Plot pred-target error maps too (diagnostic snapshot).
+plot_errors: True
+plot_wind_derived: False

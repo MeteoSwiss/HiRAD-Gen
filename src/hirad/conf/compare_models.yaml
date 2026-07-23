@@ -1,0 +1,62 @@
+# Multi-model overlay + scoreboard config for hirad.eval.compare_models.
+#
+# Only models whose generation dirs still contain the per-timestep raw tensors
+# (<ts>-predictions / <ts>-target) can be included. NOTE: CorrDiff's raw tensors
+# under generate_era_real_anemoi_JJA_2023 were cleaned up (dirs are empty) — to
+# put CorrDiff on the overlay, regenerate a subset with the era_real (regression
+# + diffusion) checkpoints over the SAME window listed in times_range below.
+#
+# The comparison runs on the intersection of timestamps available in ALL models,
+# further restricted to times_range if given.
+
+models:
+  - name: dit_baseline       # current DiT (sigma_max=800, 18 steps)
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/generation_era_real_dit_JJA2023
+  - name: dit_ar_baseline    # current DiT-AR
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/generation_era_real_dit_autoregressive_JJA2023
+  - name: dit_edm_smax80_n32  # DiT-AR retune with EDM sampler (sigma_max=80, 32 steps)
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_edm_smax80_n32
+  - name: corrdiff_subset
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/corrdiff_subset_JJA2023
+  - name: dit_ar_zeros
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_ar_zeros
+  - name: dit_ar_target
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_ar_target
+  # NOTE: dit_anchored_4p5M was generated with the WRONG sampler (default stochastic,
+  # smax=800) — for the unit-variance standardized-residual target the correct sampler
+  # is stochastic_edm (smax=80). That mismatch collapsed ensemble spread and produced
+  # tail blow-ups (one timestep 1360x target) that poisoned exceedance_log_err. Dropped;
+  # replaced by dit_anchored_9M generated with sampler=stochastic_edm.
+  - name: dit_anchored_9M   # EXP3 anchored DiT, 9M/20M ckpt, stochastic_edm sampler
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_anchored_9M
+  - name: dit_fm_5p25M      # flow-matching DiT (single-stage), 5.25M/20M ckpt, flow_matching sampler
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_fm_JJA2023
+  # Add sweep / regenerated dirs here, e.g.:
+  # - name: dit_edm80
+  #   dir: /capstor/scratch/cscs/pstamenk/outputs/generation/dit_edm_smax80_n32
+  # - name: corrdiff
+  #   dir: /capstor/scratch/cscs/pstamenk/outputs/generation/corrdiff_subset
+
+# Which model's -target files define the reference (targets are identical across
+# models, so any works). Defaults to the first model if omitted.
+target_from: dit_baseline
+
+# Restrict to a common multi-day window spanning many diurnal cycles.
+times_range: ['20230701-0000', '20230714-2300', 1]
+
+# Unit conversions + grid (same as conf/eval_real.yaml)
+conv_factor_hourly: 1000      # ERA5 m -> mm/h
+conv_factor: 24000            # ERA5 m -> mm/day
+land_sea_mask_path: '/capstor/store/cscs/pasc/c38/real_grid_info/lsm_real.npy'
+height: 704
+width: 1088
+log_interval: 24
+
+output_dir: /capstor/scratch/cscs/pstamenk/outputs/generation/model_comparison_JJA2023
+
+# Per-model summary cache (output_dir/summary_cache/): models whose tensors and
+# common-timestep set are unchanged load their summaries instead of re-streaming
+# ~65 GB each — a rerun with one new model only processes that model. Signature
+# covers timestep set + factors + land mask + tensor mtimes, so stale hits are
+# impossible. Set false (or delete the cache dir) to force full recompute.
+cache: true
