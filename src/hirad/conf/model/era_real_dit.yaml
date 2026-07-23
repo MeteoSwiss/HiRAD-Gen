@@ -13,6 +13,11 @@ model_args:
   patch_size: 4
   attention_backend: natten2d
 
+  # EDM sigma_data — shared by the preconditioner AND the DiffusionLoss weight, and
+  # saved to model_args.json so inference rebuilds the same preconditioner. 0.5 is the
+  # legacy value; EXP2 tests sigma_data=1.0 (the ~unit-variance normalized-target std).
+  sigma_data: 0.5
+
   attn_kwargs:
     attn_kernel: 31
     qk_norm: True

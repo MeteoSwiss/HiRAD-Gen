@@ -1,0 +1,21 @@
+name: flow_matching_transformer
+
+# Same DiT backbone as model/era_real_dit.yaml, but trained with rectified flow
+# matching (FlowMatchingSuperResolution wrapper — direct velocity prediction) instead
+# of EDM. There are NO EDM preconditioning knobs here (sigma_data/sigma_min/sigma_max);
+# the FM wrapper does not use them, and the loss weight is a plain unweighted MSE.
+model_args:
+  depth: 16
+  hidden_size: 512
+  num_heads: 16
+  patch_size: 4
+  attention_backend: natten2d
+
+  # Multiplier on the flow time t before the DiT timestep embedder. 1.0 keeps t in
+  # the same O(1) regime the shared PositionalEmbedding already handles for the EDM
+  # DiT (c_noise = log(sigma)/4), so no ADM-style t*1000 rescale is needed.
+  time_scale: 1.0
+
+  attn_kwargs:
+    attn_kernel: 31
+    qk_norm: True

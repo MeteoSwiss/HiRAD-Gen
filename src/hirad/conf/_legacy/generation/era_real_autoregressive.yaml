@@ -8,6 +8,13 @@ seed_batch_size: 4
 # temporal conditioning (degenerates to stateless generation).
 n_prev_hr_frames: 1
 
+# How the previous-HR condition is sourced each step (diagnostic switch):
+#   self   – the model's own previous prediction (default; true AR rollout)
+#   zeros  – always unconditional; drops the prev-HR condition every step
+#            (tests whether AR conditioning causes the diurnal amplitude damping)
+#   target – teacher-force with the TRUE previous target (tests exposure bias)
+prev_hr_source: self
+
 randomize: True
   # Draw fresh random seeds for each time step.  Set False for reproducible runs.
 random_seed: 2578458
@@ -15,7 +22,7 @@ random_seed: 2578458
 # Patching is not supported in autoregressive mode.
 patching: False
 
-times_range: ['20230817-2300','20230831-2300',1]
+times_range: ['20230824-1400','20230824-1500',1]
   # [start, end (inclusive), step in hours]
   # The loop processes these times in order; each step conditions on the
   # ensemble mean of the previous step.

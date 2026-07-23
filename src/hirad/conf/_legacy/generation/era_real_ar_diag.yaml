@@ -1,0 +1,32 @@
+# DiT-AR diagnostic generation (Phase 1b) over the SUBSET window. Override
+# generation.prev_hr_source on the CLI:
+#   self   – true AR rollout (default)
+#   zeros  – drop the prev-HR condition every step (isolates AR-induced damping)
+#   target – teacher-force with the true previous target (isolates exposure bias)
+
+num_ensembles: 16
+seed_batch_size: 4
+
+n_prev_hr_frames: 1
+prev_hr_source: self     # override per diagnostic run
+
+randomize: True
+random_seed: 2578458
+
+patching: False
+
+# Subset window — keep aligned with conf/compare_models.yaml times_range.
+times_range: ['20230701-0000', '20230714-2300', 1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: True
+  num_writer_workers: 8
+  enable_timing: True
+  profile: False
+
+io:
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit_time_cor/
+  output_path: .

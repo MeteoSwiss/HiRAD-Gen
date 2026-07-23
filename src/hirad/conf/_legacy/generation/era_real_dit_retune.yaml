@@ -1,0 +1,32 @@
+# DiT generation for the sampler retune (Phase 1a). Same as generation/era_real
+# (inference_mode: dit) but over the SUBSET window used by compare_models, and
+# paired with sampler/stochastic_edm. Sweep sampler.params.{sigma_max,num_steps}
+# and hydra.job.name on the CLI (see submit_sampler_sweep.sh).
+
+num_ensembles: 16
+seed_batch_size: 4
+inference_mode: dit
+
+randomize: True
+random_seed: 2578458
+
+patching: False
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+# Subset window — keep aligned with conf/compare_models.yaml times_range.
+times_range: ['20230713-0700', '20230714-2300', 1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: True
+  num_writer_workers: 8
+  enable_timing: True
+
+io:
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit
+  output_path: .

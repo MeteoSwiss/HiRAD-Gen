@@ -1,0 +1,27 @@
+# EDM-standard stochastic sampler for DiT inference.
+#
+# The default `stochastic.yaml` inherits sigma_max: 800 — far above the
+# Karras et al. (2022) EDM standard (~80). For the single-stage DiT that huge
+# noise budget over-disperses the ensemble and fattens the precipitation tail.
+# This variant restores EDM values: sigma_max=80, and num_steps=18.
+#
+# num_steps=18 (NFE 35 with 2nd-order Heun) is the Karras et al. (2022) EDM
+# CIFAR-10 default and the NVIDIA CorrDiff / Modulus baseline. Note there is no
+# canonical "DiT+EDM" step count (the original DiT is ADM/DDPM-sampled at 250
+# steps, not EDM); step count is dataset/resolution-dependent (EDM ImageNet-64
+# stochastic uses 256; EDM2 uses 32). 18 is the cheap, well-grounded default and
+# is fixed across all model families for apples-to-apples comparison. Since step
+# count only affects ODE/SDE discretization error (it converges), raising it is a
+# refinement, not a distribution lever. Sweep on the CLI if convergence matters:
+#   sampler=stochastic_edm sampler.params.num_steps=32
+#   sampler=stochastic_edm sampler.params.sigma_max=200 sampler.params.S_churn=2.5
+
+type: stochastic
+
+params:
+  num_steps: 18
+  sigma_max: 80
+  sigma_min: 0.002
+  rho: 7
+  S_churn: 0
+  S_noise: 1

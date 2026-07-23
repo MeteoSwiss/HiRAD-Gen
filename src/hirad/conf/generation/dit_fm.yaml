@@ -1,0 +1,18 @@
+# Single-stage flow-matching DiT (velocity model + rectified-flow ODE sampler).
+#
+# !!! SAMPLER: you MUST pass `sampler=flow_matching` on the CLI. !!!
+# The root default `stochastic` (EDM Heun, smax=800) is meaningless for a velocity
+# field — the FM model needs the ODE integrator, not the EDM sigma schedule. A
+# family-file sampler override does not compose in this Hydra setup, hence CLI:
+#   python src/hirad/inference/generate.py --config-name=generate \
+#       generation=dit_fm sampler=flow_matching
+defaults:
+  - base
+  - _self_
+
+inference_mode: fm
+
+io:
+  # Default = the train_dit_fm training output (hydra job name dit_fm_baseline,
+  # checkpoints_<model.name>). Override on the CLI for other checkpoints.
+  dit_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/dit_fm_baseline/checkpoints_flow_matching_transformer

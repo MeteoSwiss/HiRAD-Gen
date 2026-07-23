@@ -1,0 +1,27 @@
+hydra:
+  job:
+    chdir: true
+    name: dit_anchored
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+# Anchored DiT (EXP3): DiT diffuses the per-channel standardized residual over a
+# FROZEN regression mean (CorrDiff's two-stage mechanism on the DiT backbone).
+# _self_ is LAST so the overrides below win over the shared sub-configs:
+# no AR conditioning, and the anchor checkpoint must be the one the
+# residual_stds in model/era_real_dit_anchored.yaml were measured with.
+defaults:
+  - dataset/anemoi_era_real
+  - model/era_real_dit_anchored
+  - training/era_real_dit
+  - logging/era_real_dit
+  - _self_
+
+dataset:
+  n_prev_hr_frames: 0
+training:
+  hp:
+    prev_hr_dropout: 0.0
+  io:
+    # Frozen anchor: corrected-stats regression, best ckpt (1.6M) isolated dir.
+    regression_checkpoint_path: /capstor/scratch/cscs/pstamenk/outputs/training/corrdiff_reg_tpfix_best

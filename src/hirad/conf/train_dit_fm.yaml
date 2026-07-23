@@ -1,0 +1,23 @@
+hydra:
+  job:
+    chdir: true
+    name: dit_fm_baseline
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+# Plain single-stage DiT trained with rectified flow matching. Same dataset / stack
+# as train_dit (previous-HR conditioning DISABLED), but swaps the EDM loss+wrapper for
+# the flow-matching loss+wrapper via model/era_real_dit_fm + training/era_real_dit_fm.
+# _self_ is LAST so these two overrides win over the shared sub-configs.
+defaults:
+  - dataset/anemoi_era_real
+  - model/era_real_dit_fm
+  - training/era_real_dit_fm
+  - logging/era_real_dit
+  - _self_
+
+dataset:
+  n_prev_hr_frames: 0
+training:
+  hp:
+    prev_hr_dropout: 0.0

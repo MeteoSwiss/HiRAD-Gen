@@ -1,0 +1,24 @@
+# Anchored DiT (EXP3): frozen regression mean + DiT residual diffusion.
+# The residual_stds / hr_mean_conditioning metadata is read from the checkpoint's
+# model_args.json — nothing to configure here beyond the two checkpoint paths.
+#
+# !!! SAMPLER: you MUST pass `sampler=stochastic_edm` on the CLI. !!!
+# The diffusion target is the standardized (unit-variance) residual, so the EDM-standard
+# preset (smax=80) is correct. The root default `stochastic` (smax=800) is 800x the data
+# scale here — it COLLAPSES ensemble spread and causes tail blow-ups (a single timestep
+# hit 1360x target once), poisoning exceedance_log_err. (A family-file sampler override
+# does not compose in this Hydra setup — hence CLI, not a default here.)
+#   python src/hirad/inference/generate.py --config-name=generate \
+#       generation=dit_anchored sampler=stochastic_edm
+defaults:
+  - base
+  - _self_
+
+inference_mode: dit_anchored
+
+io:
+  # Frozen anchor — MUST be the checkpoint the model_args.json residual_stds were
+  # measured with (corrected-stats regression, best ckpt 1.6M).
+  reg_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/corrdiff_reg_tpfix_best
+  # Anchored DiT training output (train_dit_anchored.yaml).
+  dit_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/dit_anchored/checkpoints_anchored_diffusion_transformer

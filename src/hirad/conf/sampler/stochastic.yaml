@@ -1,6 +1,13 @@
-# Stochastic sampler is slower, but should give better results than deterministic sampler.
-
+# Faithful stochastic EDM Heun sampler — the original CorrDiff / dit_baseline preset.
+# All params are listed explicitly at the stochastic_sampler.py function defaults so
+# they are OVERRIDABLE on the CLI (Hydra struct mode rejects overrides of undeclared
+# keys — this is why the DiT sigma_max sweep sets sampler.params.* here).
 type: stochastic
 
 params:
   num_steps: 18
+  sigma_min: 0.002
+  sigma_max: 800
+  rho: 7
+  S_churn: 0
+  S_noise: 1

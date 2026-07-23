@@ -1,9 +1,9 @@
 hydra:
   job:
     chdir: true
-    name: generation_era_real_dit_test_optim
+    name: generation_era_real_dit_JJA2023
   run:
-    dir: ./outputs/generation/${hydra:job.name}
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
 
 # Get defaults
 defaults:

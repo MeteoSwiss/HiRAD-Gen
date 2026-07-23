@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: dit_edm_smax80_n32
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/anemoi_era_real_inference
+  - sampler/stochastic_edm
+  - generation/era_real_dit_retune

@@ -26,7 +26,7 @@ boundary_pix: 2
 
 # hr_mean_conditioning: True
 
-times_range: ['20230726-1600','20230726-2000',1]
+times_range: ['20230818-1100','20230831-2300',1]
   # Start date, end date and time interval (in hours) for the generation
 
 times: null
@@ -53,5 +53,5 @@ io:
   # Checkpoint filename for the residual predictor model
   # reg_ckpt_path: /path/to/regression/checkpoint
   # Checkpoint filename for the mean predictor model
-  dit_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/dit_era_real_cosine_lr_decay/checkpoints_diffusion_transformer
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit
   output_path: .

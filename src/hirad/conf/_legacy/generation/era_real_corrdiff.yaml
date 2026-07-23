@@ -1,0 +1,39 @@
+# CorrDiff (two-stage: regression + residual diffusion) generation for REAL-CH1.
+# Used to regenerate a SUBSET so CorrDiff appears as a live curve in
+# hirad.eval.compare_models (its original full-JJA raw tensors were cleaned up).
+#
+# Faithful baseline: keep the ORIGINAL stochastic sampler (sampler/stochastic,
+# sigma_max=800, num_steps=18) that produced the published CorrDiff results — do
+# NOT use sampler/stochastic_edm here (that retune is for the single-stage DiT).
+
+num_ensembles: 16
+seed_batch_size: 4
+
+inference_mode: all          # regression + residual diffusion
+hr_mean_conditioning: True   # CorrDiff conditions the residual on the regression mean
+
+randomize: True
+random_seed: 2578458
+
+# Patching parameters (unused unless patch_shape != img_shape)
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+# Subset window — keep aligned with conf/compare_models.yaml times_range.
+times_range: ['20230726-0000', '20230801-0000', 1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: True
+  num_writer_workers: 8
+  enable_timing: True
+
+io:
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion
+  output_path: .

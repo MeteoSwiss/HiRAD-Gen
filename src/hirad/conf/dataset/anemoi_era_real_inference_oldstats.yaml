@@ -1,0 +1,19 @@
+# Faithful-to-CorrDiff dataset config: the OLD (pre-fix) tp box-cox stats the
+# regression model was actually trained with. Used ONLY for the residual-vs-target
+# distribution diagnostic (running the CorrDiff stage-1 regression). Do NOT use for
+# the DiT pipeline (which now uses the corrected stats).
+type: anemoi_era5_real
+input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-1h-v2-with-era51.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+transform_input_means:   {'tp-box_cox_025': -3.815209745618941}
+transform_input_stdevs:  {'tp-box_cox_025': 0.22851179478814418}
+transform_output_means:  {'tp-box_cox_025': -3.8121187083242556}
+transform_output_stdevs: {'tp-box_cox_025': 0.3345851858215482}
+n_month_hour_channels: 4
+start_date: '2023-01-01'
+end_date: '2023-12-31'
+trim_edge: 41

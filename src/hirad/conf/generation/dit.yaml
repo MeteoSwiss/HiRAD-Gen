@@ -1,0 +1,14 @@
+# Plain single-stage DiT (no autoregressive conditioning).
+# EDM-standard tunable sampler — this is the family to use for the sigma_max sweep.
+# To faithfully reproduce the original dit_baseline (sigma_max=800), override on the
+# CLI with `sampler=stochastic`.
+defaults:
+  - base
+  - _self_
+
+# Inherits the root sampler (stochastic, smax=800 = dit_baseline). For the sigma_max
+# sweep, override sampler.params.* on the CLI; for the EDM preset, `sampler=stochastic_edm`.
+inference_mode: dit
+
+io:
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit

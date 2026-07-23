@@ -18,6 +18,13 @@ hp:
     # Learning rate decay threshold in number of samples, applied every lr_decay_rate samples.
     grad_clip_threshold: 5.0
     prev_hr_dropout: 0.2
+    # EDM training-signal knobs (DiffusionLoss / AnchoredDiffusionLoss). Declared so
+    # they are CLI-overridable (struct mode rejects undeclared keys). null means
+    # "use the loss's own default" — which DIFFERS by family (DiffusionLoss
+    # P_mean=-1.2; AnchoredDiffusionLoss P_mean=0.0), so do NOT hard-code values here.
+    P_mean: null
+    P_std: null
+    channel_weights: null
 
 # Performance
 perf:

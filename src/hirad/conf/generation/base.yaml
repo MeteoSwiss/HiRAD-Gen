@@ -1,0 +1,42 @@
+# Shared generation defaults. Family files (dit / corrdiff / ardit) include this
+# via `defaults: [base, ...]` and override only what differs. Packaged under
+# `generation`, so everything here is read as cfg.generation.* by the inference scripts.
+
+num_ensembles: 16
+  # Number of ensemble members to generate per input time step
+seed_batch_size: 4
+  # Seeds processed per forward pass (keep <= num_ensembles)
+
+randomize: True
+  # Draw fresh random seeds per time step. Set False for reproducible runs
+  # (fixed seeds 0..num_ensembles-1).
+random_seed: 2578458
+  # Base seed, only used when randomize is True.
+
+# Patching (only CorrDiff enables it). Kept here so every family resolves the keys.
+patching: False
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+hr_mean_conditioning: False
+  # CorrDiff overrides to True (residual conditioned on the regression mean).
+
+# Default window = the JJA2023 comparison subset (0701-0714, 336 steps) so all
+# families are scoreboard-ready out of the box. Override on the CLI for others:
+#   generation.times_range=['20230818-1100','20230831-2300',1]   # late-Aug (old DiT full run)
+#   generation.times_range=['20230726-0000','20230801-0000',1]   # original CorrDiff window
+times_range: ['20230701-0000', '20230714-2300', 1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: True
+  num_writer_workers: 8
+  enable_timing: True
+  profile: False
+
+io:
+  output_path: .

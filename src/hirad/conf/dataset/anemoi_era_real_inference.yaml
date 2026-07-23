@@ -7,10 +7,14 @@ input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_50
 output_channel_names: [2t, 10u, 10v, tp]
 static_channel_names: ['FIS']
 transform_channels: ['tp-box_cox_025']
-transform_input_means: {'tp-box_cox_025': -3.815209745618941}
-transform_input_stdevs: {'tp-box_cox_025': 0.22851179478814418}
-transform_output_means: {'tp-box_cox_025': -3.8121187083242556}
-transform_output_stdevs: {'tp-box_cox_025': 0.3345851858215482}
+# transform_input_means: {'tp-box_cox_025': -3.815209745618941}
+# transform_input_stdevs: {'tp-box_cox_025': 0.22851179478814418}
+# transform_output_means: {'tp-box_cox_025': -3.8121187083242556}
+# transform_output_stdevs: {'tp-box_cox_025': 0.3345851858215482}
+transform_input_means:   {'tp-box_cox_025': -3.8472703838729916}
+transform_input_stdevs:  {'tp-box_cox_025': 0.22770868859227958}
+transform_output_means:  {'tp-box_cox_025': -3.9237560989902307}
+transform_output_stdevs: {'tp-box_cox_025': 0.19118957839026315}
 n_month_hour_channels: 4
 start_date: '2023-01-01'
 end_date: '2023-12-31'

@@ -1,0 +1,17 @@
+# CorrDiff two-stage (regression + residual diffusion) for REAL-CH1.
+# Faithful baseline: keep the ORIGINAL stochastic sampler (sampler/stochastic,
+# sigma_max=800, num_steps=18) that produced the published CorrDiff results — do
+# NOT swap in sampler/stochastic_edm here (that retune is for the single-stage DiT).
+defaults:
+  - base
+  - _self_
+# Sampler = the root default `stochastic` (smax=800, num_steps=18) — the faithful
+# CorrDiff baseline. Do NOT pass sampler=stochastic_edm here (that retune is DiT-only).
+
+inference_mode: all          # regression + residual diffusion
+hr_mean_conditioning: True   # residual conditioned on the regression mean
+patching: True
+
+io:
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion

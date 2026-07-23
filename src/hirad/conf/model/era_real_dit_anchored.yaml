@@ -1,0 +1,25 @@
+name: anchored_diffusion_transformer
+
+model_args:
+  depth: 16
+  hidden_size: 512
+  num_heads: 16
+  patch_size: 4
+  attention_backend: natten2d
+
+  attn_kwargs:
+    attn_kernel: 31
+    qk_norm: True
+
+  # EDM sigma_data — 1.0 is CORRECT here: the diffusion target is the per-channel
+  # standardized regression residual (unit variance by construction).
+  sigma_data: 1.0
+
+  # ---- Anchor metadata (consumed by AnchoredDiffusionLoss + the anchored
+  # generator; persisted in model_args.json; popped before model construction) ----
+  # Concatenate the frozen regression mean to the conditioning channels.
+  hr_mean_conditioning: True
+  # Per-channel std of (normalized target − regression) for [2t, 10u, 10v, tp],
+  # measured over 2019 every-12h (730 ts) with the corrdiff_reg_tpfix 1.6M anchor.
+  # RECOMPUTE if the anchor checkpoint changes (export_residual_stats.py).
+  residual_stds: [0.109, 0.351, 0.347, 0.510]

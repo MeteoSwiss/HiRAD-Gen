@@ -1,0 +1,36 @@
+# Hyperparameters — identical optimizer / schedule / IO to training/era_real_dit.yaml.
+# Only the training-signal knobs differ: rectified-flow timestep sampling
+# (FlowMatchingLoss) instead of the EDM P_mean/P_std noise schedule.
+hp:
+    training_duration: 20000000
+    # Training duration based on the number of processed samples
+    total_batch_size: "auto"
+    batch_size_per_gpu: 4
+    lr: 0.0001
+    lr_decay: 0.7
+    lr_rampup: 5e5
+    lr_decay_rate: 5e5
+    grad_clip_threshold: 5.0
+    prev_hr_dropout: 0.2
+    # Flow-matching training-signal knobs (FlowMatchingLoss). Declared so they are
+    # CLI-overridable (Hydra struct mode rejects undeclared keys). null means "use the
+    # loss's own default": time_sampling="logit_normal" (SD3), logit_m=0.0, logit_s=1.0.
+    # Set fm_time_sampling=uniform for the plain rectified-flow schedule.
+    fm_time_sampling: null
+    fm_logit_m: null
+    fm_logit_s: null
+    channel_weights: null
+
+# Performance
+perf:
+    fp_optimizations: amp-bf16
+    dataloader_workers: 10
+    torch_compile: True
+
+# I/O
+io:
+    print_progress_freq: 1000
+    save_checkpoint_freq: 250000
+    validation_freq: 100000
+    validation_steps: 68
+    checkpoint_dir: .

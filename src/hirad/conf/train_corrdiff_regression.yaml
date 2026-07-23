@@ -5,21 +5,17 @@ hydra:
   run:
     dir: ./outputs/training/${hydra:job.name}
 
-
-# Get defaults
+# CorrDiff stage 1 — deterministic regression (UNet). _self_ is LAST so the
+# dataset override below wins: CorrDiff must NOT inherit AR-DiT's
+# n_prev_hr_frames=1 from the shared dataset config (that would change the input
+# channel count and break the regression model).
 defaults:
+  - dataset/anemoi_era_real
+  - model/era_real_regression
+  - model_size/normal_real
+  - training/era_real_regression
+  - logging/era_real_regression
   - _self_
 
-  # Dataset
-  - dataset/anemoi_era_real
-
-  # Model
-  - model/era_real_regression
-
-  - model_size/normal_real
-
-  # Training
-  - training/era_real_regression
-
-  # Logging
-  - logging/era_real_regression
+dataset:
+  n_prev_hr_frames: 0

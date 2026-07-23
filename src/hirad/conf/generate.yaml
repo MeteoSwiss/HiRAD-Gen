@@ -1,0 +1,33 @@
+hydra:
+  job:
+    chdir: true
+    name: generate_era_real
+  run:
+    # dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+    dir: ./outputs/generation/${hydra:job.name}
+
+# Single generation entry point. Pick the model family with
+#   generation=<dit|corrdiff|ardit>
+# and tweak everything else from the CLI (times_range, sampler.params.*, io.*):
+#
+#   # DiT (plain), EDM-standard tunable sampler:
+#   python src/hirad/inference/generate.py --config-name=generate generation=dit
+#
+#   # DiT sigma_max sweep (no new files):
+#   python src/hirad/inference/generate.py --config-name=generate generation=dit \
+#       sampler.params.sigma_max=200 sampler.params.num_steps=18 hydra.job.name=dit_smax200
+#
+#   # CorrDiff baseline (auto-selects the faithful stochastic sampler):
+#   python src/hirad/inference/generate.py --config-name=generate generation=corrdiff
+#
+#   # AR-DiT (use the autoregressive entry script):
+#   python src/hirad/inference/generate_autoregressive.py --config-name=generate \
+#       generation=ardit generation.prev_hr_source=target
+#
+defaults:
+  - _self_
+  - dataset: anemoi_era_real_inference   # group form so `dataset=<other>` is overridable
+  - sampler: stochastic         # root-package sampler (type=stochastic, smax=800). For the
+                                # EDM-standard preset pass `sampler=stochastic_edm`; the DiT
+                                # sweep sets sampler.params.{sigma_max,num_steps,S_churn} directly.
+  - generation: dit

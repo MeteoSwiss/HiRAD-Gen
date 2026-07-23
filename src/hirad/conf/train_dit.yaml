@@ -1,0 +1,22 @@
+hydra:
+  job:
+    chdir: true
+    name: dit_baseline
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+# Plain (non-autoregressive) DiT. Identical stack to train_ardit but with
+# previous-HR conditioning DISABLED. _self_ is LAST so these two overrides win
+# over the shared dataset/training sub-configs.
+defaults:
+  - dataset/anemoi_era_real
+  - model/era_real_dit
+  - training/era_real_dit
+  - logging/era_real_dit
+  - _self_
+
+dataset:
+  n_prev_hr_frames: 0
+training:
+  hp:
+    prev_hr_dropout: 0.0

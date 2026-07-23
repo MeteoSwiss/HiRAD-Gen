@@ -1,0 +1,18 @@
+# Autoregressive DiT (previous-HR-frame conditioning).
+# Run with src/hirad/inference/generate_autoregressive.py (the AR state is managed
+# inside that script). Diagnostic switch for the previous-HR source:
+#   generation.prev_hr_source=self     true AR rollout (default)
+#   generation.prev_hr_source=zeros    always unconditional (isolates AR-induced damping)
+#   generation.prev_hr_source=target   teacher-forced with the true previous target
+#                                      (isolates exposure bias — the AR upper bound)
+defaults:
+  - base
+  - _self_
+# Sampler = the root default `stochastic` (smax=800), matching the AR diagnostic runs.
+
+inference_mode: dit
+n_prev_hr_frames: 1
+prev_hr_source: self
+
+io:
+  dit_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/dit_time_cor/

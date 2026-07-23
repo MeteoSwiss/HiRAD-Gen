@@ -1,11 +1,13 @@
 hydra:
   job:
     chdir: true
-    name: dit_era_real_cosine_lr_decay
+    name: dit_prev_time_step_conditioning
   run:
     dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
 
-# Get defaults
+# Autoregressive DiT — previous-HR-frame conditioning is ON, inherited from the
+# shared configs: dataset/anemoi_era_real (n_prev_hr_frames=1) and
+# training/era_real_dit (prev_hr_dropout=0.2). train_dit.yaml is the plain variant.
 defaults:
   - _self_
 

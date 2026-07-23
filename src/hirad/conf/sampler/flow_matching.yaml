@@ -1,0 +1,13 @@
+# Rectified-flow ODE sampler for the flow-matching DiT. Integrates dx/dt = v_theta
+# from pure noise (t=1) down to data (t=0) with a 2nd-order Heun corrector (Euler on
+# the final step). num_steps=18 matches the EDM/CorrDiff-standard budget
+# (see sampler/stochastic_edm.yaml) so FM and EDM families are compared at equal NFE;
+# rectified-flow paths are nearly straight, so Euler already works well and Heun just
+# tightens the integration. There is no sigma schedule (t is the flow time in [0,1]).
+type: flow_matching
+
+params:
+  num_steps: 18
+  t_min: 0.0
+  t_max: 1.0
+  heun: true

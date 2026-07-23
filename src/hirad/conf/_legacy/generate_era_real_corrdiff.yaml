@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: corrdiff_subset_20230726-31
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/anemoi_era_real_inference
+  - sampler/stochastic
+  - generation/era_real_corrdiff

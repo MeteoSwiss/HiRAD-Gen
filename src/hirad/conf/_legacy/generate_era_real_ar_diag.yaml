@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: dit_ar_diag
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/anemoi_era_real_inference
+  - sampler/stochastic
+  - generation/era_real_ar_diag
