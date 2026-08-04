@@ -24,6 +24,10 @@ logger = PythonLogger(__name__)
 INPUT_MARGIN_DEGREES = 0.5
 
 class AnemoiDataset(DownscalingDataset):
+    # Names accepted for the "input dataset" segment of `type` (e.g. "anemoi_era5_cosmo").
+    # Overridden by subclasses backed by a different input source (e.g. AnemoiForecastDataset's "ifsn320").
+    VALID_INPUT_DATASETS = {'era5'}
+
     def __init__(self,
                 type: str,
                 input_anemoi_dataset_path: str,
@@ -48,8 +52,8 @@ class AnemoiDataset(DownscalingDataset):
         self.real_target = target_dataset == 'real'
         self.trim_edge = trim_edge
 
-        if input_dataset != 'era5':
-            raise ValueError(f"Input dataset {input_dataset} not supported for AnemoiDataset. Only 'era5' is supported.")
+        if input_dataset not in self.VALID_INPUT_DATASETS:
+            raise ValueError(f"Input dataset {input_dataset} not supported for {self.__class__.__name__}. Only {sorted(self.VALID_INPUT_DATASETS)} is supported.")
         if target_dataset != 'cosmo' and target_dataset !='real':
             raise ValueError(f"Target dataset {target_dataset} not supported for AnemoiDataset. Only 'cosmo' and 'real' are supported.")
 
@@ -86,8 +90,7 @@ class AnemoiDataset(DownscalingDataset):
         self._input_dataset = open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
-        # Check that we have the same number of time points in each dataset
-        assert self._input_dataset.shape[0] == self._output_dataset.shape[0]
+        self._align_input_output()
 
         # Load static info and channel names
         if static_channel_names:
@@ -171,9 +174,15 @@ class AnemoiDataset(DownscalingDataset):
             self.longitude(),
             self.latitude())
 
+    def _align_input_output(self):
+        """Check that input and target datasets have the same number of time points.
 
-    # DO NOT SUBMIT: This is not implemented yet.
-    # Question: Is it OK to change the signature to return 3 items?
+        Overridden by subclasses (e.g. AnemoiForecastDataset) whose input dataset
+        has a different time structure (e.g. reference_time x step) than the
+        analysis-only target dataset.
+        """
+        assert self._input_dataset.shape[0] == self._output_dataset.shape[0]
+
     def __getitem__(self, idx):
         """Get input and target data. Transform and normalize, but do not interpolate."""
 
