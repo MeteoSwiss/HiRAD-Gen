@@ -87,7 +87,7 @@ class AnemoiDataset(DownscalingDataset):
         max_lon = max(longitudes) + INPUT_MARGIN_DEGREES
         area=(max_lat, min_lon, min_lat, max_lon)
         
-        self._input_dataset = open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
+        self._input_dataset = self._open_input_dataset(input_anemoi_dataset_path, input_channel_names, start_date, end_date, area)
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
         self._align_input_output()
@@ -173,6 +173,14 @@ class AnemoiDataset(DownscalingDataset):
             self._input_dataset.latitudes,
             self.longitude(),
             self.latitude())
+
+    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area):
+        """Open the input dataset, restricted to the target's date range and area.
+
+        Overridden by subclasses whose input dataset can't be subset by start/end
+        the same way (e.g. AnemoiForecastDataset's 5D forecast store).
+        """
+        return open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
 
     def _align_input_output(self):
         """Check that input and target datasets have the same number of time points.

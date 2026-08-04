@@ -1,5 +1,6 @@
 from .anemoi_dataset import AnemoiDataset
 
+from anemoi.datasets import open_dataset
 import datetime
 import numpy as np
 from pandas import to_datetime
@@ -76,6 +77,15 @@ class AnemoiForecastDataset(AnemoiDataset):
             n_month_hour_channels=n_month_hour_channels,
             trim_edge=trim_edge,
         )
+
+    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area):
+        # start/end subsetting is unusable here: anemoi-datasets' date-based
+        # subsetting (used by the base class) reads a top-level `dates` array off
+        # the zarr store to convert start/end into indices, but this forecast
+        # store only has `base_dates`/`steps`, so that lookup raises AttributeError.
+        # TODO: restrict by base_dates range once anemoi-datasets supports it for
+        # 5D forecast stores (or filter post-hoc in _align_input_output).
+        return open_dataset(input_anemoi_dataset_path, select=input_channel_names, area=area)
 
     def _align_input_output(self):
         """Build one (ref_idx, step_idx, target_idx) entry per (reference_time,
