@@ -88,6 +88,10 @@ class AnemoiDataset(DownscalingDataset):
         area=(max_lat, min_lon, min_lat, max_lon)
         
         self._input_dataset = self._open_input_dataset(input_anemoi_dataset_path, input_channel_names, start_date, end_date, area)
+        # Assumes the opened input dataset's variables are exactly input_channel_names,
+        # in that order - true when opened with select=input_channel_names (base case),
+        # and also true for subclasses (e.g. AnemoiForecastDataset) that open without
+        # `select` because the underlying store was already built with just those channels.
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
         self._align_input_output()

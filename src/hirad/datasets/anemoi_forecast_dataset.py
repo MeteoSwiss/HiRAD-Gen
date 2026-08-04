@@ -79,21 +79,13 @@ class AnemoiForecastDataset(AnemoiDataset):
         )
 
     def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area):
-        # start/end subsetting is unusable here: anemoi-datasets' date-based
-        # subsetting (used by the base class) reads a top-level `dates` array off
-        # the zarr store to convert start/end into indices, but this forecast
-        # store only has `base_dates`/`steps`, so that lookup raises AttributeError.
-        #
-        # area subsetting is also unusable: anemoi-datasets' bbox Cropping asserts
-        # len(forward.shape) == 4 ("Grids must be 1D for now"), which the 5D
-        # forecast layout fails. So the full (untrimmed) input grid is loaded here
-        # - a memory/IO cost, not a correctness issue, since the GridData
-        # interpolator downstream only samples the target's actual lat/lon points
-        # regardless of how much extra input grid is loaded.
-        #
-        # TODO: restrict by base_dates range / area once anemoi-datasets supports
-        # either for 5D forecast stores (or filter/trim post-hoc ourselves).
-        return open_dataset(input_anemoi_dataset_path, select=input_channel_names)
+        # No select/start/end/area here: anemoi-datasets' Select/date/Cropping
+        # subsetting wrappers don't forward the 5D-specific `base_dates`/`steps`
+        # attributes (and Cropping/date-subsetting outright fail on a 5D forecast
+        # store - see _align_input_output). Opened bare, this assumes the store
+        # was already built with exactly input_channel_names (see the assert in
+        # AnemoiDataset.__init__) and covering only the needed area/dates.
+        return open_dataset(input_anemoi_dataset_path)
 
     def _align_input_output(self):
         """Build one (ref_idx, step_idx, target_idx) entry per (reference_time,
