@@ -16,5 +16,4 @@ defaults:
   #- sampler/deterministic
 
   # Generation
-  - generation/era_real
-  
+  - generation/ifsn320_real
