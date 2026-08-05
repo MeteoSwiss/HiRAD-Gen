@@ -31,22 +31,6 @@ REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS = {
     6: REAL_TO_ERA_CHANNEL_MAP_6H,
 }
 
-
-def input_frequency_hours(input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
-    """Effective input time step, in whole hours.
-
-    Uses the explicit ``input_frequency`` override when given (which also drives anemoi's
-    resampling), otherwise reads the native step from the dataset's timestamps. Used to
-    pick the real<->era channel name map, whose precip variable is accumulated over the
-    input step.
-    """
-    if input_frequency is not None:
-        hours = to_timedelta(input_frequency).total_seconds() / 3600
-    else:
-        dates = open_dataset(input_anemoi_dataset_path).dates
-        hours = (dates[1] - dates[0]) / np.timedelta64(1, 'h')
-    return int(round(hours))
-
 class AnemoiDataset(DownscalingDataset):
     # Names accepted for the "input dataset" segment of `type` (e.g. "anemoi_era5_cosmo").
     # Overridden by subclasses backed by a different input source (e.g. AnemoiForecastDataset's "ifsn320").
@@ -93,7 +77,7 @@ class AnemoiDataset(DownscalingDataset):
             # The real target stores precip accumulated over one input step, so the
             # real<->era channel name map depends on the input frequency (see
             # REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS). Select it accordingly.
-            in_freq_hours = input_frequency_hours(input_anemoi_dataset_path, input_frequency)
+            in_freq_hours = self._input_frequency_hours(input_anemoi_dataset_path, input_frequency)
             if in_freq_hours not in REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS:
                 raise ValueError(
                     f"No real<->era channel name map defined for input frequency "
@@ -140,36 +124,7 @@ class AnemoiDataset(DownscalingDataset):
         # `select` because the underlying store was already built with just those channels.
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
-        # Pair samples by valid time rather than by position: iteration is driven by the
-        # input dataset and each input date is mapped to the target index at the same
-        # date. This supports different input/target frequencies (e.g. 6h input with an
-        # hourly target, where only the matching target times are used) as well as
-        # targets missing some dates. `_output_index_for_input[i]` is the target index
-        # for input date i, or None when the target has no matching date.
-        output_date_to_idx = {
-            to_datetime(d): i for i, d in enumerate(self._output_dataset.dates)
-        }
-        self._output_index_for_input = [
-            output_date_to_idx.get(to_datetime(d)) for d in self._input_dataset.dates
-        ]
-        # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
-        self._target_sample_shape = self._output_dataset.shape[1:]
-
-        if not self.target_missing_as_zeros:
-            # Outside generation every input timestep must have a target at the same valid
-            # time; emitting zeros for missing targets is only enabled via
-            # target_missing_as_zeros.
-            unmatched = [
-                to_datetime(d)
-                for d, out_idx in zip(self._input_dataset.dates, self._output_index_for_input)
-                if out_idx is None
-            ]
-            if unmatched:
-                raise ValueError(
-                    f"{len(unmatched)} input timesteps have no target at the same valid "
-                    f"time (first: {unmatched[0]}). Input and target valid times must "
-                    f"align; check start_date/end_date and input_frequency."
-                )
+        self._align_input_output()
 
         # Load static info and channel names
         if static_channel_names:
@@ -285,13 +240,60 @@ class AnemoiDataset(DownscalingDataset):
         return open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
 
     def _align_input_output(self):
-        """Check that input and target datasets have the same number of time points.
-
+        """
+        Align input and output samples by valid time.
+        
+        By default, iteration is driven by the input dataset and each input date
+        is mapped to the target index at the same
+        date. This supports different input/target frequencies (e.g. 6h input with an
+        hourly target, where only the matching target times are used) as well as
+        targets missing some dates. `_output_index_for_input[i]` is the target index
+        for input date i, or None when the target has no matching date.
+        
         Overridden by subclasses (e.g. AnemoiForecastDataset) whose input dataset
         has a different time structure (e.g. reference_time x step) than the
         analysis-only target dataset.
         """
-        assert self._input_dataset.shape[0] == self._output_dataset.shape[0]
+        
+        output_date_to_idx = {
+            to_datetime(d): i for i, d in enumerate(self._output_dataset.dates)
+        }
+        self._output_index_for_input = [
+            output_date_to_idx.get(to_datetime(d)) for d in self._input_dataset.dates
+        ]
+        # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
+        self._target_sample_shape = self._output_dataset.shape[1:]
+
+        if not self.target_missing_as_zeros:
+            # Outside generation every input timestep must have a target at the same valid
+            # time; emitting zeros for missing targets is only enabled via
+            # target_missing_as_zeros.
+            unmatched = [
+                to_datetime(d)
+                for d, out_idx in zip(self._input_dataset.dates, self._output_index_for_input)
+                if out_idx is None
+            ]
+            if unmatched:
+                raise ValueError(
+                    f"{len(unmatched)} input timesteps have no target at the same valid "
+                    f"time (first: {unmatched[0]}). Input and target valid times must "
+                    f"align; check start_date/end_date and input_frequency."
+                )
+
+    def _input_frequency_hours(self, input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
+        """Effective input time step, in whole hours.
+
+        Uses the explicit ``input_frequency`` override when given (which also drives anemoi's
+        resampling), otherwise reads the native step from the dataset's timestamps. Used to
+        pick the real<->era channel name map, whose precip variable is accumulated over the
+        input step.
+        """
+        if input_frequency is not None:
+            hours = to_timedelta(input_frequency).total_seconds() / 3600
+        else:
+            dates = open_dataset(input_anemoi_dataset_path).dates
+            hours = (dates[1] - dates[0]) / np.timedelta64(1, 'h')
+        return int(round(hours))
 
     def __getitem__(self, idx):
         """Get input and target data. Transform and normalize, but do not interpolate."""

@@ -98,6 +98,19 @@ class AnemoiForecastDataset(AnemoiDataset):
                     f"Expected exactly one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
                 self._pairs.append((ref_idx, step_idx, int(target_idx[0])))
 
+    def _input_frequency_hours(self, input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
+        """Effective input time step, in whole hours.
+
+        Uses the explicit ``input_frequency`` override when given (which also drives anemoi's
+        resampling), otherwise reads the native step from the dataset's timestamps.
+        """
+        if input_frequency is not None:
+            hours = to_timedelta(input_frequency).total_seconds() / 3600
+        else:
+            steps = open_dataset(input_anemoi_dataset_path).steps
+            hours = (steps[1] - steps[0]) / np.timedelta64(1, 'h')
+        return int(round(hours))
+
     def __getitem__(self, idx):
         """Get input and target data for one (reference_time, step) pair.
         Transform and normalize, but do not interpolate."""
