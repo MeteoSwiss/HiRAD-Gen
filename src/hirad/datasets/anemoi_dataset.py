@@ -4,7 +4,7 @@ from anemoi.datasets import open_dataset
 import datetime
 import os
 import numpy as np
-from pandas import to_datetime
+from pandas import to_datetime, to_timedelta
 import torch
 from typing import List, Tuple
 import yaml
@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 # import zarr
 
-from .constants import REAL_TO_ERA_CHANNEL_MAP, ERA_TO_REAL_CHANNEL_MAP
+from .constants import REAL_TO_ERA_CHANNEL_MAP, REAL_TO_ERA_CHANNEL_MAP_6H
 from hirad.utils.console import PythonLogger
 from hirad.utils.dataset_utils import GridData, regrid_icon_to_rotlatlon
 
@@ -23,11 +23,37 @@ logger = PythonLogger(__name__)
 # Margin to use for ERA dataset (to avoid nans from interpolation at boundary)
 INPUT_MARGIN_DEGREES = 0.5
 
+# real<->era channel name maps keyed by the input time step in whole hours. They differ
+# only in the precip variable, which the real target stores accumulated over one input
+# step (TOT_PREC_1H for hourly input, TOT_PREC_6H for 6-hourly input).
+REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS = {
+    1: REAL_TO_ERA_CHANNEL_MAP,
+    6: REAL_TO_ERA_CHANNEL_MAP_6H,
+}
+
+
+def input_frequency_hours(input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
+    """Effective input time step, in whole hours.
+
+    Uses the explicit ``input_frequency`` override when given (which also drives anemoi's
+    resampling), otherwise reads the native step from the dataset's timestamps. Used to
+    pick the real<->era channel name map, whose precip variable is accumulated over the
+    input step.
+    """
+    if input_frequency is not None:
+        hours = to_timedelta(input_frequency).total_seconds() / 3600
+    else:
+        dates = open_dataset(input_anemoi_dataset_path).dates
+        hours = (dates[1] - dates[0]) / np.timedelta64(1, 'h')
+    return int(round(hours))
+
 class AnemoiDataset(DownscalingDataset):
     def __init__(self,
                 type: str,
                 input_anemoi_dataset_path: str,
                 target_anemoi_dataset_path: str,
+                input_stats_anemoi_dataset_path: str = None,
+                target_stats_anemoi_dataset_path: str = None,
                 start_date: datetime.datetime = None,
                 end_date: datetime.datetime = None,
                 input_channel_names: List[str] = [], 
@@ -40,6 +66,8 @@ class AnemoiDataset(DownscalingDataset):
                 transform_output_stdevs: dict = {},
                 n_month_hour_channels: int = None,
                 trim_edge: int = 0,
+                target_missing_as_zeros: bool = False,
+                input_frequency: str = None,
                 ):
         super().__init__()
 
@@ -47,6 +75,10 @@ class AnemoiDataset(DownscalingDataset):
         target_dataset = type.split('_')[-1]
         self.real_target = target_dataset == 'real'
         self.trim_edge = trim_edge
+        # When True (used for generation), iteration is driven by the input dataset and
+        # any date missing from the target dataset yields a zeros target tensor instead
+        # of failing. See __getitem__ and the input->target index mapping built below.
+        self.target_missing_as_zeros = target_missing_as_zeros
 
         if input_dataset != 'era5':
             raise ValueError(f"Input dataset {input_dataset} not supported for AnemoiDataset. Only 'era5' is supported.")
@@ -54,8 +86,18 @@ class AnemoiDataset(DownscalingDataset):
             raise ValueError(f"Target dataset {target_dataset} not supported for AnemoiDataset. Only 'cosmo' and 'real' are supported.")
 
         if self.real_target:
-            # Map output channel names from real to era5
-            output_channel_names_real = [ERA_TO_REAL_CHANNEL_MAP[name] for name in output_channel_names]
+            # The real target stores precip accumulated over one input step, so the
+            # real<->era channel name map depends on the input frequency (see
+            # REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS). Select it accordingly.
+            in_freq_hours = input_frequency_hours(input_anemoi_dataset_path, input_frequency)
+            if in_freq_hours not in REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS:
+                raise ValueError(
+                    f"No real<->era channel name map defined for input frequency "
+                    f"{in_freq_hours}h; add one to REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS."
+                )
+            era_to_real_map = {v: k for k, v in REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS[in_freq_hours].items()}
+            # Map output channel names from era5 to real
+            output_channel_names_real = [era_to_real_map[name] for name in output_channel_names]
             self.lat_lon_real = torch.load("/capstor/store/cscs/pasc/c38/real_grid_info/realch1-lat-lon", weights_only=False)
             self.regrid_indices_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_indices.npy")).long()
             self.regrid_weights_real = torch.from_numpy(np.load("/capstor/store/cscs/pasc/c38/real_grid_info/remap_weights.npy"))
@@ -65,8 +107,12 @@ class AnemoiDataset(DownscalingDataset):
         target_open_dataset_kwargs = {}
         if start_date is not None and end_date is not None:
             assert start_date < end_date, "start_date must be before end_date"
-            target_open_dataset_kwargs['start'] = start_date
-            target_open_dataset_kwargs['end'] = end_date
+            if not self.target_missing_as_zeros:
+                # When emitting zeros for missing target dates, the requested range may lie
+                # partly or wholly outside the target dataset, so it is applied only to the
+                # input dataset below; the target is opened over its full available range.
+                target_open_dataset_kwargs['start'] = start_date
+                target_open_dataset_kwargs['end'] = end_date
         if trim_edge > 0 and not self.real_target:
             target_open_dataset_kwargs['trim_edge'] = trim_edge
         self._output_dataset = open_dataset(target_anemoi_dataset_path, select=output_channel_names_real if self.real_target else output_channel_names, **target_open_dataset_kwargs)
@@ -83,11 +129,45 @@ class AnemoiDataset(DownscalingDataset):
         max_lon = max(longitudes) + INPUT_MARGIN_DEGREES
         area=(max_lat, min_lon, min_lat, max_lon)
         
-        self._input_dataset = open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
+        # Optionally resample the input to a coarser frequency (e.g. '6h') so it can be
+        # paired with an hourly target. A natively-lower-frequency input works without
+        # this; it is only needed to subsample a finer input.
+        input_open_dataset_kwargs = {}
+        if input_frequency is not None:
+            input_open_dataset_kwargs['frequency'] = input_frequency
+        self._input_dataset = open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area, **input_open_dataset_kwargs)
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
-        # Check that we have the same number of time points in each dataset
-        assert self._input_dataset.shape[0] == self._output_dataset.shape[0]
+        # Pair samples by valid time rather than by position: iteration is driven by the
+        # input dataset and each input date is mapped to the target index at the same
+        # date. This supports different input/target frequencies (e.g. 6h input with an
+        # hourly target, where only the matching target times are used) as well as
+        # targets missing some dates. `_output_index_for_input[i]` is the target index
+        # for input date i, or None when the target has no matching date.
+        output_date_to_idx = {
+            to_datetime(d): i for i, d in enumerate(self._output_dataset.dates)
+        }
+        self._output_index_for_input = [
+            output_date_to_idx.get(to_datetime(d)) for d in self._input_dataset.dates
+        ]
+        # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
+        self._target_sample_shape = self._output_dataset.shape[1:]
+
+        if not self.target_missing_as_zeros:
+            # Outside generation every input timestep must have a target at the same valid
+            # time; emitting zeros for missing targets is only enabled via
+            # target_missing_as_zeros.
+            unmatched = [
+                to_datetime(d)
+                for d, out_idx in zip(self._input_dataset.dates, self._output_index_for_input)
+                if out_idx is None
+            ]
+            if unmatched:
+                raise ValueError(
+                    f"{len(unmatched)} input timesteps have no target at the same valid "
+                    f"time (first: {unmatched[0]}). Input and target valid times must "
+                    f"align; check start_date/end_date and input_frequency."
+                )
 
         # Load static info and channel names
         if static_channel_names:
@@ -97,7 +177,12 @@ class AnemoiDataset(DownscalingDataset):
             static_open_dataset_kwargs = {}
             if not self.real_target and trim_edge > 0:
                 static_open_dataset_kwargs['trim_edge'] = trim_edge
-            static_dataset = open_dataset(target_anemoi_dataset_path, select=static_channel_names, start=start_date, end=start_date, **static_open_dataset_kwargs)
+            if self.target_missing_as_zeros:
+                # The requested start_date may lie outside the target dataset; static
+                # (time-invariant) channels are read from its first available time point.
+                static_dataset = open_dataset(target_anemoi_dataset_path, select=static_channel_names, **static_open_dataset_kwargs)
+            else:
+                static_dataset = open_dataset(target_anemoi_dataset_path, select=static_channel_names, start=start_date, end=start_date, **static_open_dataset_kwargs)
             assert static_dataset.shape[1] == len(static_channel_names)
             # take first time point, and squeeze() to remove ensemble dimension
             static_data = static_dataset[0,:,:,:].squeeze()
@@ -121,22 +206,40 @@ class AnemoiDataset(DownscalingDataset):
                                         else ChannelMetadata(name.split('_')[0],name.split('_')[1])
                                         for name in output_channel_names]
         # Load era5 channel names
-        self._input_channels = [ChannelMetadata(name) if len(name.split('_'))==1 
+        self._input_channels = [ChannelMetadata(name) if len(name.split('_'))==1
                                     else ChannelMetadata(name.split('_')[0],name.split('_')[1])
                                     for name in input_channel_names]
         
-        # Load stats for normalizing channels of input and output
-        target_stats = self._output_dataset.statistics
+        # Load stats for normalizing channels of input and output.
+        # Optionally read the statistics from a different dataset than the one providing
+        # the data. This is needed at inference when the data comes from a different
+        # dataset than the one used for training: normalization must use the training
+        # dataset's stats so the model sees inputs in the same normalized space it was
+        # trained on. The stats dataset is opened with the same channel selection so the
+        # returned statistics align with the (input/output) channel order.
+        if target_stats_anemoi_dataset_path is not None:
+            target_stats = open_dataset(
+                target_stats_anemoi_dataset_path,
+                select=output_channel_names_real if self.real_target else output_channel_names,
+            ).statistics
+        else:
+            target_stats = self._output_dataset.statistics
         self.output_mean = target_stats['mean'][:]
         self.output_std = target_stats['stdev'][:]
 
-        input_stats = self._input_dataset.statistics
+        if input_stats_anemoi_dataset_path is not None:
+            input_stats = open_dataset(
+                input_stats_anemoi_dataset_path,
+                select=input_channel_names,
+            ).statistics
+        else:
+            input_stats = self._input_dataset.statistics
         self.input_mean = input_stats['mean'][:]
         self.input_std = input_stats['stdev'][:]
 
-        assert len(transform_channels) == len(transform_input_means) ==\
-            len(transform_input_stdevs) == len(transform_output_means) == \
-                len(transform_output_stdevs)
+        # assert len(transform_channels) == len(transform_input_means) ==\
+        #     len(transform_input_stdevs) == len(transform_output_means) == \
+        #         len(transform_output_stdevs)
 
         # FEATURE: load the mean and std values for transformed channels and update the normalization statistics
         self.input_transforms = {}
@@ -150,7 +253,7 @@ class AnemoiDataset(DownscalingDataset):
             if transformation.startswith('box_cox'):
                 lmbda_str = transformation.split('_')[-1]
                 lmbda = float(transformation.split('_')[-1])/(10**(len(lmbda_str)-1))
-                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx} ({input_channel_names[input_channel_idx]}), output idx: {output_channel_idx} ({output_channel_names[output_channel_idx]}))")
+                print(f"Applying Box-Cox transformation with lambda={lmbda} to channel {channel} (input idx: {input_channel_idx} ({input_channel_names[input_channel_idx] if input_channel_idx else None}), output idx: {output_channel_idx} ({output_channel_names[output_channel_idx] if output_channel_idx else None}))")
                 if input_channel_idx is not None:
                     self.input_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_transform(x, lmbda)
                     self.input_inverse_transforms[input_channel_idx] = lambda x, lmbda=lmbda: self.box_cox_inverse_transform(x, lmbda)
@@ -182,10 +285,14 @@ class AnemoiDataset(DownscalingDataset):
         
         # Don't reshape, but do squeeze ensemble dimension.
         input_data = self._input_dataset[idx].squeeze()
-        
-        # Pull target data
-        # squeeze the ensemble dimesnsion
-        target_data = self._output_dataset[idx].squeeze()
+        # Pull target data at the same valid time as the input (squeeze the ensemble
+        # dimension). output_idx is None only when target_missing_as_zeros is set and the
+        # target has no data for this date, in which case a zeros tensor is returned.
+        output_idx = self._output_index_for_input[idx]
+        if output_idx is None:
+            target_data = np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
+        else:
+            target_data = self._output_dataset[output_idx].squeeze()
         
         # next two steps only if target is cosmo, real has to be regridded first (done in training loop on gpu-s for efficiency)
         # reshape to image_shape
@@ -204,7 +311,9 @@ class AnemoiDataset(DownscalingDataset):
         return self.static_data_normalized
     
     def __len__(self):
-        return len(self._output_dataset.dates)
+        # Iteration is driven by the input dataset (each input date is paired with the
+        # target at the same valid time), so the length is the number of input dates.
+        return len(self._input_dataset.dates)
 
     # Question: Do we need an input longitude as well?
     def longitude(self) -> np.ndarray:
@@ -234,7 +343,9 @@ class AnemoiDataset(DownscalingDataset):
     def time(self) -> List:
         """Get time values from the dataset."""
         #TODO Choose the time format and convert to that, currently it's a string from a filename
-        return [to_datetime(dt64).strftime('%Y%m%d-%H%M') for dt64 in self._output_dataset.dates]
+        # Iteration is driven by the input dataset, so its dates define the sample times.
+        dates = self._input_dataset.dates
+        return [to_datetime(dt64).strftime('%Y%m%d-%H%M') for dt64 in dates]
 
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data."""

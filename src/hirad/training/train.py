@@ -233,7 +233,9 @@ def main(cfg: DictConfig) -> None:
 
     if dist.rank==0 and not os.path.exists(os.path.join(checkpoint_dir, 'model_args.json')):
         with open(os.path.join(checkpoint_dir, f'model_args.json'), 'w') as f:
-            json.dump(model_args, f)
+            # json.dump(model_args, f)
+            json.dump(OmegaConf.to_container(OmegaConf.structured(model_args), resolve=True), f)
+
 
     if use_apex_gn:
         model.to(memory_format=torch.channels_last)
