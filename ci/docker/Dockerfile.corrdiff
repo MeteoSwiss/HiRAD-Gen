@@ -6,7 +6,7 @@ RUN pip install --upgrade pip
     
 # Install the rest of dependencies.
 RUN pip install \
-    anemoi.datasets \
+    anemoi.datasets==0.5.41 \
     Cartopy==0.22.0 \
     xskillscore \
     scoringrules \
