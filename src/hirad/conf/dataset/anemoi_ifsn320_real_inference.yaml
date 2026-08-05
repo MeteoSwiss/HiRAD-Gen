@@ -7,6 +7,7 @@ input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_50
 output_channel_names: [2t, 10u, 10v, tp]
 static_channel_names: ['FIS']
 transform_channels: ['tp-box_cox_025']
+# Copied stats from era-real
 transform_input_means: {'tp-box_cox_025': -3.815209745618941}
 transform_input_stdevs: {'tp-box_cox_025': 0.22851179478814418}
 transform_output_means: {'tp-box_cox_025': -3.8121187083242556}

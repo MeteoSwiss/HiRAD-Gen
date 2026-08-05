@@ -20,27 +20,15 @@ class AnemoiForecastDataset(AnemoiDataset):
     is downscaled independently against the target dataset's matching valid time
     (reference_time + step).
 
-    TODO: Skips target data, as this dataset is currently inference-only.
-    Add proper handling for this.
-    assumes every (base_date, step) valid time exists in the target
-    dataset's dates. Add handling (skip/filter, like IFSDataset's
-    _target_indices/_aligned_dates) for valid times that fall outside the
-    target's coverage or don't land on one of its timestamps.
+    Most methods inherited from AnemoiDataset.
 
-    Inherited unchanged from AnemoiDataset (same target/static grid and channel
-    definitions; unaffected by the input's extra step axis): longitude(),
-    latitude(), input_channels(), output_channels(), static_channels(),
-    image_shape(), input_shape(), get_static_data(), normalization_stats(),
-    stats_to_torch()/stats_to_numpy(), normalize/denormalize_input()/output(),
-    box_cox_transform()/box_cox_inverse_transform(), make_time_grids() (operates
-    on the 'YYYYMMDD-HHMM' valid-time strings returned by time(), whose format
-    is unchanged here).
+    NOTE: This class can currently only be used for inference-only tasks.
+    TODO: Add proper handling which does target data pairing (when config
+    specifies that this is not inference-only). Will need new config variable.
 
-    Overridden here (touch the reference-time/step structure directly):
-    _align_input_output(), __getitem__, __len__, time().
-
-    `type` follows "anemoi_ifsn320_<cosmo|real>" - the input is IFS forecast data
+    `type` follows "anemoi_ifsn320_real" - the input is IFS forecast data
     on the N320 grid, not era5, hence the distinct VALID_INPUT_DATASETS name.
+    Could be extended to COSMO grid if needed.
     """
 
     VALID_INPUT_DATASETS = {'ifsn320'}
