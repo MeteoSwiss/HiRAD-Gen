@@ -117,7 +117,20 @@ class AnemoiDataset(DownscalingDataset):
         max_lon = max(longitudes) + INPUT_MARGIN_DEGREES
         area=(max_lat, min_lon, min_lat, max_lon)
         
-        self._input_dataset = self._open_input_dataset(input_anemoi_dataset_path, input_channel_names, start_date, end_date, area)
+        # Optionally resample the input to a coarser frequency (e.g. '6h') so it can be
+        # paired with an hourly target. A natively-lower-frequency input works without
+        # this; it is only needed to subsample a finer input.
+        input_open_dataset_kwargs = {}
+        if input_frequency is not None:
+            input_open_dataset_kwargs['frequency'] = input_frequency
+
+        self._input_dataset = self._open_input_dataset(
+            input_anemoi_dataset_path,
+            input_channel_names,
+            start_date,
+            end_date,
+            area,
+            input_open_dataset_kwargs)
         # Assumes the opened input dataset's variables are exactly input_channel_names,
         # in that order - true when opened with select=input_channel_names (base case),
         # and also true for subclasses (e.g. AnemoiForecastDataset) that open without
@@ -231,13 +244,13 @@ class AnemoiDataset(DownscalingDataset):
             self.longitude(),
             self.latitude())
 
-    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area):
+    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
         """Open the input dataset, restricted to the target's date range and area.
 
         Overridden by subclasses whose input dataset can't be subset by start/end
         the same way (e.g. AnemoiForecastDataset's 5D forecast store).
         """
-        return open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area)
+        return open_dataset(input_anemoi_dataset_path, select=input_channel_names, start=start_date, end=end_date, area=area, **open_dataset_kwargs)
 
     def _align_input_output(self):
         """

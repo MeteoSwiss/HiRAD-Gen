@@ -68,7 +68,7 @@ class AnemoiForecastDataset(AnemoiDataset):
             trim_edge=trim_edge,
         )
 
-    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area):
+    def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
         # No select/start/end/area here: anemoi-datasets' Select/date/Cropping
         # subsetting wrappers don't forward the 5D-specific `base_dates`/`steps`
         # attributes (and Cropping/date-subsetting outright fail on a 5D forecast
