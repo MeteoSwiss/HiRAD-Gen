@@ -20,7 +20,9 @@ class AnemoiForecastDataset(AnemoiDataset):
     is downscaled independently against the target dataset's matching valid time
     (reference_time + step).
 
-    TODO: assumes every (base_date, step) valid time exists in the target
+    TODO: Skips target data, as this dataset is currently inference-only.
+    Add proper handling for this.
+    assumes every (base_date, step) valid time exists in the target
     dataset's dates. Add handling (skip/filter, like IFSDataset's
     _target_indices/_aligned_dates) for valid times that fall outside the
     target's coverage or don't land on one of its timestamps.
@@ -100,8 +102,10 @@ class AnemoiForecastDataset(AnemoiDataset):
         for ref_idx, base_date in enumerate(base_dates):
             for step_idx, step in enumerate(steps):
                 valid_time = base_date + step
-                # TODO: see class docstring - assumes valid_time is always present.
-                target_idx = np.nonzero(target_dates == valid_time)[0]
+                # no ground-truth target data; only use for shape/static fields.
+                # TODO: Update this to explicitly handle an inference-only case, where target data is missing.
+                target_idx = [0]
+                #target_idx = np.nonzero(target_dates == valid_time)[0]
                 assert len(target_idx) == 1, \
                     f"Expected exactly one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
                 self._pairs.append((ref_idx, step_idx, int(target_idx[0])))
