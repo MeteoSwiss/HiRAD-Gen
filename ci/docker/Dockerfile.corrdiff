@@ -1,7 +1,12 @@
 FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
     
-# setup
-RUN apt-get update && apt-get install python3-pip python3-venv -y
+# setup and install eccodes 
+# Install the system-level C binary and tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libeccodes-dev \
+    libeccodes-tools \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --upgrade pip
     
 # Install the rest of dependencies.
@@ -11,4 +16,5 @@ RUN pip install \
     xskillscore \
     scoringrules \
     mlflow \
-    meteodata-lab 
+    meteodata-lab \
+    eccodes
