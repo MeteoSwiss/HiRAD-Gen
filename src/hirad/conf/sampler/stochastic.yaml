@@ -1,3 +1,9 @@
 # Stochastic sampler is slower, but should give better results than deterministic sampler.
 
 type: stochastic
+params:
+  solver: heun
+  # ODE solver type: heun is a 2nd order solver (two model evaluations per step, higher quality),
+  # euler is a 1st order solver (one model evaluation per step, ~2x faster)
+  num_steps: 18
+  # Number of denoising steps

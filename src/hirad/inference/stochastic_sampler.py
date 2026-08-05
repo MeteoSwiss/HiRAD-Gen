@@ -15,7 +15,7 @@
 # limitations under the License.
 
 
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 import time
 
 import torch
@@ -45,6 +45,7 @@ def stochastic_sampler(
     sigma_min: float = 0.002,
     sigma_max: float = 800,
     rho: float = 7,
+    solver: Literal["heun", "euler"] = "heun",
     S_churn: float = 0,
     S_min: float = 0,
     S_max: float = float("inf"),
@@ -120,6 +121,12 @@ def stochastic_sampler(
         Maximum noise level. By default 800.
     rho : float
         Exponent used in the time step discretization. By default 7.
+    solver : Literal["heun", "euler"]
+        The numerical method used to integrate the ODE. "euler" is a 1st
+        order solver (one network evaluation per step), which is faster
+        but less accurate. "heun" is 2nd order (two network evaluations
+        per step, except the last), more expensive, but produces
+        higher-quality images. By default "heun".
     S_churn : float
         Churn parameter controlling the level of noise added in each step. By
         default 0.
@@ -144,6 +151,9 @@ def stochastic_sampler(
         wrapper that provides preconditioning for super-resolution diffusion
         models and implements the required interface for this sampler.
     """
+
+    if solver not in ["euler", "heun"]:
+        raise ValueError(f"Unknown solver {solver}")
 
     # Adjust noise levels based on what's supported by the network.
     # Proposed EDM sampler (Algorithm 2) with minor changes to enable super-resolution.
@@ -308,8 +318,8 @@ def stochastic_sampler(
         d_cur = (x_hat - denoised) / t_hat
         x_next = x_hat + (t_next - t_hat) * d_cur
 
-        # Apply 2nd order correction.
-        if i < num_steps - 1:
+        # Apply 2nd order correction (Heun solver only; Euler keeps the 1st order step above).
+        if solver == "heun" and i < num_steps - 1:
             # Patched input
             # (batch_size * patch_num, C_out, patch_shape_y, patch_shape_x)
             x_next_batch = (patching.apply(input=x_next) if patching else x_next).to(

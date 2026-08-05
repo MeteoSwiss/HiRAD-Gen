@@ -168,6 +168,12 @@ def main(cfg: dict) -> None:
         prediction = input_files.load(curr_time, f'{curr_time}-predictions')
         baseline = input_files.load(curr_time, f'{curr_time}-baseline')
         target = input_files.load(curr_time, f'{curr_time}-target')
+        # When the target dataset has no data for this date it is saved as all zeros
+        # (see AnemoiDataset.target_missing_as_zeros). With no ground truth available,
+        # skip plotting the target and computing error metrics against it.
+        target_missing = not np.any(target)
+        if target_missing:
+            logger.info(f"Target for {curr_time} is all zeros; skipping target plots and error metrics.")
         try:
             mean_pred = input_files.load(curr_time, f'{curr_time}-regression-prediction')
         except FileNotFoundError:
@@ -186,7 +192,7 @@ def main(cfg: dict) -> None:
             target_2d = target[out_idx, :, :]
             baseline_2d = baseline[in_idx, :, :]
             vmin, vmax = calculate_bounds(
-                target_2d,
+                None if target_missing else target_2d,
                 prediction[:, out_idx, :, :] if prediction.ndim > 3 else prediction[idx, :, :],
                 None if channel.name == "tp" else baseline_2d,
                 mean_pred[out_idx, :, :] if mean_pred is not None else None,
@@ -194,7 +200,10 @@ def main(cfg: dict) -> None:
             meta = ChannelMeta.get(channel, vmin=vmin, vmax=vmax)
 
             # Build sources to plot: (label, member_idx, 2D field).
-            sources: list = [("target", None, target_2d), ("baseline", None, baseline_2d)]
+            sources: list = []
+            if not target_missing:
+                sources.append(("target", None, target_2d))
+            sources.append(("baseline", None, baseline_2d))
             if mean_pred is not None:
                 sources.append(("mean-prediction", None, mean_pred[out_idx, :, :]))
             for m, p in _pred_members(prediction, out_idx):
@@ -211,7 +220,7 @@ def main(cfg: dict) -> None:
             for label, m, data in sources:
                 save_field(label, data, meta, output_files, channel, curr_time,
                            member=m, title=plot_title, grid_cfg=grid_cfg)
-                if label == "target":
+                if label == "target" or target_missing:
                     continue
                 _, mae = compute_mae(data, target_2d)
                 me = data - target_2d
@@ -233,10 +242,10 @@ def main(cfg: dict) -> None:
         i_u, i_v = wind_in["10u"], wind_in["10v"]
 
         # Build wind sources: (label, member_idx, u_2d, v_2d).
-        wind_sources: list = [
-            ("target",   None, target[o_u, :, :],   target[o_v, :, :]),
-            ("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :]),
-        ]
+        wind_sources: list = []
+        if not target_missing:
+            wind_sources.append(("target", None, target[o_u, :, :], target[o_v, :, :]))
+        wind_sources.append(("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :]))
         if mean_pred is not None:
             wind_sources.append(("mean-prediction", None, mean_pred[o_u, :, :], mean_pred[o_v, :, :]))
         for m, pu, pv in _pred_members(prediction, o_u, o_v):
@@ -271,10 +280,10 @@ def main(cfg: dict) -> None:
         title_wp = f"{format_time_str(curr_time)}: FF10m + Precipitation"
         wp_dir = output_files._ensure_dir("wind_precip")
 
-        wp_sources: list = [
-            ("target",   None, target[o_u, :, :],   target[o_v, :, :],   target[tp_out_idx, :, :]),
-            ("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :], baseline[tp_in_idx, :, :]),
-        ]
+        wp_sources: list = []
+        if not target_missing:
+            wp_sources.append(("target", None, target[o_u, :, :], target[o_v, :, :], target[tp_out_idx, :, :]))
+        wp_sources.append(("baseline", None, baseline[i_u, :, :], baseline[i_v, :, :], baseline[tp_in_idx, :, :]))
         if mean_pred is not None:
             wp_sources.append(("mean-prediction", None,
                                mean_pred[o_u, :, :], mean_pred[o_v, :, :], mean_pred[tp_out_idx, :, :]))
