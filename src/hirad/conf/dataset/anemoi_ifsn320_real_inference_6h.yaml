@@ -1,0 +1,19 @@
+type: anemoi_ifsn320_real
+input_anemoi_dataset_path: '/capstor/store/cscs/pasc/c38/ifs-forecasts/fc_medium_20260730-20260731_N320.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+# Copied stats from era-real6h
+transform_input_means: {'tp-box_cox_025': -3.6759370671419296}
+transform_input_stdevs: {'tp-box_cox_025': 0.3549699264082265}
+transform_output_means: {'tp-box_cox_025': -3.8122792453976}
+transform_output_stdevs: {'tp-box_cox_025': 0.3346287581617763}
+n_month_hour_channels: 4
+start_date: '2026-07-30'
+end_date: '2026-07-31'
+trim_edge: 41
+# During generation, emit a zeros target tensor for dates missing from the target
+# dataset (iteration is driven by the input dataset instead of the target).
+target_missing_as_zeros: true
