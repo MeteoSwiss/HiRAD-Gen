@@ -138,4 +138,12 @@ class AnemoiForecastDataset(AnemoiDataset):
             for ref_idx, step_idx, _ in self._pairs
         ]
 
+    def base_time(self) -> List:
+        """Get reference/issue-time ('YYYYMMDD-HHMM') values, one per (reference_time, step)
+        pair. Used to disambiguate pairs whose valid times overlap."""
+        return [
+            to_datetime(self._input_dataset.base_dates[ref_idx]).strftime('%Y%m%d-%H%M')
+            for ref_idx, step_idx, _ in self._pairs
+        ]
+
 ANEMOI_IFSN320_REAL = AnemoiForecastDataset
