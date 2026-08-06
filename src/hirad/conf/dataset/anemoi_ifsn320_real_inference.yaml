@@ -16,3 +16,6 @@ n_month_hour_channels: 4
 start_date: '2026-07-30'
 end_date: '2026-07-31'
 trim_edge: 41
+# During generation, emit a zeros target tensor for dates missing from the target
+# dataset (iteration is driven by the input dataset instead of the target).
+target_missing_as_zeros: true
