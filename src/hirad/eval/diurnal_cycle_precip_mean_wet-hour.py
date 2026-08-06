@@ -8,12 +8,14 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
+from hirad.eval.eval_utils import concat_and_group_diurnal, get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, precip_unit_label, resolve_ts_dir, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
 plt.rcParams.update(FONT_SIZE)
 
-ALLHOUR_THRESHOLDS = [0.1, 1.0, 10.0, 100.0]  # mm/h
+# Threshold values are kept numerically constant regardless of the accumulation window
+# (see precip_unit_label); they are applied against whatever unit that window implies.
+ALLHOUR_THRESHOLDS = [0.1, 1.0, 10.0, 100.0]
 
 
 def save_plot(hour, means, stds, labels, ylabel, title, out_path):
@@ -43,7 +45,7 @@ def main(cfg: dict):
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting computations for diurnal cycle of precipitation amount and wet-hours")
+    logger.info("Starting computations for diurnal cycle of precipitation amount and wet-periods")
     try:
         generation_dir, gen_cfg, times = load_generation_setup(cfg)
     except ValueError as exc:
@@ -51,6 +53,9 @@ def main(cfg: dict):
         return
     datetimes = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
     logger.info(f"Loaded {len(times)} timesteps to process")
+
+    unit = precip_unit_label(times)
+    logger.info(f"Precipitation unit: {unit}")
 
     indices = get_channel_indices(gen_cfg)
 
@@ -67,7 +72,7 @@ def main(cfg: dict):
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
     land_mask = land_mask.where(relax_zone_interior_mask(cfg.get("height"), cfg.get("width"), cfg.get("relax_zone")))
 
-    conv_factor = precip_conv_factor(cfg)  # mm/h
+    conv_factor = precip_conv_factor(cfg)
 
     # Prepare lists to collect DataArrays
     target_precip, baseline_precip, pred_precip, mean_pred_precip = [], [], [], []
@@ -108,7 +113,7 @@ def main(cfg: dict):
         if mean_pred is not None:
             mean_pred_precip.append(da_mean_pred.mean(dim=("lat","lon")).assign_coords(time=dt))
 
-        # Wet-hour fraction per threshold (data already in mm/h)
+        # Wet-period fraction per threshold (data already converted to `unit`)
         for thr in ALLHOUR_THRESHOLDS:
             wet_target[thr].append((da_target > thr).mean().assign_coords(time=dt))
             wet_baseline[thr].append((da_baseline > thr).mean().assign_coords(time=dt))
@@ -134,12 +139,12 @@ def main(cfg: dict):
         [amount_target_mean, amount_baseline_mean, amount_pred_mean, amount_mean_pred_mean] if mean_pred_precip else [amount_target_mean, amount_baseline_mean, amount_pred_mean],
         [None, None, amount_pred_std, None] if mean_pred_precip else [None, None, amount_pred_std],
         ['Target','Input','Pred. ± Std', 'Regression Prediction'] if mean_pred_precip else ['Target','Input','Pred. ± Std'],
-        'Precipitation (mm/h)',
+        f'Precipitation ({unit})',
         'Diurnal Cycle of Precip Amount',
         output_path / 'diurnal_cycle_precip_amount.png'
     )
 
-    # Diurnal cycle of wet-hours, one plot per threshold
+    # Diurnal cycle of wet-periods, one plot per threshold
     for thr in ALLHOUR_THRESHOLDS:
         wet_target_mean, _ = concat_and_group_diurnal(wet_target[thr], scale=100.0)
         wet_baseline_mean, _ = concat_and_group_diurnal(wet_baseline[thr], scale=100.0)
@@ -154,11 +159,11 @@ def main(cfg: dict):
             [wet_target_mean, wet_baseline_mean, wet_pred_mean, wet_mean_pred_mean] if has_regpred else [wet_target_mean, wet_baseline_mean, wet_pred_mean],
             [None, None, wet_pred_std, None] if has_regpred else [None, None, wet_pred_std],
             ['Target','Input','Pred. ± Std', 'Regression Prediction'] if has_regpred else ['Target','Input','Pred. ± Std'],
-            'Wet-Hour Fraction [%]',
-            f'Diurnal Cycle of Wet-Hours (>{thr:g} mm/h)',
+            'Wet-Period Fraction [%]',
+            f'Diurnal Cycle of Wet-Periods (>{thr:g} {unit})',
             fn_wet,
         )
-        logger.info(f"Diurnal wet-hour plot saved: {fn_wet}")
+        logger.info(f"Diurnal wet-period plot saved: {fn_wet}")
 
     logger.info("Plots saved.")
 

@@ -484,6 +484,12 @@ class BiasByPercentileSpec:
     # Combines the (scaled) per-channel flat fields into the plotted scalar.
     # Defaults to the single-channel identity; wind speed uses ``hypot``.
     reduce_fn: Callable[[list], np.ndarray] = lambda flats: flats[0]
+    # Optional: derive a unit string from the resolved `times` (e.g. precipitation's
+    # accumulation window, which varies with the input dataset's frequency). When set,
+    # every *_ylabel field is formatted with `.format(unit=...)` (a harmless no-op for
+    # labels without a `{unit}` placeholder, e.g. temperature/wind), and the resolved
+    # unit is passed as `unit=` to each save_* callable.
+    unit_label: Callable[[list], str] | None = None
 
 
 def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
@@ -499,6 +505,9 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         logger.error(str(exc))
         return
     logger.info(f"Loaded {len(times)} timesteps to process")
+
+    unit = spec.unit_label(times) if spec.unit_label else None
+    fmt_label = (lambda label: label.format(unit=unit)) if unit is not None else (lambda label: label)
 
     out_root = Path(generation_dir)
 
@@ -608,16 +617,16 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
     fn = output_path / f'{spec.output_prefix}_bias_by_percentile{suffix}.png'
     spec.save_bias(
         bias_data, percentile_values, labels, colors,
-        title=spec.bias_title + title_note, xlabel='All-hour Percentile', ylabel=spec.bias_ylabel,
-        out_path=fn, mean_q=target_mean_q,
+        title=spec.bias_title + title_note, xlabel='All-hour Percentile', ylabel=fmt_label(spec.bias_ylabel),
+        out_path=fn, mean_q=target_mean_q, unit=unit,
     )
     logger.info(f"Bias-by-percentile plot saved: {fn}")
 
     fn_mae = output_path / f'{spec.output_prefix}_mae_by_percentile{suffix}.png'
     spec.save_mae(
         mae_data, percentile_values, labels, colors,
-        title=spec.mae_title + title_note, xlabel='All-hour Percentile', ylabel=spec.mae_ylabel,
-        out_path=fn_mae, mean_q=target_mean_q,
+        title=spec.mae_title + title_note, xlabel='All-hour Percentile', ylabel=fmt_label(spec.mae_ylabel),
+        out_path=fn_mae, mean_q=target_mean_q, unit=unit,
     )
     logger.info(f"MAE-by-percentile plot saved: {fn_mae}")
 
@@ -625,8 +634,8 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         fn_fbi = output_path / f'{spec.output_prefix}_fbi_by_percentile{suffix}.png'
         spec.save_fbi(
             fbi_data, percentile_values, labels, colors,
-            title=spec.fbi_title + title_note, xlabel='All-hour Percentile', ylabel=spec.fbi_ylabel,
-            out_path=fn_fbi, mean_q=target_mean_q,
+            title=spec.fbi_title + title_note, xlabel='All-hour Percentile', ylabel=fmt_label(spec.fbi_ylabel),
+            out_path=fn_fbi, mean_q=target_mean_q, unit=unit,
         )
         logger.info(f"FBI-by-percentile plot saved: {fn_fbi}")
 
@@ -634,7 +643,7 @@ def run_bias_by_percentile(cfg: dict, spec: BiasByPercentileSpec) -> None:
         fn_spread = output_path / f'{spec.output_prefix}_spread_by_percentile{suffix}.png'
         spec.save_spread(
             spread, percentile_values,
-            title=spec.spread_title + title_note, xlabel='All-hour Percentile', ylabel=spec.spread_ylabel,
-            out_path=fn_spread, mean_q=target_mean_q,
+            title=spec.spread_title + title_note, xlabel='All-hour Percentile', ylabel=fmt_label(spec.spread_ylabel),
+            out_path=fn_spread, mean_q=target_mean_q, unit=unit,
         )
         logger.info(f"Spread-by-percentile plot saved: {fn_spread}")

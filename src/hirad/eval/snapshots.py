@@ -15,6 +15,7 @@ from hirad.eval.eval_utils import (
     grid_cfg_from_cfg,
     load_generation_setup,
     parse_eval_cli,
+    precip_unit_label,
     resolve_io_channels,
     resolve_ts_dir,
 )
@@ -50,7 +51,9 @@ class ChannelMeta:
         return base
 
 CHANNELS = {
-    "tp": ChannelMeta(name="tp", cmap=None, unit="mm/h", extend="max", precip_kwargs={"threshold": 0.01, "rfac": 1000.0}),
+    # "tp" unit is resolved per-run from the generated timesteps and patched onto this
+    # entry in main() (see precip_unit_label); this default is only a placeholder.
+    "tp": ChannelMeta(name="tp", cmap=None, unit="mm", extend="max", precip_kwargs={"threshold": 0.01, "rfac": 1000.0}),
     "2t": ChannelMeta(name="2t", cmap="RdYlBu_r", me_cmap="RdBu", unit="K", err_vmin=-4.5, err_vmax=4.5),
     "10u": ChannelMeta(name="10u", cmap="BrBG", me_cmap="BrBG", unit="m/s", err_vmin=-10, err_vmax=10, vmin=-10, vmax=10),
     "10v": ChannelMeta(name="10v", cmap="BrBG", me_cmap="BrBG", unit="m/s", err_vmin=-10, err_vmax=10, vmin=-10, vmax=10),
@@ -137,6 +140,11 @@ def main(cfg: dict) -> None:
     except ValueError as exc:
         logger.error(str(exc))
         return
+
+    # Precip's unit depends on the input dataset's frequency (its accumulation window),
+    # so it's resolved per-run from the generated timesteps rather than hardcoded.
+    tp_unit = precip_unit_label(times)
+    CHANNELS["tp"] = replace(CHANNELS["tp"], unit=tp_unit)
 
     input_channels, output_channels = resolve_io_channels(gen_cfg)
 
@@ -295,7 +303,7 @@ def main(cfg: dict) -> None:
             plot_map_wind_precip(
                 u, v, tp,
                 str(wp_dir / f"{curr_time}-wind_precip-{suffix}"),
-                title=title_wp, grid_cfg=grid_cfg,
+                title=title_wp, tp_unit=tp_unit, grid_cfg=grid_cfg,
             )
 
     logger.info(f"Snapshots saved to: {output_path}")

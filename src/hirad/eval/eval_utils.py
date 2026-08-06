@@ -1,5 +1,6 @@
 import argparse
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -58,15 +59,39 @@ def grid_cfg_from_cfg(cfg) -> GridConfig:
 
 
 def precip_conv_factor(cfg: dict) -> float:
-    """Return the single factor converting stored precipitation to mm/h.
+    """Return the single factor converting stored precipitation to mm per input step.
 
-    ERA5 precipitation is an hourly accumulated depth in metres, so the only
-    physical conversion is metres -> millimetres (x1000), yielding mm/h. This is
-    the *one* precipitation unit used throughout evaluation: per-day and multi-day
-    totals (Rx1day, Rx5day, CDD/CWD, ...) are obtained by summing mm/h values over
-    time, never via a separate scaling factor.
+    ERA5 precipitation is a depth in metres accumulated over one input timestep,
+    so the only physical conversion is metres -> millimetres (x1000). This is the
+    *one* precipitation unit used throughout evaluation: per-day and multi-day
+    totals (Rx1day, Rx5day, CDD/CWD, ...) are obtained by summing per-step values
+    over time, never via a separate scaling factor. See :func:`precip_unit_label`
+    for the actual accumulation window (e.g. mm/h vs mm/6h), derived from the
+    generated timesteps rather than hardcoded.
     """
     return float(cfg.get("precip_conv_factor", 1000.0))
+
+
+def sample_interval_hours(times: list) -> int:
+    """Median spacing between consecutive resolved timesteps, in whole hours.
+
+    Derived directly from the generated timestamps (format ``%Y%m%d-%H%M``)
+    rather than by re-opening the source dataset, since every eval script
+    already resolves ``times`` via :func:`load_generation_setup`. This equals
+    the input dataset's frequency, and is also the window each generated
+    precipitation sample is accumulated over.
+    """
+    dts = sorted(datetime.strptime(t, "%Y%m%d-%H%M") for t in times)
+    if len(dts) < 2:
+        return 1
+    diffs_h = [(b - a).total_seconds() / 3600 for a, b in zip(dts[:-1], dts[1:])]
+    return int(round(float(np.median(diffs_h))))
+
+
+def precip_unit_label(times: list) -> str:
+    """Precipitation accumulation unit label (e.g. ``'mm/h'``, ``'mm/6h'``) for *times*."""
+    hours = sample_interval_hours(times)
+    return 'mm/h' if hours == 1 else f'mm/{hours}h'
 
 
 def relax_zone_interior_mask(height: int, width: int, relax_zone: int) -> np.ndarray:
@@ -195,12 +220,12 @@ def _resolve_times(cfg: dict, gen_cfg: dict, time_format: str = "%Y%m%d-%H%M") -
 def resolve_io_channels(gen_cfg: dict) -> Tuple[list, list]:
     """Resolve ``(input_channels, output_channels)`` from a generation config.
 
-    Uses ``input_channel_names`` / ``output_channels_names`` from ``gen_cfg['dataset']``
+    Uses ``input_channel_names`` / ``output_channel_names`` from ``gen_cfg['dataset']``
     when available; otherwise instantiates the dataset and queries it.
     """
     dataset_cfg = gen_cfg.get("dataset", {})
     input_channels = get_channels_from_strings(dataset_cfg.get("input_channel_names", []))
-    output_channels = get_channels_from_strings(dataset_cfg.get("output_channels_names", []))
+    output_channels = get_channels_from_strings(dataset_cfg.get("output_channel_names", []))
     if not input_channels or not output_channels:
         dataset = known_datasets[dataset_cfg.get("type")](**dataset_cfg)
         input_channels = dataset.input_channels()

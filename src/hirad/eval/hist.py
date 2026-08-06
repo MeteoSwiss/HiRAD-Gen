@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, precip_unit_label, resolve_ts_dir
 from hirad.eval.eval_utils import percentiles_from_histogram, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
@@ -112,6 +112,8 @@ def main(cfg: dict):
         return
     logger.info(f"Loaded {len(times)} timesteps to process")
 
+    unit = precip_unit_label(times)
+    logger.info(f"Precipitation unit: {unit}")
 
     # Output root
     out_root = Path(generation_dir)
@@ -126,7 +128,7 @@ def main(cfg: dict):
     land_mask = load_land_sea_mask(cfg.get("land_sea_mask_path"), cfg.get("height"), cfg.get("width"))
     land_mask = land_mask.where(relax_zone_interior_mask(cfg.get("height"), cfg.get("width"), cfg.get("relax_zone")))
 
-    conv_factor = precip_conv_factor(cfg)  # mm/h
+    conv_factor = precip_conv_factor(cfg)
 
     # Define histogram bins
     # bins = np.logspace(-1, 3.3, 200)  # Log-spaced bins for precipitation
@@ -239,7 +241,7 @@ def main(cfg: dict):
         labels,
         colors,
         'Domain-Mean Precip. Over Land (Pooled Data)',
-        'Precipitation (mm/h)',
+        f'Precipitation ({unit})',
         fn,
         percentiles_data
     )

@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import xarray as xr
 
-from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, resolve_ts_dir, FONT_SIZE
+from hirad.eval.eval_utils import get_channel_indices, load_generation_setup, load_land_sea_mask, relax_zone_interior_mask, parse_eval_cli, precip_conv_factor, precip_unit_label, resolve_ts_dir, FONT_SIZE
 
 # Presentation-sized fonts for all figures in this script.
 plt.rcParams.update(FONT_SIZE)
@@ -58,6 +58,9 @@ def main(cfg: dict):
         return
     logger.info(f"Loaded {len(times)} timesteps to process")
 
+    unit = precip_unit_label(times)
+    logger.info(f"Precipitation unit: {unit}")
+
     # Output root
     out_root = Path(generation_dir)
 
@@ -81,7 +84,7 @@ def main(cfg: dict):
     # Storage for diurnal cycles: pct_mean[pct_key][mode], pct_std[pct_key]['prediction']
     pct_mean = {key: {} for _, key, _ in percentile_configs}
     pct_std  = {key: {} for _, key, _ in percentile_configs}
-    conv_factor = precip_conv_factor(cfg)  # mm/h
+    conv_factor = precip_conv_factor(cfg)
     land_idx = land_bool.values  # 1D boolean mask over flattened (lat, lon)
     n_land = int(land_idx.sum())
     quantiles = np.array([q for q, _, _ in percentile_configs])
@@ -208,7 +211,9 @@ def main(cfg: dict):
         return vals + [vals[0]]
 
     logger.info("Preparing data for plotting")
-    hrs_c = list(range(24)) + [24]
+    # Built from the hours actually present (not a fixed 0-23 range) so this also works
+    # when timesteps are coarser than hourly (e.g. a 6h input only has hours 0/6/12/18).
+    hrs_c = list(sorted_hours) + [sorted_hours[0] + 24]
     output_path = out_root / cfg.get("results_dir_name", "evaluation_maps")
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +242,7 @@ def main(cfg: dict):
             hrs_c,
             lines,
             plot_labels,
-            'Precipitation (mm/h)',
+            f'Precipitation ({unit})',
             f'Diurnal Cycle of {label}-Percentile Precipitation',
             fn
         )
