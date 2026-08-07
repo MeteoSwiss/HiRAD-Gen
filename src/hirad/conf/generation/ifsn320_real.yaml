@@ -56,4 +56,4 @@ io:
   # Checkpoint filename for the mean predictor model
   output_path: .
   output_format: 'both'
-  grib_template_path: '/users/mmcgloho/evalml/resources/inference/templates'
+  grib_template_path: '/capstor/store/cscs/pasc/c38/evalml/resources/inference/templates'
