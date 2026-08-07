@@ -281,6 +281,11 @@ def main(cfg: DictConfig) -> None:
                 lead_time_label = None
 
                 times = dataset.time()
+                # Present only on datasets where a valid time can be reached by more
+                # than one (reference_time, step) pair (e.g. forecast datasets with
+                # overlapping lead times); used to keep such pairs from overwriting
+                # each other's output.
+                base_times = dataset.base_time() if hasattr(dataset, "base_time") else None
                 # t_iter_end is updated at the end of each loop body; the gap between
                 # t_iter_end[i] and the start of body[i+1] equals DataLoader fetch time.
                 t_iter_end = _t()
@@ -299,7 +304,13 @@ def main(cfg: DictConfig) -> None:
                     if time_index == warmup_steps:
                         start.record()
 
-                    savedir = os.path.join(output_path,f"{times[sampler[time_index]]}")
+                    if base_times is not None:
+                        # base_time() is only defined for forecast-type datasets
+                        # (AnemoiForecastDataset); nest under it to keep overlapping
+                        # (reference_time, step) pairs from colliding on valid_time alone.
+                        savedir = os.path.join(output_path, base_times[sampler[time_index]], times[sampler[time_index]])
+                    else:
+                        savedir = os.path.join(output_path, times[sampler[time_index]])
                     os.makedirs(savedir,exist_ok=True)
 
                     #TODO: Move all the data processing inside the generator and just pass raw data to it. This includes regridding, normalization, date embedding creation, etc.

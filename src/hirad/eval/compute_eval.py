@@ -50,9 +50,27 @@ def main(cfg: DictConfig) -> None:
     pred_path = getattr(cfg.generation.io, "output_path", "./outputs")
     output_path = './plots/analysis202511'
 
-    compute_crps_per_time(times, dataset, pred_path, output_path)
-    compute_crps_over_time_and_area(times, output_path)
-    plot_crps_over_time_and_area(times, dataset, output_path)
+    if hasattr(dataset, "base_time"):
+        # Forecast dataset: a requested valid time may be reached by more than one
+        # (base_time, valid_time) pair (overlapping lead times), each written by
+        # generate.py under its own base_time subdirectory. Run the per-time-series
+        # evaluation independently for each base_time, mirroring that layout.
+        all_base_times = dataset.base_time()
+        all_valid_times = dataset.time()
+        base_time_to_valid_times = {}
+        for idx in sampler:
+            base_time_to_valid_times.setdefault(all_base_times[idx], []).append(all_valid_times[idx])
+        for base_time, valid_times in base_time_to_valid_times.items():
+            run_pred_path = os.path.join(pred_path, base_time)
+            run_output_path = os.path.join(output_path, base_time)
+            os.makedirs(run_output_path, exist_ok=True)
+            compute_crps_per_time(valid_times, dataset, run_pred_path, run_output_path)
+            compute_crps_over_time_and_area(valid_times, run_output_path)
+            plot_crps_over_time_and_area(valid_times, dataset, run_output_path)
+    else:
+        compute_crps_per_time(times, dataset, pred_path, output_path)
+        compute_crps_over_time_and_area(times, output_path)
+        plot_crps_over_time_and_area(times, dataset, output_path)
 
 def _get_data_path(output_path, time=None, filename=None):
     if time:

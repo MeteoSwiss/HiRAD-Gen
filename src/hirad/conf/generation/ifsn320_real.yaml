@@ -27,6 +27,7 @@ boundary_pix: 2
 hr_mean_conditioning: True
 
 times_range: ['20260730-0100','20260803-0000',1]
+#times_range: ['20260730-0600','20260801-0600',6]
   # Start date, end date and time interval (in hours) for the generation
 
 times: null

@@ -142,8 +142,16 @@ def get_dataset_and_sampler_inference(dataset_cfg, times, has_lead_time=False):
     #         datetime.datetime.strptime(time, "%Y-%m-%dT%H:%M:%S")
     #         for time in times
     #     ]
+    # A requested valid time can match more than one dataset item (e.g. a
+    # forecast dataset with overlapping (base_date, step) pairs sharing a
+    # valid time), so gather every match rather than just the first.
     all_times = dataset.time()
-    time_indices = [all_times.index(t) for t in times]
+    time_indices = []
+    for t in times:
+        matches = [i for i, time in enumerate(all_times) if time == t]
+        if not matches:
+            raise ValueError(f"Requested time {t} not found in dataset")
+        time_indices.extend(matches)
     sampler = time_indices
 
     return dataset, sampler

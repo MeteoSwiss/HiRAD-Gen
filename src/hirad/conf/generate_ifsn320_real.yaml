@@ -9,7 +9,8 @@ hydra:
 defaults:
   - _self_
   # Dataset
-  - dataset/anemoi_ifsn320_real_inference
+  - dataset/anemoi_ifsn320_real_inference_1h
+#  - dataset/anemoi_ifsn320_real_inference_6h
 
   # Sampler
   - sampler/stochastic

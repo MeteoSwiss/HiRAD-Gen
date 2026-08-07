@@ -37,6 +37,8 @@ class AnemoiForecastDataset(AnemoiDataset):
                 type: str,
                 input_anemoi_dataset_path: str,
                 target_anemoi_dataset_path: str,
+                input_stats_anemoi_dataset_path: str = None,
+                target_stats_anemoi_dataset_path: str = None,
                 start_date: datetime.datetime = None,
                 end_date: datetime.datetime = None,
                 input_channel_names: List[str] = [],
@@ -49,11 +51,15 @@ class AnemoiForecastDataset(AnemoiDataset):
                 transform_output_stdevs: dict = {},
                 n_month_hour_channels: int = None,
                 trim_edge: int = 0,
+                target_missing_as_zeros: bool = False,
+                input_frequency: str = None,
                 ):
         super().__init__(
             type=type,
             input_anemoi_dataset_path=input_anemoi_dataset_path,
             target_anemoi_dataset_path=target_anemoi_dataset_path,
+            input_stats_anemoi_dataset_path=input_stats_anemoi_dataset_path,
+            target_stats_anemoi_dataset_path=target_stats_anemoi_dataset_path,
             start_date=start_date,
             end_date=end_date,
             input_channel_names=input_channel_names,
@@ -66,6 +72,8 @@ class AnemoiForecastDataset(AnemoiDataset):
             transform_output_stdevs=transform_output_stdevs,
             n_month_hour_channels=n_month_hour_channels,
             trim_edge=trim_edge,
+            target_missing_as_zeros=target_missing_as_zeros,
+            input_frequency=input_frequency,
         )
 
     def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
@@ -78,25 +86,41 @@ class AnemoiForecastDataset(AnemoiDataset):
         return open_dataset(input_anemoi_dataset_path)
 
     def _align_input_output(self):
-        """Build one (ref_idx, step_idx, target_idx) entry per (reference_time,
-        step) pair, matching each pair's valid time (base_date + step) to its
-        index in the target dataset's dates.
+        """
+        Align input and output samples by valid time.
+        
+        By default, iteration is driven by the input dataset and each input
+        (base_time, step) is mapped to the target index at the same
+        valid_time (where valid_time = base_time + step). This supports
+        different input/target frequencies (e.g. 6h input with an
+        hourly target, where only the matching target times are used) as well as
+        targets missing some dates. each member of  `_pairs` is a tuple
+        (base_date_idx, step_idx, target_idx) where target_idx is the index of
+        the matching target or None when the target has no matching date.
         """
         base_dates = to_datetime(self._input_dataset.base_dates)
         steps = self._input_dataset.steps
         target_dates = to_datetime(self._output_dataset.dates)
 
+        # Note: assumes output dataset is a reanalysis dataset, not a forecast dataset.
+        output_date_to_idx = {
+            to_datetime(d): i for i, d in enumerate(self._output_dataset.dates)
+        }
+
         self._pairs = []
+        
+        # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
+        self._target_sample_shape = self._output_dataset.shape[1:]
+
         for ref_idx, base_date in enumerate(base_dates):
             for step_idx, step in enumerate(steps):
                 valid_time = base_date + step
-                # no ground-truth target data; only use for shape/static fields.
-                # TODO: Update this to explicitly handle an inference-only case, where target data is missing.
-                target_idx = [0]
-                #target_idx = np.nonzero(target_dates == valid_time)[0]
-                assert len(target_idx) == 1, \
-                    f"Expected exactly one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
-                self._pairs.append((ref_idx, step_idx, int(target_idx[0])))
+                target_idx = np.nonzero(target_dates == valid_time)[0]
+                assert (len(target_idx) != 0 or self.target_missing_as_zeros), \
+                    f"Expected at least one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
+                assert len(target_idx) <= 1, \
+                    f"Expected no more than one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
+                self._pairs.append((ref_idx, step_idx, None if len(target_idx) == 0 else target_idx[0]))
 
     def _input_frequency_hours(self, input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
         """Effective input time step, in whole hours.
@@ -121,8 +145,17 @@ class AnemoiForecastDataset(AnemoiDataset):
         # Don't reshape, but do squeeze ensemble dimension.
         input_data = self._input_dataset[ref_idx, :, :, step_idx, :].squeeze()
 
-        # Pull target data, squeeze the ensemble dimension
-        target_data = self._output_dataset[target_idx].squeeze()
+        # Pull target data at the same valid time as the input (squeeze the
+        # ensemble dimension). target_idx is None only when target_missing_as_zeros
+        # is set and the target has no data for this date, in which case a zeros
+        # tensor is returned.
+        if target_idx is None:
+            target_data = np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
+        else:
+            target_data = self._output_dataset[target_idx].squeeze()
+
+        # If target is COSMO, see commented code in base class's __getitem__ method,
+        # regarding reshaping.
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\
@@ -135,6 +168,14 @@ class AnemoiForecastDataset(AnemoiDataset):
         """Get valid-time ('YYYYMMDD-HHMM') values, one per (reference_time, step) pair."""
         return [
             to_datetime(self._input_dataset.base_dates[ref_idx] + self._input_dataset.steps[step_idx]).strftime('%Y%m%d-%H%M')
+            for ref_idx, step_idx, _ in self._pairs
+        ]
+
+    def base_time(self) -> List:
+        """Get reference/issue-time ('YYYYMMDD-HHMM') values, one per (reference_time, step)
+        pair. Used to disambiguate pairs whose valid times overlap."""
+        return [
+            to_datetime(self._input_dataset.base_dates[ref_idx]).strftime('%Y%m%d-%H%M')
             for ref_idx, step_idx, _ in self._pairs
         ]
 
