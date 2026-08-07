@@ -290,13 +290,12 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
         # nest under it to keep overlapping (reference_time, step) pairs from colliding
         # on valid_time alone.
         torch_savedir = os.path.join(output_path, base_time, time_step)
-        grib_savedir = os.path.join(output_path, 'grib', base_time.replace('-', ''))
+        grib_savedir = os.path.join(output_path, 'grib', base_time.replace('-', ''), 'grib')
     else:
         torch_savedir = os.path.join(output_path, time_step)
         # Fake out a base_date for reanalysis data, to compare to forecast data
         base_date = time_step.split('-')[0] + '0000'
-        grib_savedir = os.path.join(output_path, 'grib', base_date)
-        print('grib_savedir: ', grib_savedir)
+        grib_savedir = os.path.join(output_path, 'grib', base_date, 'grib')
     # Data arrives already denormalized and spatially oriented (physical units, numpy)
     target = image_hr
     prediction_ensemble = image_pred
@@ -347,7 +346,6 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
          # Only take the hours since base_time as an integer, to conform with EvalML
         step_num = int((to_datetime(time_step, format='%Y%m%d-%H%M') 
             - to_datetime(base_time, format='%Y%m%d-%H%M')).total_seconds() / 3600)
-        print(f'base_time: {base_time}, time_step: {time_step}, step_num: {step_num}')
         output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
         # If this is reanalysis data, fake out the time_step to be date as base_date and hour as step,
