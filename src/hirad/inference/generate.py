@@ -304,15 +304,6 @@ def main(cfg: DictConfig) -> None:
                     if time_index == warmup_steps:
                         start.record()
 
-                    if base_times is not None:
-                        # base_time() is only defined for forecast-type datasets
-                        # (AnemoiForecastDataset); nest under it to keep overlapping
-                        # (reference_time, step) pairs from colliding on valid_time alone.
-                        savedir = os.path.join(output_path, base_times[sampler[time_index]], times[sampler[time_index]])
-                    else:
-                        savedir = os.path.join(output_path, times[sampler[time_index]])
-                    os.makedirs(savedir,exist_ok=True)
-
                     #TODO: Move all the data processing inside the generator and just pass raw data to it. This includes regridding, normalization, date embedding creation, etc.
                     # Same as with static channel loading, we can reuse some of the code from training manager for this. This will also make it easier to maintain and update the data processing steps in one place.
                     if is_real_target:
@@ -369,13 +360,14 @@ def main(cfg: DictConfig) -> None:
                         writer_threads.append(
                             writer_executor.submit(
                                 save_results,
-                                savedir,
+                                output_path,
                                 times[sampler[time_index]],
                                 dataset,
                                 prediction_ensemble,
                                 image_tar,
                                 baseline,
                                 mean_pred if image_reg is not None else None,
+                                base_time=base_times[sampler[time_index]] if base_times is not None else None,
                                 output_format=output_format,
                                 grib_template_path=grib_template_path,
                             )

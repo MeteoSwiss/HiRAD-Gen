@@ -282,19 +282,26 @@ def diffusion_step(
 ############################################################################
 
 
-def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, output_format='torch', grib_template_path=''):
-    os.makedirs(output_path, exist_ok=True)
+def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, base_time=None, output_format='torch', grib_template_path=''):
+    if base_time is not None:
+        # base_time is only defined for forecast-type datasets (AnemoiForecastDataset);
+        # nest under it to keep overlapping (reference_time, step) pairs from colliding
+        # on valid_time alone.
+        savedir = os.path.join(output_path, base_time, time_step)
+    else:
+        savedir = os.path.join(output_path, time_step)
+    os.makedirs(savedir, exist_ok=True)
     # Data arrives already denormalized and spatially oriented (physical units, numpy)
     target = image_hr
     prediction_ensemble = image_pred
     baseline = image_lr
     if output_format == 'torch':
-        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
+        save_results_as_torch(savedir, time_step, target, prediction_ensemble, baseline, mean_pred)
     elif output_format == 'grib':
-        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+        save_results_as_grib(savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
     elif output_format == 'both':
-        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
-        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
+        save_results_as_torch(savedir, time_step, target, prediction_ensemble, baseline, mean_pred)
+        save_results_as_grib(savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
     else:
         raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
 
