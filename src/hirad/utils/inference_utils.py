@@ -307,19 +307,6 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
 
 def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:
-        mean_pred = np.flip(dataset.denormalize_output(mean_pred)[0,::].squeeze(),1)
-    if output_format == 'torch':
-        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
-    elif output_format == 'grib':
-        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
-    elif output_format == 'both':
-        save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred)
-        save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path)
-    else:
-        raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
-
-def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
-    if mean_pred is not None:
         torch.save(mean_pred, os.path.join(output_path, f'{time_step}-regression-prediction'))
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
