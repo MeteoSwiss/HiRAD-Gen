@@ -293,7 +293,10 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
         grib_savedir = os.path.join(output_path, 'grib', base_time.replace('-', ''))
     else:
         torch_savedir = os.path.join(output_path, time_step)
-        grib_savedir = os.path.join(output_path, 'grib', time_step.replace('-', ''))
+        # Fake out a base_date for reanalysis data, to compare to forecast data
+        base_date = time_step.split('-')[0] + '0000'
+        grib_savedir = os.path.join(output_path, 'grib', base_date)
+        print('grib_savedir: ', grib_savedir)
     # Data arrives already denormalized and spatially oriented (physical units, numpy)
     target = image_hr
     prediction_ensemble = image_pred
@@ -347,7 +350,11 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
         print(f'base_time: {base_time}, time_step: {time_step}, step_num: {step_num}')
         output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
-        output_file = os.path.join(output_path, f'{time_step}-pred.grib')
+        # If this is reanalysis data, fake out the time_step to be date as base_date and hour as step,
+        # to compare to forecast data
+        base_date = time_step.split('-')[0] + '0000'
+        step_num = int(time_step.split('-')[1][:2])
+        output_file = os.path.join(output_path, f'{base_date}_{step_num}.grib')
     save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
 
     # Baseline - temporarily disabled, since EvalML doesn't use it.
