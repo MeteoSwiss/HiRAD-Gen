@@ -344,16 +344,22 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
         prediction_ensemble = prediction_ensemble[0,:,:,:]
     if base_time is not None:
          # Only take the hours since base_time as an integer, to conform with EvalML
-        step_num = int((to_datetime(time_step, format='%Y%m%d-%H%M') 
+        step_num = int((to_datetime(time_step, format='%Y%m%d-%H%M')
             - to_datetime(base_time, format='%Y%m%d-%H%M')).total_seconds() / 3600)
+        ref_date_str, ref_time_str = base_time.split('-')
         output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
         # If this is reanalysis data, fake out the time_step to be date as base_date and hour as step,
         # to compare to forecast data
-        base_date = time_step.split('-')[0] + '0000'
+        ref_date_str, ref_time_str = time_step.split('-')[0], '0000'
         step_num = int(time_step.split('-')[1][:2])
-        output_file = os.path.join(output_path, f'{base_date}_{step_num}.grib')
-    save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
+        output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
+    # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
+    # with step_num carrying the lead time -- not time_step (the valid time), which
+    # would make every output file its own 0h analysis instead of one step of a
+    # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
+    ref_date, ref_time = int(ref_date_str), int(ref_time_str)
+    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
 
     # Baseline - temporarily disabled, since EvalML doesn't use it.
     #output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
@@ -362,7 +368,7 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     return
 
 
-def save_image_as_grib(output_filename, time_step, grib_template_path, channels, image, grid):
+def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, channels, image, grid):
     if grid == "co2":
         padding_margin = 19
     elif grid == "co1e":
@@ -372,7 +378,7 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
 
     with open(output_filename, 'wb') as f_out:
         for i, channel in enumerate(channels):
-            result = get_grib_template(grib_template_path, channel, time_step, grid)
+            result = get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid)
             if result is None:
                 continue
             template_field, grib_keys = result
@@ -395,14 +401,17 @@ def save_image_as_grib(output_filename, time_step, grib_template_path, channels,
 # Returns (template_field, grib_keys_dict) or None if channel has no template.
 # grib_keys are applied via eccodes after codes_new_from_message to avoid
 # earthkit clone() silently dropping key overrides.
-def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
-    [date, time] = datetime.split('-')
-    date, time = int(date), int(time)
+def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid="co2"):
     levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
     levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
     if channel.name == 'tp':
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
-        return ds[0], {'dataDate': date, 'dataTime': time}
+        # tp is cumulative-from-start (ICON/COSMO convention EvalML expects): the
+        # accumulation window is [0, step_num], not [step_num-1, step_num].
+        return ds[0], {
+            'dataDate': ref_date, 'dataTime': ref_time,
+            'step': step_num, 'startStep': 0, 'endStep': step_num,
+        }
     elif channel.name in levtype_index_sfc.metadata("shortName") and (channel.level==None or channel.level=='' or int(channel.level) < 50):
         idx = levtype_index_sfc.metadata("shortName").index(channel.name)
         levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
@@ -414,13 +423,21 @@ def get_grib_template(grib_template_path, channel, datetime, grid="co2"):
             logging.warning(f'Channel {channel.name} not found in GRIB templates: {e}')
             logging.warning(f'Skipping channel {channel.name}')
             return None
-        return ds[0], {'paramId': param_id, 'level': levelval, 'dataDate': date, 'dataTime': time}
+        return ds[0], {
+            'paramId': param_id, 'level': levelval,
+            'dataDate': ref_date, 'dataTime': ref_time,
+            'step': step_num, 'startStep': step_num, 'endStep': step_num,
+        }
     elif channel.name in levtype_index_pl.metadata("shortName") and channel.level:
         levtype='isobaricInhPa'
         idx = levtype_index_pl.metadata("shortName").index(channel.name)
         param_id = levtype_index_pl[idx].metadata("paramId")
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
-        return ds[0], {'paramId': param_id, 'level': int(channel.level), 'dataDate': date, 'dataTime': time}
+        return ds[0], {
+            'paramId': param_id, 'level': int(channel.level),
+            'dataDate': ref_date, 'dataTime': ref_time,
+            'step': step_num, 'startStep': step_num, 'endStep': step_num,
+        }
     else:
         logging.warning(f'channel {channel.name} not found in grib index; skipping')
         return None
