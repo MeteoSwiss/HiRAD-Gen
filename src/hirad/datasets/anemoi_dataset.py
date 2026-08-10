@@ -131,10 +131,10 @@ class AnemoiDataset(DownscalingDataset):
             end_date,
             area,
             input_open_dataset_kwargs)
-        # Assumes the opened input dataset's variables are exactly input_channel_names,
-        # in that order - true when opened with select=input_channel_names (base case),
-        # and also true for subclasses (e.g. AnemoiForecastDataset) that open without
-        # `select` because the underlying store was already built with just those channels.
+        # Channel count check only; order is guaranteed by select=input_channel_names
+        # (base case), or must be handled explicitly by subclasses that can't use
+        # `select` (e.g. AnemoiForecastDataset reorders via self._channel_indices,
+        # since a store's native variable order isn't guaranteed to match).
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
         self._align_input_output()

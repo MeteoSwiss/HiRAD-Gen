@@ -1,4 +1,5 @@
 import argparse
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -175,6 +176,33 @@ def percentiles_from_histogram(hist_counts, bin_edges, percentiles_dict):
     return results
 
 
+def _find_generation_config(generation_dir: Path) -> Optional[Path]:
+    """Locate a ``.hydra/config.yaml`` for this generation run.
+
+    Forecast-style output splits timesteps across per-run subfolders under a shared
+    parent, and not every subfolder saves its own copy of the config (they're all the
+    same config, from the same model/dataset setup) — so any match is equally valid.
+    Search *generation_dir* and its descendants first (covers both a single-run
+    directory and a shared parent containing several forecast subfolders); if nothing
+    is found there, ``generation_dir`` is likely a specific subfolder that didn't save
+    its own copy, so fall back to searching its parent's descendants (siblings).
+    """
+    match = min(generation_dir.glob("**/.hydra/config.yaml"), default=None)
+    if match is not None:
+        return match
+
+    parent = generation_dir.parent
+    if parent == generation_dir:
+        return None
+    match = min(parent.glob("**/.hydra/config.yaml"), default=None)
+    if match is not None:
+        logging.getLogger(__name__).warning(
+            f"No .hydra/config.yaml under {generation_dir}; using {match} found under "
+            f"its parent {parent} instead (assumed identical across sibling runs)."
+        )
+    return match
+
+
 def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
     """Validate ``cfg['inference_output_dir']``, load its generation config, and resolve times.
 
@@ -188,9 +216,9 @@ def load_generation_setup(cfg: dict) -> Tuple[Path, dict, list]:
     if not generation_dir.is_dir():
         raise ValueError(f"Inference output directory {generation_dir} does not exist or is not a directory.")
 
-    generation_config_path = min(generation_dir.glob("**/.hydra/config.yaml"), default=None)
+    generation_config_path = _find_generation_config(generation_dir)
     if generation_config_path is None:
-        raise ValueError(f"No generation config file found in {generation_dir}.")
+        raise ValueError(f"No generation config file found in {generation_dir} or its parent.")
 
     with open(generation_config_path, "r") as f:
         gen_cfg = yaml.safe_load(f)
