@@ -15,7 +15,7 @@
 #SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-node=2
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=03:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
@@ -56,5 +56,5 @@ export OMP_NUM_THREADS=1
 EXTRA_ARGS_STR="${EXTRA_ARGS[*]@Q}"
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e .
-    python src/hirad/inference/generate.py --config-name=generate_era_real.yaml ${EXTRA_ARGS_STR}
+    python src/hirad/inference/generate.py --config-name=generate_ifsn320_real.yaml ${EXTRA_ARGS_STR}
 "
