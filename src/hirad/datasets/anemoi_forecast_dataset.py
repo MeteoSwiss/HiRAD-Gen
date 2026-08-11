@@ -81,9 +81,21 @@ class AnemoiForecastDataset(AnemoiDataset):
         # subsetting wrappers don't forward the 5D-specific `base_dates`/`steps`
         # attributes (and Cropping/date-subsetting outright fail on a 5D forecast
         # store - see _align_input_output). Opened bare, this assumes the store
-        # was already built with exactly input_channel_names (see the assert in
-        # AnemoiDataset.__init__) and covering only the needed area/dates.
-        return open_dataset(input_anemoi_dataset_path)
+        # covers only the needed area/dates, but NOT that its native variable
+        # order matches input_channel_names - forecast stores have been observed
+        # to store variables alphabetically rather than in the requested order.
+        # Map input_channel_names to native positions and reorder explicitly in
+        # __getitem__ (self._channel_indices) instead of trusting the order.
+        dataset = open_dataset(input_anemoi_dataset_path)
+        native_names = list(dataset.variables)
+        missing = [name for name in input_channel_names if name not in native_names]
+        if missing:
+            raise ValueError(
+                f"input_channel_names {missing} not found among the forecast store's "
+                f"native variables {native_names}."
+            )
+        self._channel_indices = [native_names.index(name) for name in input_channel_names]
+        return dataset
 
     def _align_input_output(self):
         """
@@ -142,8 +154,10 @@ class AnemoiForecastDataset(AnemoiDataset):
         ref_idx, step_idx, target_idx = self._pairs[idx]
         date_str = to_datetime(self._input_dataset.base_dates[ref_idx] + self._input_dataset.steps[step_idx]).strftime('%Y%m%d-%H%M')
 
-        # Don't reshape, but do squeeze ensemble dimension.
-        input_data = self._input_dataset[ref_idx, :, :, step_idx, :].squeeze()
+        # Reorder the variable axis to input_channel_names order (the store's native
+        # order isn't guaranteed to match - see _open_input_dataset), then squeeze
+        # the ensemble dimension.
+        input_data = self._input_dataset[ref_idx, :, :, step_idx, :][self._channel_indices].squeeze()
 
         # Pull target data at the same valid time as the input (squeeze the
         # ensemble dimension). target_idx is None only when target_missing_as_zeros
