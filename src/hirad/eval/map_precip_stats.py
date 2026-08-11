@@ -7,7 +7,7 @@ import torch
 import xarray as xr
 import numba
 
-from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, precip_conv_factor, resolve_ts_dir
+from hirad.eval.eval_utils import get_channel_indices, grid_cfg_from_cfg, load_generation_setup, parse_eval_cli, precip_conv_factor, precip_unit_label, sample_interval_hours, resolve_ts_dir
 from hirad.eval.plotting import (
     plot_difference_map, plot_map, plot_map_precipitation
 )
@@ -64,7 +64,7 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param, wet_threshold=0.1)
     if stat_type == 'quantile':
         return np.quantile(data_np, stat_param, axis=0)
 
-    if stat_type == 'Rx1hr':
+    if stat_type == 'Rx_step':
         return np.max(data_np, axis=0)
 
     # For daily aggregations, build daily sums using xarray (fast groupby)
@@ -100,13 +100,13 @@ def apply_statistic(data_np, times_dt, stat_type, stat_param, wet_threshold=0.1)
     raise ValueError(f"Unsupported statistic type: {stat_type}")
 
 
-def plot_stat_map(data, filename, stat_config, label, grid_cfg):
+def plot_stat_map(data, filename, stat_config, label, grid_cfg, unit='mm/h'):
     """Plot a single statistic map with appropriate styling."""
     if stat_config['type'] == 'weth_freq':
         plot_map(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]} (%)',
-            label='Wet-Hour Frequency [%]', vmin=0, vmax=30, cmap='PuBu', extend='max', grid_cfg=grid_cfg
+            label='Wet-Period Frequency [%]', vmin=0, vmax=30, cmap='PuBu', extend='max', grid_cfg=grid_cfg
         )
     elif stat_config['type'] == 'cdd':
         plot_map(
@@ -121,15 +121,15 @@ def plot_stat_map(data, filename, stat_config, label, grid_cfg):
             label='Days', vmin=0, vmax=20, cmap='viridis', extend='max', grid_cfg=grid_cfg
         )
     else:
-        unit = {'Rx1day': 'mm/day', 'Rx5day': 'mm'}.get(stat_config['type'], 'mm/h')
+        stat_unit = {'Rx1day': 'mm/day', 'Rx5day': 'mm'}.get(stat_config['type'], unit)
         plot_map_precipitation(
             data, filename,
             title=f'{label}: {stat_config["title_stat"]} Precipitation',
-            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg, label=unit,
+            threshold=stat_config['threshold'], rfac=1.0, grid_cfg=grid_cfg, label=stat_unit,
         )
 
 
-def _difference_label(stat_type):
+def _difference_label(stat_type, unit='mm/h'):
     if stat_type == 'weth_freq':
         return 'Difference [%]'
     if stat_type in ('cdd', 'cwd'):
@@ -138,7 +138,7 @@ def _difference_label(stat_type):
         return 'Difference [mm/day]'
     if stat_type == 'Rx5day':
         return 'Difference [mm]'
-    return 'Difference [mm/h]'
+    return f'Difference [{unit}]'
 
 
 def main(cfg: dict):
@@ -155,6 +155,11 @@ def main(cfg: dict):
         return
     logger.info(f"Processing {len(times)} timesteps")
 
+    unit = precip_unit_label(times)
+    hours = sample_interval_hours(times)
+    rx_key = 'Rx1hr' if hours == 1 else f'Rx{hours}hr'
+    logger.info(f"Precipitation unit: {unit}; single-step max statistic: {rx_key}")
+
     times_dt = [datetime.strptime(ts, "%Y%m%d-%H%M") for ts in times]
 
     out_root = Path(generation_dir)
@@ -163,7 +168,7 @@ def main(cfg: dict):
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    conv_factor = precip_conv_factor(cfg)  # mm/h
+    conv_factor = precip_conv_factor(cfg)
     log_interval = cfg.get("log_interval", 100)
     wet_threshold = cfg.get("wet_threshold", 0.1)
 
@@ -172,12 +177,12 @@ def main(cfg: dict):
         'p99': {'type': 'quantile', 'param': 0.99, 'threshold': 0.1, 'title': '99th Percentile'},
         'p99.9': {'type': 'quantile', 'param': 0.999, 'threshold': 0.1, 'title': '99.9th Percentile'},
         'p99.99': {'type': 'quantile', 'param': 0.9999, 'threshold': 0.1, 'title': '99.99th Percentile'},
-        'Rx1hr': {'type': 'Rx1hr', 'threshold': 0.1, 'title': 'Maximum (Rx1hr)'},
+        rx_key: {'type': 'Rx_step', 'threshold': 0.1, 'title': f'Maximum Single-Step Amount ({rx_key})'},
         'Rx1day': {'type': 'Rx1day', 'threshold': 0.1, 'title': 'Maximum 1-day Amount (Rx1day)'},
         'Rx5day': {'type': 'Rx5day', 'threshold': 0.1, 'title': 'Maximum 5-day Total (Rx5day)'},
         'cdd': {'type': 'cdd', 'threshold': 0.1, 'title': 'Consecutive Dry Days (CDD)'},
         'cwd': {'type': 'cwd', 'threshold': 0.1, 'title': 'Consecutive Wet Days (CWD)'},
-        'weth_freq': {'type': 'weth_freq', 'threshold': 0.01, 'title': 'Wet-Hour Frequency'}
+        'weth_freq': {'type': 'weth_freq', 'threshold': 0.01, 'title': 'Wet-Period Frequency'}
     }
     stat_configs = [
         {'stat_name': name, 'title_stat': config['title'], 'param': config.get('param'), **config}
@@ -217,7 +222,7 @@ def main(cfg: dict):
             mode_results[mode][stat_config['stat_name']] = result
             map_output_dir = output_path / f"maps_precip_{stat_config['stat_name']}"
             map_output_dir.mkdir(parents=True, exist_ok=True)
-            plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg)
+            plot_stat_map(result, str(map_output_dir / f'{mode}_{stat_config["stat_name"]}'), stat_config, label, grid_cfg, unit=unit)
 
         del mode_data
 
@@ -240,7 +245,7 @@ def main(cfg: dict):
                     diff,
                     str(map_output_dir / f'{mode}_minus_target_{stat_name}'),
                     title=f'{label} - Target: {stat_config["title_stat"]} Difference',
-                    label=_difference_label(stat_config['type']),
+                    label=_difference_label(stat_config['type'], unit),
                     grid_cfg=grid_cfg,
                 )
 
@@ -276,7 +281,7 @@ def main(cfg: dict):
             map_output_dir.mkdir(parents=True, exist_ok=True)
             member_filename = str(map_output_dir / f'prediction_member_{member_idx:02d}_{stat_config["stat_name"]}')
             member_label = f'Pred. {member_idx+1}'
-            plot_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg)
+            plot_stat_map(member_result, member_filename, stat_config, member_label, grid_cfg, unit=unit)
             if has_target_for_diff:
                 target_result = target_results.get(stat_config['stat_name'])
                 if target_result is not None:
@@ -286,7 +291,7 @@ def main(cfg: dict):
                         diff,
                         diff_filename,
                         title=f'Pred. {member_idx+1} - Target: {stat_config["title_stat"]} Difference',
-                        label=_difference_label(stat_config['type']),
+                        label=_difference_label(stat_config['type'], unit),
                         grid_cfg=grid_cfg,
                     )
 

@@ -137,10 +137,15 @@ def plot_difference_map(
         grid_cfg=grid_cfg,
     )
 
-def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG, label='mm/h'):
-    """Plot precipitation data with specific colormap and thresholds."""
+def plot_map_precipitation(values, filename, title='', threshold=0.01, rfac=1000.0, grid_cfg=DEFAULT_GRID_CONFIG, label='mm'):
+    """Plot precipitation data with specific colormap and thresholds.
+
+    `label` should be the caller-resolved accumulation-window unit (see
+    `hirad.eval.eval_utils.precip_unit_label`, e.g. 'mm/h' or 'mm/6h') — this
+    function has no access to the generated timesteps needed to derive it itself.
+    """
     # Scale and mask values below threshold
-    values = rfac * values # m/h --> mm/h
+    values = rfac * values # m --> mm (accumulated over one input step)
     values = np.ma.masked_where(values <= threshold, values)
 
     # Predefined colors and bounds specific for precipitation
@@ -199,6 +204,7 @@ def plot_map_wind_precip(
     title: str = '',
     tp_threshold: float = 0.1,
     tp_rfac: float = 1000.0,
+    tp_unit: str = 'mm',
     wind_vmax: float = 15.0,
     grid_cfg: GridConfig = DEFAULT_GRID_CONFIG,
 ):
@@ -207,10 +213,12 @@ def plot_map_wind_precip(
     Parameters
     ----------
     u, v      : wind component arrays (H, W), in m/s
-    tp        : total precipitation array (H, W), in m/h (ERA5 units)
+    tp        : total precipitation array (H, W), in m accumulated over one input step (ERA5 units)
     filename  : output path without extension
-    tp_threshold : minimum precipitation to show in mm/h (after rfac scaling)
-    tp_rfac   : conversion factor applied to tp before plotting (default 1000 → m/h → mm/h)
+    tp_threshold : minimum precipitation to show in `tp_unit` (after rfac scaling)
+    tp_rfac   : conversion factor applied to tp before plotting (default 1000 → m → mm)
+    tp_unit   : precip colorbar unit label; pass the caller-resolved accumulation-window
+                unit (see `hirad.eval.eval_utils.precip_unit_label`)
     wind_vmax : upper end of the wind-speed colorbar [m/s]
     """
     logging.info(f'Creating wind+precip map: {filename}')
@@ -265,7 +273,7 @@ def plot_map_wind_precip(
     )
 
     cbar_precip = fig.colorbar(
-        precip_mesh, ax=ax, label='Precipitation [mm/h]',
+        precip_mesh, ax=ax, label=f'Precipitation [{tp_unit}]',
         orientation='vertical', shrink=0.6, pad=0.02, extend='max',
     )
     cbar_precip.set_ticks(precip_bounds)

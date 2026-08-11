@@ -26,7 +26,8 @@ def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,
-                                 title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                 title, xlabel, ylabel, out_path, mean_q=None,
+                                 unit=None) -> None:
     """Save a bias-by-percentile figure (linear y-axis, data-driven limits)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     all_vals = plot_dict_curves(ax, frac, bias_data_dict, labels, colors)
@@ -41,7 +42,8 @@ def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colo
 
 
 def save_mae_by_percentile_plot(mae_data_dict, percentile_values, labels, colors,
-                                title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                title, xlabel, ylabel, out_path, mean_q=None,
+                                unit=None) -> None:
     """Save a MAE-by-percentile figure (linear y-axis, data-driven limits)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     all_vals = plot_dict_curves(ax, frac, mae_data_dict, labels, colors, lower_clip=0)
@@ -54,7 +56,8 @@ def save_mae_by_percentile_plot(mae_data_dict, percentile_values, labels, colors
 
 
 def save_spread_by_percentile_plot(spread, percentile_values,
-                                   title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                   title, xlabel, ylabel, out_path, mean_q=None,
+                                   unit=None) -> None:
     """Save an ensemble-spread-by-percentile figure (linear y-axis)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     ax.plot(frac, spread, color='green', linewidth=2, label='Ensemble spread')
@@ -66,7 +69,8 @@ def save_spread_by_percentile_plot(spread, percentile_values,
 
 
 def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors,
-                                title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                title, xlabel, ylabel, out_path, mean_q=None,
+                                unit=None) -> None:
     """Save a frequency-bias-index-by-percentile figure (log y-axis, ratio around 1)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     all_vals = plot_dict_curves(ax, frac, fbi_data_dict, labels, colors, lower_clip=1e-3)

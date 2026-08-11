@@ -13,7 +13,7 @@ channel_plot_args = {
     "2t": {"label": "°C"},
     "10u": {"label": "m/s"},
     "10v": {"label": "m/s"},
-    "tp": {"label": "boxcox(mm/h)"},
+    "tp": {"label": "boxcox(mm)"},
 }
 
 

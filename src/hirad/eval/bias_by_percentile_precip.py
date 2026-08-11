@@ -13,59 +13,66 @@ from hirad.eval.bias_by_percentile_common import (
     plot_dict_curves,
     run_bias_by_percentile,
 )
-from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli, precip_conv_factor
+from hirad.eval.eval_utils import make_percentile_values, parse_eval_cli, precip_conv_factor, precip_unit_label
 
 
+# Fixed "nice" tick values for the secondary axis; not rescaled per unit since they just
+# mark round physical amounts (0.01 ... 100) regardless of the accumulation window.
 _PRECIP_SECONDARY_MMH = np.array([0.01, 0.1, 1.0, 10.0, 100.0])
 
 
-def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None) -> None:
-    """Apply logit percentile x-axis (upper tail) with a mm/h secondary axis."""
+def _apply_logit_xaxis(ax, frac: np.ndarray, mean_q: np.ndarray | None = None,
+                       unit: str = 'mm/h') -> None:
+    """Apply logit percentile x-axis (upper tail) with a physical-unit secondary axis."""
     apply_logit_percentile_xaxis(
         ax, frac, mean_q,
         xlim_left=0.5,
         percentile_ticks=LOGIT_PERCENTILE_TICKS_TAIL,
-        secondary_label='Mean target [mm/h]',
+        secondary_label=f'Mean target [{unit}]',
         secondary_values=_PRECIP_SECONDARY_MMH,
     )
 
 
 def save_bias_by_percentile_plot(bias_data_dict, percentile_values, labels, colors,
-                                 title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                 title, xlabel, ylabel, out_path, mean_q=None,
+                                 unit: str = 'mm/h') -> None:
     """Save a bias-by-percentile figure (symlog y-axis)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     plot_dict_curves(ax, frac, bias_data_dict, labels, colors)
     ax.axhline(0.0, color='black', linewidth=0.8, linestyle='--')
     ax.set_yscale('symlog', linthresh=0.1, linscale=0.3)
     ax.set_ylim(-10, 10)
-    finalize_percentile_plot(ax, frac, _apply_logit_xaxis, mean_q,
-                             xlabel, ylabel, title, out_path)
+    finalize_percentile_plot(ax, frac, lambda a, f, mq: _apply_logit_xaxis(a, f, mq, unit=unit),
+                             mean_q, xlabel, ylabel, title, out_path)
 
 
 def save_mae_by_percentile_plot(mae_data_dict, percentile_values, labels, colors,
-                                title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                title, xlabel, ylabel, out_path, mean_q=None,
+                                unit: str = 'mm/h') -> None:
     """Save a MAE-by-percentile figure (log y-axis)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     plot_dict_curves(ax, frac, mae_data_dict, labels, colors, lower_clip=0)
     ax.set_yscale('log')
     ax.set_ylim(1e-5, 100)
-    finalize_percentile_plot(ax, frac, _apply_logit_xaxis, mean_q,
-                             xlabel, ylabel, title, out_path)
+    finalize_percentile_plot(ax, frac, lambda a, f, mq: _apply_logit_xaxis(a, f, mq, unit=unit),
+                             mean_q, xlabel, ylabel, title, out_path)
 
 
 def save_spread_by_percentile_plot(spread, percentile_values,
-                                   title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                   title, xlabel, ylabel, out_path, mean_q=None,
+                                   unit: str = 'mm/h') -> None:
     """Save an ensemble-spread-by-percentile figure (log y-axis, no legend)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     ax.plot(frac, spread, color='green', linewidth=2)
     ax.set_yscale('log')
     ax.set_ylim(1e-5, 100)
-    finalize_percentile_plot(ax, frac, _apply_logit_xaxis, mean_q,
-                             xlabel, ylabel, title, out_path, legend=False)
+    finalize_percentile_plot(ax, frac, lambda a, f, mq: _apply_logit_xaxis(a, f, mq, unit=unit),
+                             mean_q, xlabel, ylabel, title, out_path, legend=False)
 
 
 def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors,
-                                title, xlabel, ylabel, out_path, mean_q=None) -> None:
+                                title, xlabel, ylabel, out_path, mean_q=None,
+                                unit: str = 'mm/h') -> None:
     """Save a frequency-bias-index-by-percentile figure (log y-axis, ratio around 1)."""
     _, ax, frac = new_percentile_axes(percentile_values)
     all_vals = plot_dict_curves(ax, frac, fbi_data_dict, labels, colors, lower_clip=1e-3)
@@ -74,7 +81,7 @@ def save_fbi_by_percentile_plot(fbi_data_dict, percentile_values, labels, colors
     if all_vals:
         ymin = float(min(np.nanmin(v) for v in all_vals)) / 1.5
         ax.set_ylim(max(ymin, 1e-3), 10.0)
-    finalize_percentile_plot(ax, frac, _apply_logit_xaxis,
+    finalize_percentile_plot(ax, frac, lambda a, f, mq: _apply_logit_xaxis(a, f, mq, unit=unit),
                              mean_q, xlabel, ylabel, title, out_path)
 
 
@@ -96,9 +103,9 @@ SPEC = BiasByPercentileSpec(
     mae_title='Precipitation MAE Over Land',
     spread_title='Precipitation Ensemble Spread Over Land',
     fbi_title='Precipitation Frequency Bias Index Over Land',
-    bias_ylabel='Bias [mm/h]',
-    mae_ylabel='MAE [mm/h]',
-    spread_ylabel='Ensemble Spread [mm/h]',
+    bias_ylabel='Bias [{unit}]',
+    mae_ylabel='MAE [{unit}]',
+    spread_ylabel='Ensemble Spread [{unit}]',
     fbi_ylabel='FBI (exceedance)',
     percentile_values=make_percentile_values(),
     resolve_channels=_resolve_channels,
@@ -108,6 +115,7 @@ SPEC = BiasByPercentileSpec(
     save_mae=save_mae_by_percentile_plot,
     save_spread=save_spread_by_percentile_plot,
     save_fbi=save_fbi_by_percentile_plot,
+    unit_label=precip_unit_label,
 )
 
 

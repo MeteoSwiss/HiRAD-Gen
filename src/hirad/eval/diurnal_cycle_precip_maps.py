@@ -1,10 +1,11 @@
 """
-Plots mean precipitation and wet-hour fraction maps for each hour of the diurnal cycle.
+Plots mean precipitation and wet-period fraction maps for each hour of the diurnal cycle.
 
-For each hour (00-23 UTC), all timesteps with that hour are averaged into
-a single spatial map, producing 24 maps per source per variable:
-  - mean precipitation (mm/h)
-  - wet-hour fraction (% of timesteps where precip > wet_threshold)
+For each UTC hour present in the data (00-23 for hourly input, a subset such as
+00/06/12/18 for coarser input), all timesteps with that hour are averaged into a
+single spatial map, producing one map per source per variable per hour present:
+  - mean precipitation (mm per input step)
+  - wet-period fraction (% of timesteps where precip > wet_threshold)
 """
 import logging
 from collections import defaultdict
@@ -20,6 +21,7 @@ from hirad.eval.eval_utils import (
     load_generation_setup,
     parse_eval_cli,
     precip_conv_factor,
+    precip_unit_label,
     resolve_ts_dir,
 )
 from hirad.eval.plotting import plot_map, plot_map_precipitation
@@ -46,12 +48,14 @@ def main(cfg: dict) -> None:
     indices = get_channel_indices(gen_cfg)
     tp_out = indices['output']['tp']
     tp_in = indices['input'].get('tp', tp_out)
-    conv_factor = precip_conv_factor(cfg)  # mm/h
-    wet_threshold = cfg.get("wet_threshold", 0.1)  # mm/h
+    conv_factor = precip_conv_factor(cfg)
+    unit = precip_unit_label(times)
+    wet_threshold = cfg.get("wet_threshold", 0.1)
     log_interval = cfg.get("log_interval", 24)
 
     logger.info(f"TP channel indices — output: {tp_out}, input: {tp_in}")
-    logger.info(f"Wet-hour threshold: {wet_threshold} mm/h")
+    logger.info(f"Precipitation unit: {unit}")
+    logger.info(f"Wet-period threshold: {wet_threshold} {unit}")
     logger.info(f"Processing {len(times)} timesteps")
 
     # Group timestep strings by UTC hour (no data loaded yet)
@@ -104,7 +108,7 @@ def main(cfg: dict) -> None:
             preds = np.asarray(torch.load(ts_dir / f"{ts}-predictions", weights_only=False)[:, tp_out]) * conv_factor
             pred_mean = preds.mean(axis=0)
             sums['predictions'] += pred_mean
-            # wet-hour frequency: fraction of members that are wet, then average over timesteps
+            # wet-period frequency: fraction of members that are wet, then average over timesteps
             wet_sums['predictions'] += (preds > wet_threshold).mean(axis=0)
 
             if has_regression:
@@ -127,15 +131,16 @@ def main(cfg: dict) -> None:
                 threshold=0.01,
                 rfac=1.0,
                 grid_cfg=grid_cfg,
+                label=unit,
             )
 
             wet_map = wet_sums[source_key] / count * 100.0  # percent
-            wh_title = f"{source_label} — Wet-Hour Fraction {hour:02d}:00 UTC (n={count})"
+            wh_title = f"{source_label} — Wet-Period Fraction {hour:02d}:00 UTC (n={count})"
             wh_out_file = str(output_path / f"{source_key}_wethour" / f"diurnal_wethour_{source_key}_{hour:02d}h")
             plot_map(
                 wet_map, wh_out_file,
                 title=wh_title,
-                label="Wet-Hour Fraction [%]",
+                label="Wet-Period Fraction [%]",
                 vmin=0, vmax=30,
                 cmap="PuBu",
                 extend="max",
