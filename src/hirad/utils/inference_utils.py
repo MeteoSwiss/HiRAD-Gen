@@ -376,7 +376,6 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     else:
         grid='co1e'
 
-    input_fields = dataset.input_channels()
     output_fields = dataset.output_channels()
     static_fields = dataset.static_channels()
     static_data = dataset.get_static_data()
@@ -410,16 +409,17 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
 
 
 def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):
+    """Write one GRIB message per output channel to output_filename.
+
+    static_channels/static_data aren't written yet -- they're threaded through for
+    the planned orography output below (see TODO) and are otherwise unused here.
+    """
     if grid == "co2":
         padding_margin = 19
     elif grid == "co1e":
         padding_margin = 41
     else:
         raise ValueError("only co1e and co2 grid supported")
-
-    print('output channels are ' + str(output_channels))
-    print('static channels are ' + str(static_channels))
-    print('static data shape is ' + str(static_data.shape))
 
     with open(output_filename, 'wb') as f_out:
         for i, channel in enumerate(output_channels):
@@ -448,9 +448,14 @@ def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_templ
 # Returns (template_field, grib_keys_dict) or None if channel has no template.
 # grib_keys are applied via eccodes after codes_new_from_message to avoid
 # earthkit clone() silently dropping key overrides.
+#
+# The sfc/pl index files are only loaded lazily, on the branch that actually needs
+# them (tp needs neither; a pl channel doesn't need the pl index if it already
+# matched sfc) -- this runs once per channel per output file, so skipping the other
+# index's disk read matters. Each call still opens its own fresh FieldList rather
+# than sharing/caching one across calls: this can run on generate.py's writer
+# thread pool, and reusing one earthkit handle across threads isn't verified safe.
 def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid="co2"):
-    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
-    levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
     if channel.name == 'tp':
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
         # tp is cumulative-from-start (ICON/COSMO convention EvalML expects, and
@@ -464,8 +469,11 @@ def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num,
             'dataDate': ref_date, 'dataTime': ref_time,
             'step': step_num, 'startStep': 0, 'endStep': step_num,
         }
-    elif channel.name in levtype_index_sfc.metadata("shortName") and (channel.level==None or channel.level=='' or int(channel.level) < 50):
-        idx = levtype_index_sfc.metadata("shortName").index(channel.name)
+
+    levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
+    sfc_shortnames = levtype_index_sfc.metadata("shortName")
+    if channel.name in sfc_shortnames and (channel.level==None or channel.level=='' or int(channel.level) < 50):
+        idx = sfc_shortnames.index(channel.name)
         levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
         levelval = levtype_index_sfc[idx].metadata("level")
         param_id = levtype_index_sfc[idx].metadata("paramId")
@@ -480,9 +488,12 @@ def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num,
             'dataDate': ref_date, 'dataTime': ref_time,
             'step': step_num, 'startStep': step_num, 'endStep': step_num,
         }
-    elif channel.name in levtype_index_pl.metadata("shortName") and channel.level:
+
+    levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
+    pl_shortnames = levtype_index_pl.metadata("shortName")
+    if channel.name in pl_shortnames and channel.level:
         levtype='isobaricInhPa'
-        idx = levtype_index_pl.metadata("shortName").index(channel.name)
+        idx = pl_shortnames.index(channel.name)
         param_id = levtype_index_pl[idx].metadata("paramId")
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-typeOfLevel={levtype}.grib'))
         return ds[0], {
@@ -490,9 +501,9 @@ def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num,
             'dataDate': ref_date, 'dataTime': ref_time,
             'step': step_num, 'startStep': step_num, 'endStep': step_num,
         }
-    else:
-        logging.warning(f'channel {channel.name} not found in grib index; skipping')
-        return None
+
+    logging.warning(f'channel {channel.name} not found in grib index; skipping')
+    return None
 
 
 def pad_image(image, padding_margin, fill_value):
