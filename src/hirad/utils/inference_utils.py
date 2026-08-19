@@ -321,6 +321,51 @@ def save_results_as_torch(output_path, time_step, target, prediction_ensemble, b
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
 
+# Identifies which forecast run a (time_step, base_time) pair belongs to, and its
+# lead-time step number. Shared by save_results_as_grib (for output file naming) and
+# by the caller in generate.py (to key/order the cross-step tp accumulation -- see
+# the 'tp' comment in get_grib_template below).
+def forecast_run_key_and_step(time_step, base_time=None):
+    if base_time is not None:
+        # Only take the hours since base_time as an integer, to conform with EvalML
+        step_num = int((to_datetime(time_step, format='%Y%m%d-%H%M')
+            - to_datetime(base_time, format='%Y%m%d-%H%M')).total_seconds() / 3600)
+        run_key = base_time
+    else:
+        # If this is reanalysis data, fake out the time_step to be date as base_date and hour as step,
+        # to compare to forecast data
+        run_key = time_step.split('-')[0]
+        step_num = int(time_step.split('-')[1][:2])
+    return run_key, step_num
+
+
+def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip):
+    """Turn this step's per-step (1h) tp prediction into a running total since forecast
+    start, in place. GRIB/EvalML expect tp as cumulative-from-start (see the 'tp'
+    comment in get_grib_template), but the model only predicts the 1h increment.
+
+    cumulative_precip is a {run_key: (last_step_num, running_total)} dict the caller
+    threads through across steps. Must be called for a given run_key's steps in
+    increasing step order -- raises otherwise, since an out-of-order running total
+    would be silently wrong.
+    """
+    channel_axis = prediction_ensemble.ndim - 3  # (..., channels, H, W)
+    tp_step = np.take(prediction_ensemble, tp_idx, axis=channel_axis)
+
+    last_step, running_total = cumulative_precip.get(run_key, (None, None))
+    if last_step is not None and step_num != last_step + 1:
+        raise RuntimeError(
+            f"tp accumulation for forecast run {run_key} needs steps generated in "
+            f"increasing order; got step {step_num} right after step {last_step}."
+        )
+    running_total = tp_step if running_total is None else running_total + tp_step
+    cumulative_precip[run_key] = (step_num, running_total)
+
+    index = [slice(None)] * prediction_ensemble.ndim
+    index[channel_axis] = tp_idx
+    prediction_ensemble[tuple(index)] = running_total
+
+
 # Takes templates from EvalML
 def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
     dataset, grib_template_path, base_time=None):
@@ -334,6 +379,7 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     input_fields = dataset.input_channels()
     output_fields = dataset.output_channels()
     static_fields = dataset.static_channels()
+    static_data = dataset.get_static_data()
 
     # Target - temporarily disabled, since EvalML doesn't use it.
     #output_file = os.path.join(output_path, f'{time_step}-target.grib')
@@ -342,24 +388,19 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     # Prediction - only output 1 ensemble member for EvalML.
     if len(prediction_ensemble.shape) == 4:
         prediction_ensemble = prediction_ensemble[0,:,:,:]
+    run_key, step_num = forecast_run_key_and_step(time_step, base_time)
     if base_time is not None:
-         # Only take the hours since base_time as an integer, to conform with EvalML
-        step_num = int((to_datetime(time_step, format='%Y%m%d-%H%M')
-            - to_datetime(base_time, format='%Y%m%d-%H%M')).total_seconds() / 3600)
         ref_date_str, ref_time_str = base_time.split('-')
         output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
-        # If this is reanalysis data, fake out the time_step to be date as base_date and hour as step,
-        # to compare to forecast data
-        ref_date_str, ref_time_str = time_step.split('-')[0], '0000'
-        step_num = int(time_step.split('-')[1][:2])
+        ref_date_str, ref_time_str = run_key, '0000'
         output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
     # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
     # with step_num carrying the lead time -- not time_step (the valid time), which
     # would make every output file its own 0h analysis instead of one step of a
     # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
     ref_date, ref_time = int(ref_date_str), int(ref_time_str)
-    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields + static_fields, prediction_ensemble, grid=grid)
+    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
 
     # Baseline - temporarily disabled, since EvalML doesn't use it.
     #output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
@@ -368,7 +409,7 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     return
 
 
-def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, channels, image, grid):
+def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):
     if grid == "co2":
         padding_margin = 19
     elif grid == "co1e":
@@ -376,8 +417,12 @@ def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_templ
     else:
         raise ValueError("only co1e and co2 grid supported")
 
+    print('output channels are ' + str(output_channels))
+    print('static channels are ' + str(static_channels))
+    print('static data shape is ' + str(static_data.shape))
+
     with open(output_filename, 'wb') as f_out:
-        for i, channel in enumerate(channels):
+        for i, channel in enumerate(output_channels):
             result = get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid)
             if result is None:
                 continue
@@ -397,6 +442,8 @@ def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_templ
             finally:
                 eccodes.codes_release(grib_id)
 
+        # TODO: Output orography into GRIB coordinates file.
+
 # grid: co2 (COSMO-2), or co1e (COSMO-1E)
 # Returns (template_field, grib_keys_dict) or None if channel has no template.
 # grib_keys are applied via eccodes after codes_new_from_message to avoid
@@ -406,8 +453,13 @@ def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num,
     levtype_index_pl = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=pl.grib"))
     if channel.name == 'tp':
         ds = ekd.from_source("file", os.path.join(grib_template_path, f'{grid}-shortName=TOT_PREC.grib'))
-        # tp is cumulative-from-start (ICON/COSMO convention EvalML expects): the
-        # accumulation window is [0, step_num], not [step_num-1, step_num].
+        # tp is cumulative-from-start (ICON/COSMO convention EvalML expects, and
+        # diffs consecutive steps' raw values to recover hourly precip -- it does not
+        # look at startStep/endStep). The model itself only predicts the per-step (1h)
+        # increment, so `image` here must already be a running total across steps by
+        # the time it reaches this function -- see the tp accumulation in generate.py,
+        # keyed/ordered via forecast_run_key_and_step. The accumulation window is
+        # therefore [0, step_num], not [step_num-1, step_num].
         return ds[0], {
             'dataDate': ref_date, 'dataTime': ref_time,
             'step': step_num, 'startStep': 0, 'endStep': step_num,
