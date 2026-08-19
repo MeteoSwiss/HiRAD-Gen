@@ -18,7 +18,6 @@ from typing import Optional
 import os
 import logging
 import time
-import datetime
 
 import eccodes
 import nvtx
@@ -26,8 +25,7 @@ import numpy as np
 import torch
 import tqdm
 import earthkit.data as ekd
-from earthkit.data import FieldList
-from pandas import to_datetime, to_timedelta
+from pandas import to_datetime
 
 from .function_utils import StackedRandomGenerator
 
@@ -280,11 +278,13 @@ def diffusion_step(
 
 
 ############################################################################
-#                     Saving and Visualization Utilities                   #
+#                     Saving Utilities                                     #
 ############################################################################
 
 
 def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, base_time=None, output_format='torch', grib_template_path=''):
+    # output_format is validated once at config-read time in generate.py's main(),
+    # before this runs (repeatedly, per step) on the writer thread pool.
     if base_time is not None:
         # base_time is only defined for forecast-type datasets (AnemoiForecastDataset);
         # nest under it to keep overlapping (reference_time, step) pairs from colliding
@@ -300,19 +300,12 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
     target = image_hr
     prediction_ensemble = image_pred
     baseline = image_lr
-    if output_format == 'torch':
+    if output_format in ('torch', 'both'):
         os.makedirs(torch_savedir, exist_ok=True)
         save_results_as_torch(torch_savedir, time_step, target, prediction_ensemble, baseline, mean_pred)
-    elif output_format == 'grib':
+    if output_format in ('grib', 'both'):
         os.makedirs(grib_savedir, exist_ok=True)
         save_results_as_grib(grib_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
-    elif output_format == 'both':
-        os.makedirs(torch_savedir, exist_ok=True)
-        save_results_as_torch(torch_savedir, time_step, target, prediction_ensemble, baseline, mean_pred)
-        os.makedirs(grib_savedir, exist_ok=True)
-        save_results_as_grib(grib_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
-    else:
-        raise ValueError(f'output format {output_format} not supported-- torch or grib or both supported')
 
 def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:
@@ -320,6 +313,48 @@ def save_results_as_torch(output_path, time_step, target, prediction_ensemble, b
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+# Takes templates from EvalML
+def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
+    dataset, grib_template_path, base_time=None):
+
+    # Somewhat kludgey way of getting the grid.
+    if target.shape[1] == 352:
+        grid='co2'
+    else:
+        grid='co1e'
+
+    output_fields = dataset.output_channels()
+    static_fields = dataset.static_channels()
+    static_data = dataset.get_static_data()
+
+    # Target - temporarily disabled, since EvalML doesn't use it.
+    #output_file = os.path.join(output_path, f'{time_step}-target.grib')
+    #save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
+
+    # Prediction - only output 1 ensemble member for EvalML.
+    if len(prediction_ensemble.shape) == 4:
+        prediction_ensemble = prediction_ensemble[0,:,:,:]
+    run_key, step_num = forecast_run_key_and_step(time_step, base_time)
+    if base_time is not None:
+        ref_date_str, ref_time_str = base_time.split('-')
+        output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
+    else:
+        ref_date_str, ref_time_str = run_key, '0000'
+        output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
+    # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
+    # with step_num carrying the lead time -- not time_step (the valid time), which
+    # would make every output file its own 0h analysis instead of one step of a
+    # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
+    ref_date, ref_time = int(ref_date_str), int(ref_time_str)
+    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
+
+    # Baseline - temporarily disabled, since EvalML doesn't use it.
+    #output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
+    #save_image_as_grib(output_file, time_step, grib_template_path, input_fields, baseline, grid=grid)
+
+    return
+
 
 # Identifies which forecast run a (time_step, base_time) pair belongs to, and its
 # lead-time step number. Shared by save_results_as_grib (for output file naming) and
@@ -364,48 +399,6 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     index = [slice(None)] * prediction_ensemble.ndim
     index[channel_axis] = tp_idx
     prediction_ensemble[tuple(index)] = running_total
-
-
-# Takes templates from EvalML
-def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
-    dataset, grib_template_path, base_time=None):
-
-    # Somewhat kludgey way of getting the grid.
-    if target.shape[1] == 352:
-        grid='co2'
-    else:
-        grid='co1e'
-
-    output_fields = dataset.output_channels()
-    static_fields = dataset.static_channels()
-    static_data = dataset.get_static_data()
-
-    # Target - temporarily disabled, since EvalML doesn't use it.
-    #output_file = os.path.join(output_path, f'{time_step}-target.grib')
-    #save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
-
-    # Prediction - only output 1 ensemble member for EvalML.
-    if len(prediction_ensemble.shape) == 4:
-        prediction_ensemble = prediction_ensemble[0,:,:,:]
-    run_key, step_num = forecast_run_key_and_step(time_step, base_time)
-    if base_time is not None:
-        ref_date_str, ref_time_str = base_time.split('-')
-        output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
-    else:
-        ref_date_str, ref_time_str = run_key, '0000'
-        output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
-    # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
-    # with step_num carrying the lead time -- not time_step (the valid time), which
-    # would make every output file its own 0h analysis instead of one step of a
-    # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
-    ref_date, ref_time = int(ref_date_str), int(ref_time_str)
-    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
-
-    # Baseline - temporarily disabled, since EvalML doesn't use it.
-    #output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
-    #save_image_as_grib(output_file, time_step, grib_template_path, input_fields, baseline, grid=grid)
-
-    return
 
 
 def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):
@@ -510,6 +503,11 @@ def pad_image(image, padding_margin, fill_value):
     new_image = np.ones(((image.shape[0] + padding_margin * 2), (image.shape[1] + padding_margin * 2))) * fill_value
     new_image[padding_margin:-padding_margin, padding_margin:-padding_margin] = image
     return new_image
+
+
+############################################################################
+#                     Visualization Utilities                              #
+############################################################################
 
 
 def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
