@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results
+from hirad.utils.inference_utils import save_results, forecast_run_key_and_step, accumulate_tp_channel
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
@@ -238,6 +238,18 @@ def main(cfg: DictConfig) -> None:
                         max_workers=cfg.generation.perf.num_writer_workers
                     )
                     writer_threads = []
+                    # tp (precip) is only predicted per-step (the 1h increment); GRIB/EvalML
+                    # need a running total since forecast start (see the 'tp' comment in
+                    # get_grib_template). Accumulate it here -- in the main, strictly
+                    # sequential loop -- rather than in save_results itself, since that runs
+                    # on writer_executor's thread pool where step order isn't guaranteed.
+                    # Keyed per forecast run (base_time, or the fake base date for reanalysis
+                    # data) since generation can cover multiple runs/times out of any order.
+                    tp_idx = next(
+                        (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
+                        None,
+                    )
+                    cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -304,15 +316,6 @@ def main(cfg: DictConfig) -> None:
                     if time_index == warmup_steps:
                         start.record()
 
-                    if base_times is not None:
-                        # base_time() is only defined for forecast-type datasets
-                        # (AnemoiForecastDataset); nest under it to keep overlapping
-                        # (reference_time, step) pairs from colliding on valid_time alone.
-                        savedir = os.path.join(output_path, base_times[sampler[time_index]], times[sampler[time_index]])
-                    else:
-                        savedir = os.path.join(output_path, times[sampler[time_index]])
-                    os.makedirs(savedir,exist_ok=True)
-
                     #TODO: Move all the data processing inside the generator and just pass raw data to it. This includes regridding, normalization, date embedding creation, etc.
                     # Same as with static channel loading, we can reuse some of the code from training manager for this. This will also make it easier to maintain and update the data processing steps in one place.
                     if is_real_target:
@@ -362,6 +365,13 @@ def main(cfg: DictConfig) -> None:
                         baseline = dataset.denormalize_input(image_lr)[0].squeeze().flip(-2).cpu().numpy()
                         if image_reg is not None:
                             mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
+
+                        if tp_idx is not None:
+                            run_key, step_num = forecast_run_key_and_step(
+                                times[sampler[time_index]],
+                                base_times[sampler[time_index]] if base_times is not None else None,
+                            )
+                            accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
                     t_postproc_end = _t()
 
                     t_write_start = _t()
@@ -369,13 +379,14 @@ def main(cfg: DictConfig) -> None:
                         writer_threads.append(
                             writer_executor.submit(
                                 save_results,
-                                savedir,
+                                output_path,
                                 times[sampler[time_index]],
                                 dataset,
                                 prediction_ensemble,
                                 image_tar,
                                 baseline,
                                 mean_pred if image_reg is not None else None,
+                                base_time=base_times[sampler[time_index]] if base_times is not None else None,
                                 output_format=output_format,
                                 grib_template_path=grib_template_path,
                             )
