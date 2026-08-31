@@ -282,9 +282,11 @@ def diffusion_step(
 ############################################################################
 
 
-def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, base_time=None, output_format='torch', grib_template_path=''):
-    # output_format is validated once at config-read time in generate.py's main(),
-    # before this runs (repeatedly, per step) on the writer thread pool.
+def _result_dirs(output_path, time_step, base_time=None):
+    """Directory layout shared by the torch and GRIB writers/readers below, so the
+    two formats always agree on where a given (output_path, time_step, base_time)
+    lives on disk.
+    """
     if base_time is not None:
         # base_time is only defined for forecast-type datasets (AnemoiForecastDataset);
         # nest under it to keep overlapping (reference_time, step) pairs from colliding
@@ -296,6 +298,13 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
         # Fake out a base_date for reanalysis data, to compare to forecast data
         base_date = time_step.split('-')[0] + '0000'
         grib_savedir = os.path.join(output_path, 'grib', base_date, 'grib')
+    return torch_savedir, grib_savedir
+
+
+def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, base_time=None, output_format='torch', grib_template_path=''):
+    # output_format is validated once at config-read time in generate.py's main(),
+    # before this runs (repeatedly, per step) on the writer thread pool.
+    torch_savedir, grib_savedir = _result_dirs(output_path, time_step, base_time)
     # Data arrives already denormalized and spatially oriented (physical units, numpy)
     target = image_hr
     prediction_ensemble = image_pred
@@ -313,6 +322,47 @@ def save_results_as_torch(output_path, time_step, target, prediction_ensemble, b
     torch.save(target, os.path.join(output_path, f'{time_step}-target'))
     torch.save(prediction_ensemble, os.path.join(output_path, f'{time_step}-predictions'))
     torch.save(baseline, os.path.join(output_path, f'{time_step}-baseline'))
+
+
+def load_results_as_torch(output_path, time_step, base_time=None):
+    """Load one time step's results previously written by save_results_as_torch
+    (or save_results with output_format='torch'/'both'), as numpy arrays.
+
+    Looks in the same directory save_results_as_torch would have written to for
+    this (output_path, time_step, base_time); output_path is therefore the same
+    top-level path passed to save_results, not the per-step torch_savedir itself.
+    mean_pred is None if no regression-prediction file was written (i.e. a
+    diffusion-only run).
+    """
+    torch_savedir, _ = _result_dirs(output_path, time_step, base_time)
+
+    def _load(name):
+        path = os.path.join(torch_savedir, f'{time_step}-{name}')
+        if not os.path.exists(path):
+            return None
+        data = torch.load(path, weights_only=False)
+        return dmpy() if isinstance(data, torch.Tensor) else data
+
+    target = _load('target')
+    prediction_ensemble = _load('predictions')
+    baseline = _load('baseline')
+    mean_pred = _load('regression-prediction')
+    return target, prediction_ensemble, baseline, mean_pred
+
+
+def convert_torch_to_grib(output_path, time_step, dataset, grib_template_path, base_time=None):
+    """Load torch-format results for one time step and write them out as GRIB.
+
+    Lets GRIB be (re)generated after the fact -- e.g. inference originally ran with
+    output_format='torch' -- without rerunning inference. dataset and
+    grib_template_path are the same arguments save_results/save_results_as_grib take.
+    """ata.nu
+    target, prediction_ensemble, baseline, mean_pred = load_results_as_torch(output_path, time_step, base_time)
+    _, grib_savedir = _result_dirs(output_path, time_step, base_time)
+    os.makedirs(grib_savedir, exist_ok=True)
+    save_results_as_grib(grib_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
+                          dataset, grib_template_path, base_time)
+    return grib_savedir
 
 # Takes templates from EvalML
 def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
