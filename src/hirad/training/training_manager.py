@@ -74,7 +74,16 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
 
     def load_and_preprocess_batch(self, dataset_iterator):
         """Load a batch from the iterator and preprocess it (interpolate, normalize, move to device)."""
-        img_clean, img_lr, *date_str = next(dataset_iterator)
+        img_clean, img_lr, *rest = next(dataset_iterator)
+        # Datasets that condition on lead time append an integer lead-step label as the
+        # last element (see AnemoiForecastDataset.provides_lead_time). Everything before it
+        # is the date info for make_time_grids (a date string for anemoi, or hour+month for
+        # era5), passed through unchanged.
+        lead_time_label = None
+        if getattr(self.dataset, "provides_lead_time", False):
+            lead_time_label = rest[-1].to(self.dist.device)
+            rest = rest[:-1]
+        date_str = rest
 
         # Interpolate and normalize low-res input
         img_lr = self.dataset.interpolator(
@@ -115,7 +124,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             img_clean = img_clean.to(self.dist.device).to(self.input_dtype).contiguous()
             img_lr = img_lr.to(self.dist.device).to(self.input_dtype).contiguous()
 
-        return img_clean, img_lr, date_embedding
+        return img_clean, img_lr, date_embedding, lead_time_label
 
     def get_static_data(self):
         """Get static data from the dataset, preprocess it and move to device."""
@@ -140,8 +149,13 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         return static_channels
 
 
-    def create_model(self, cfg_model_name: str, cfg_model_args: dict, prob_channels: list = []):
-        """Instantiate the model."""
+    def create_model(self, cfg_model_name: str, cfg_model_args: dict):
+        """Instantiate the model.
+
+        Lead-time conditioning is a switch (``lead_time_mode`` in the model args), not a
+        separate model name: when enabled it adds ``lead_time_channels`` input channels
+        (the spatially-broadcast lead-time embedding) on top of the positional embedding.
+        """
         n_input_channels = len(self.dataset.input_channels())
         n_static_channels = len(self.dataset.static_channels())
         n_output_channels = len(self.dataset.output_channels())
@@ -162,9 +176,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             "use_fp16": self.fp16,
             "checkpoint_level": self.songunet_checkpoint_level,
         }
-        if cfg_model_name == "lt_aware_ce_regression":
-            model_args["prob_channels"] = prob_channels
-        
+
         if cfg_model_args:  # override defaults from config file
             model_args.update(cfg_model_args)
 
@@ -174,35 +186,19 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         if self.enable_amp:
             model_args["amp_mode"] = self.enable_amp
 
+        # Total conditioning channels: positional embedding, plus the lead-time embedding
+        # when lead_time_mode is on.
+        img_in_channels += model_args["N_grid_channels"]
+        if model_args.get("lead_time_mode", False):
+            if not model_args.get("lead_time_channels"):
+                raise ValueError("lead_time_channels must be set when lead_time_mode is True")
+            img_in_channels += model_args["lead_time_channels"]
 
         if cfg_model_name == "regression":
-            model = UNet(
-                img_in_channels=img_in_channels + model_args["N_grid_channels"],
-                **model_args,
-            )
-            model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
-        elif cfg_model_name == "lt_aware_ce_regression":
-            model = UNet(
-                img_in_channels=img_in_channels
-                + model_args["N_grid_channels"]
-                + model_args["lead_time_channels"],
-                **model_args,
-            )
-            model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
-        elif cfg_model_name == "lt_aware_patched_diffusion":
-            model = EDMPrecondSuperResolution(
-                img_in_channels=img_in_channels
-                + model_args["N_grid_channels"]
-                + model_args["lead_time_channels"],
-                **model_args,
-            )
-            model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"] + model_args["lead_time_channels"]
+            model = UNet(img_in_channels=img_in_channels, **model_args)
         else:  # diffusion or patched diffusion
-            model = EDMPrecondSuperResolution(
-                img_in_channels=img_in_channels + model_args["N_grid_channels"],
-                **model_args,
-            )
-            model_args["img_in_channels"] = img_in_channels + model_args["N_grid_channels"]
+            model = EDMPrecondSuperResolution(img_in_channels=img_in_channels, **model_args)
+        model_args["img_in_channels"] = img_in_channels
 
         return model, model_args
 
@@ -249,9 +245,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         """Run validation and return average validation loss."""
         valid_loss_accum = 0
         with torch.no_grad():
-            lead_time_label_valid = None
             for _ in range(validation_steps):
-                img_clean_valid, img_lr_valid, date_embedding = self.load_and_preprocess_batch(validation_dataset_iterator)
+                img_clean_valid, img_lr_valid, date_embedding, lead_time_label = self.load_and_preprocess_batch(validation_dataset_iterator)
 
                 loss_valid_kwargs = {
                     "net": model,
@@ -262,6 +257,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                     "augment_pipe": None,
                     "use_apex_gn": self.use_apex_gn,
                 }
+                if lead_time_label is not None:
+                    loss_valid_kwargs["lead_time_label"] = lead_time_label
                 if use_patch_grad_acc is not None:
                     loss_valid_kwargs["use_patch_grad_acc"] = use_patch_grad_acc
                 if use_patch_grad_acc:

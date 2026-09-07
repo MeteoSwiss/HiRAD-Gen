@@ -255,6 +255,15 @@ def stochastic_sampler(
 
         patch_embedding_selector = None
 
+    # In lead-time mode the net selects positional embeddings via global_index rather than
+    # an embedding_selector (which cannot gather the lead-time embedding). Mirrors the patched
+    # ResidualLoss training path. Constant across the sampler loop, so build it once.
+    lead_time_global_index = (
+        patching.global_index(batch_size, latents.device)
+        if (lead_time_label is not None and patching is not None)
+        else None
+    )
+
     _t_preproc_end = _t()
 
     # Main sampling loop.
@@ -291,7 +300,8 @@ def stochastic_sampler(
                 t_hat,
                 class_labels,
                 lead_time_label=lead_time_label,
-                embedding_selector=patch_embedding_selector,
+                embedding_selector=None,
+                global_index=lead_time_global_index,
             ).to(torch.float64)
         else:
             # print("Sizes")
@@ -334,7 +344,8 @@ def stochastic_sampler(
                     t_next,
                     class_labels,
                     lead_time_label=lead_time_label,
-                    embedding_selector=patch_embedding_selector,
+                    embedding_selector=None,
+                    global_index=lead_time_global_index,
                 ).to(torch.float64)
             else:
                 denoised = net(
