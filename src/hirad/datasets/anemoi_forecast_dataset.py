@@ -3,9 +3,13 @@ from .anemoi_dataset import AnemoiDataset
 from anemoi.datasets import open_dataset
 import datetime
 import numpy as np
-from pandas import to_datetime
+from pandas import to_datetime, to_timedelta
 import torch
 from typing import List
+
+from hirad.utils.console import PythonLogger
+
+logger = PythonLogger(__name__)
 
 
 class AnemoiForecastDataset(AnemoiDataset):
@@ -53,15 +57,42 @@ class AnemoiForecastDataset(AnemoiDataset):
                 trim_edge: int = 0,
                 target_missing_as_zeros: bool = False,
                 input_frequency: str = None,
+                provide_lead_time: bool = False,
+                max_lead_hours: int = None,
                 ):
+        # Split by base (init) time: start_date/end_date are the first/last forecast init
+        # times, and _align_input_output keeps only base times within that range. The target is
+        # opened over exactly the valid-time window those inits produce: from the earliest
+        # (start + smallest non-zero lead; lead 0 is never in the store) to the latest
+        # (end + largest lead), clamped to the target's own availability. That way every lead of
+        # every kept init has a matching target and nothing is dropped, except leads whose valid
+        # time falls past the end of the target (handled in _align_input_output). A target field
+        # near a split boundary may be used by both train and val (a train init reaching, via a
+        # long lead, a valid time inside val); this small leakage is accepted by design.
+        self._pair_start = to_datetime(start_date) if start_date is not None else None
+        self._pair_end = to_datetime(end_date) if end_date is not None else None
+        # Optional cap on the forecast lead used from the store (in hours); steps beyond it are
+        # skipped in _align_input_output and excluded from the target window below.
+        self._max_lead_hours = max_lead_hours
+        target_start, target_end = start_date, end_date
+        if start_date is not None and end_date is not None:
+            steps = open_dataset(input_anemoi_dataset_path).steps
+            nonzero = steps[steps > np.timedelta64(0, "h")]
+            min_lead, max_lead = to_timedelta(nonzero.min()), to_timedelta(steps.max())
+            if max_lead_hours is not None:
+                max_lead = min(max_lead, to_timedelta(max_lead_hours, unit="h"))
+            tgt_dates = open_dataset(target_anemoi_dataset_path).dates
+            avail_start, avail_end = to_datetime(tgt_dates[0]), to_datetime(tgt_dates[-1])
+            target_start = max(self._pair_start + min_lead, avail_start)
+            target_end = min(self._pair_end + max_lead, avail_end)
         super().__init__(
             type=type,
             input_anemoi_dataset_path=input_anemoi_dataset_path,
             target_anemoi_dataset_path=target_anemoi_dataset_path,
             input_stats_anemoi_dataset_path=input_stats_anemoi_dataset_path,
             target_stats_anemoi_dataset_path=target_stats_anemoi_dataset_path,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=target_start,  # target valid-time window [start+min_lead, end+max_lead]
+            end_date=target_end,
             input_channel_names=input_channel_names,
             output_channel_names=output_channel_names,
             static_channel_names=static_channel_names,
@@ -75,6 +106,10 @@ class AnemoiForecastDataset(AnemoiDataset):
             target_missing_as_zeros=target_missing_as_zeros,
             input_frequency=input_frequency,
         )
+        # When True, __getitem__ appends an integer lead-time label (lead hours) used by
+        # lead-time-conditioned models. The training/inference loops detect it via this
+        # attribute (see TrainingManagerCorrDiff.load_and_preprocess_batch).
+        self.provides_lead_time = provide_lead_time
 
     def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
         # No select/start/end/area here: anemoi-datasets' Select/date/Cropping
@@ -100,39 +135,55 @@ class AnemoiForecastDataset(AnemoiDataset):
     def _align_input_output(self):
         """
         Align input and output samples by valid time.
-        
-        By default, iteration is driven by the input dataset and each input
+
+        Iteration is driven by the input (forecast) dataset: each input
         (base_time, step) is mapped to the target index at the same
-        valid_time (where valid_time = base_time + step). This supports
-        different input/target frequencies (e.g. 6h input with an
-        hourly target, where only the matching target times are used) as well as
-        targets missing some dates. each member of  `_pairs` is a tuple
-        (base_date_idx, step_idx, target_idx) where target_idx is the index of
-        the matching target or None when the target has no matching date.
+        valid_time (= base_time + step). Only base (init) times within
+        [self._pair_start, self._pair_end] are kept (train/val split by init time).
+        Each member of `_pairs` is a tuple (base_date_idx, step_idx, target_idx).
+        A pair whose valid_time has no target is emitted with target_idx=None when
+        `target_missing_as_zeros` (generation), otherwise dropped (a lead whose valid
+        time falls past the end of the target's availability).
         """
         base_dates = to_datetime(self._input_dataset.base_dates)
         steps = self._input_dataset.steps
-        target_dates = to_datetime(self._output_dataset.dates)
 
         # Note: assumes output dataset is a reanalysis dataset, not a forecast dataset.
+        # O(1) valid-time -> target-index lookup (a per-pair scan is far too slow at the
+        # hundreds of thousands of pairs a full training store produces).
         output_date_to_idx = {
             to_datetime(d): i for i, d in enumerate(self._output_dataset.dates)
         }
 
         self._pairs = []
-        
+        n_dropped = 0
+
         # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
         self._target_sample_shape = self._output_dataset.shape[1:]
 
         for ref_idx, base_date in enumerate(base_dates):
+            if self._pair_start is not None and base_date < self._pair_start:
+                continue
+            if self._pair_end is not None and base_date > self._pair_end:
+                continue
             for step_idx, step in enumerate(steps):
-                valid_time = base_date + step
-                target_idx = np.nonzero(target_dates == valid_time)[0]
-                assert (len(target_idx) != 0 or self.target_missing_as_zeros), \
-                    f"Expected at least one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
-                assert len(target_idx) <= 1, \
-                    f"Expected no more than one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
-                self._pairs.append((ref_idx, step_idx, None if len(target_idx) == 0 else target_idx[0]))
+                if self._max_lead_hours is not None and step / np.timedelta64(1, "h") > self._max_lead_hours:
+                    continue
+                valid_time = to_datetime(base_date + step)
+                target_idx = output_date_to_idx.get(valid_time)
+                if target_idx is None:
+                    if self.target_missing_as_zeros:
+                        self._pairs.append((ref_idx, step_idx, None))
+                    else:
+                        n_dropped += 1
+                    continue
+                self._pairs.append((ref_idx, step_idx, target_idx))
+
+        if n_dropped:
+            logger.warning(
+                f"AnemoiForecastDataset: dropped {n_dropped} (base_date, step) pairs whose valid "
+                f"time has no target (leads past the target range); {len(self._pairs)} pairs kept."
+            )
 
     def _input_frequency_hours(self, input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
         """Effective input time step, in whole hours.
@@ -170,6 +221,13 @@ class AnemoiForecastDataset(AnemoiDataset):
 
         # If target is COSMO, see commented code in base class's __getitem__ method,
         # regarding reshaping.
+
+        if self.provides_lead_time:
+            lead_hours = int(round(self._input_dataset.steps[step_idx] / np.timedelta64(1, 'h')))
+            return torch.from_numpy(target_data.copy()),\
+                    torch.from_numpy(input_data),\
+                    date_str,\
+                    lead_hours
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\

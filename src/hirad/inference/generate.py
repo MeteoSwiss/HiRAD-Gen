@@ -278,8 +278,6 @@ def main(cfg: DictConfig) -> None:
                             .to(input_dtype)
                             .contiguous()
                         )
-                lead_time_label = None
-
                 times = dataset.time()
                 # Present only on datasets where a valid time can be reached by more
                 # than one (reference_time, step) pair (e.g. forecast datasets with
@@ -289,9 +287,17 @@ def main(cfg: DictConfig) -> None:
                 # t_iter_end is updated at the end of each loop body; the gap between
                 # t_iter_end[i] and the start of body[i+1] equals DataLoader fetch time.
                 t_iter_end = _t()
-                for index, (image_tar, image_lr, *date_str) in enumerate(
+                for index, (image_tar, image_lr, *rest) in enumerate(
                     iter(data_loader)
                 ):
+                    # Lead-time-conditioned forecast datasets append an integer lead label;
+                    # everything before it is the date info for make_time_grids.
+                    if getattr(dataset, "provides_lead_time", False):
+                        lead_time_label = rest[-1].to(dist.device).contiguous()
+                        date_str = rest[:-1]
+                    else:
+                        lead_time_label = None
+                        date_str = rest
                     t_iter_start = _t()
                     t_data_load = t_iter_start - t_iter_end
 
@@ -326,10 +332,6 @@ def main(cfg: DictConfig) -> None:
                         #image_tar = image_tar.flip(-2)  # May be needed
                     else:
                         image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())
-                    if lead_time_label:
-                        lead_time_label = lead_time_label[0].to(dist.device).contiguous()
-                    else:
-                        lead_time_label = None
                     image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
                     image_lr = dataset.normalize_input(image_lr)
                     if use_apex_gn:

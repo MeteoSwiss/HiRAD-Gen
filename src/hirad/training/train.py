@@ -23,7 +23,7 @@ from hirad.utils.train_helpers import set_seed, configure_cuda_for_consistent_pr
                                         is_time_for_periodic_task, handle_and_clip_gradients, \
                                         init_mlflow, update_learning_rate, log_training_progress, \
                                         cuda_profiler, cuda_profiler_start, cuda_profiler_stop, profiler_emit_nvtx
-from hirad.utils.checkpoint import load_checkpoint, save_checkpoint
+from hirad.utils.checkpoint import load_checkpoint, save_checkpoint, load_model_weights_partial
 from hirad.utils.patching import RandomPatching2D
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.inference_utils import save_results_as_torch
@@ -157,16 +157,8 @@ def main(cfg: DictConfig) -> None:
         dataset.regrid_indices_real = dataset.regrid_indices_real.to(dist.device)
         dataset.regrid_weights_real = dataset.regrid_weights_real.to(dist.device, dtype=input_dtype)
 
-    if cfg.model.name == "lt_aware_ce_regression":
-        prob_channels = dataset.get_prob_channel_index()
-    else:
-        prob_channels = None
-
     # Parse the patch shape
-    if (
-        cfg.model.name == "patched_diffusion"
-        or cfg.model.name == "lt_aware_patched_diffusion"
-    ):
+    if cfg.model.name == "patched_diffusion":
         patch_shape_x = cfg.training.hp.patch_shape_x
         patch_shape_y = cfg.training.hp.patch_shape_y
     else:
@@ -241,10 +233,7 @@ def main(cfg: DictConfig) -> None:
         model.to(memory_format=torch.channels_last)
 
     # Check if regression model is used with patching
-    if (
-        cfg.model.name in ["regression", "lt_aware_ce_regression"]
-        and patching is not None
-    ):
+    if cfg.model.name == "regression" and patching is not None:
         raise ValueError(
             f"Regression model ({cfg.model.name}) cannot be used with patch-based training. "
         )
@@ -275,10 +264,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Set patch gradient accumulation only for patched diffusion models
-    if cfg.model.name in {
-        "patched_diffusion",
-        "lt_aware_patched_diffusion",
-    }:
+    if cfg.model.name == "patched_diffusion":
         if len(patch_nums_iter) > 1:
             if not patching:
                 logger0.info(
@@ -298,11 +284,7 @@ def main(cfg: DictConfig) -> None:
 
 
     # Instantiate the loss function
-    if cfg.model.name in (
-        "diffusion",
-        "patched_diffusion",
-        "lt_aware_patched_diffusion",
-    ):
+    if cfg.model.name in ("diffusion", "patched_diffusion"):
         loss_fn = ResidualLoss(
             regression_net=regression_net,
             hr_mean_conditioning=cfg.model.hr_mean_conditioning,
@@ -331,6 +313,14 @@ def main(cfg: DictConfig) -> None:
         )
     except:
         cur_nimg = 0
+
+    # Fine-tune warm start: when starting fresh (no local checkpoint to resume), optionally
+    # initialise model weights from a pretrained checkpoint. Weights only (fresh optimizer,
+    # cur_nimg=0, new LR schedule); tolerates the input growing by the lead-time channels.
+    if cur_nimg == 0 and hasattr(cfg.training.io, "finetune_checkpoint_path"):
+        load_model_weights_partial(
+            to_absolute_path(cfg.training.io.finetune_checkpoint_path), model, dist.device
+        )
 
     # Compile the model and regression net if applicable
     if use_torch_compile:
@@ -372,10 +362,6 @@ def main(cfg: DictConfig) -> None:
     # prepare static channels if there are any
     static_channels = training_manager.get_static_data()
 
-    # turn off for lead time labels for now since we are not using them
-    # TODO: implement lead time labels properly once we train on IFS?
-    lead_time_label = None
-
     # enable profiler:
     with cuda_profiler():
         with profiler_emit_nvtx():
@@ -401,7 +387,7 @@ def main(cfg: DictConfig) -> None:
                         ):
                             with nvtx.annotate("loading data", color="green"):
                                 tick_read_start_time = time.time()
-                                img_clean, img_lr, date_embedding = training_manager.load_and_preprocess_batch(dataset_iterator)
+                                img_clean, img_lr, date_embedding, lead_time_label = training_manager.load_and_preprocess_batch(dataset_iterator)
                                 tick_read_time = time.time() - tick_read_start_time
                             loss_fn_kwargs = {
                                 "net": model,
@@ -417,15 +403,8 @@ def main(cfg: DictConfig) -> None:
                                     "use_patch_grad_acc"
                                 ] = use_patch_grad_acc
 
-                            if lead_time_label:
-                                lead_time_label = (
-                                    lead_time_label[0].to(dist.device).contiguous()
-                                )
-                                loss_fn_kwargs.update(
-                                    {"lead_time_label": lead_time_label}
-                                )
-                            else:
-                                lead_time_label = None
+                            if lead_time_label is not None:
+                                loss_fn_kwargs["lead_time_label"] = lead_time_label
                             if use_patch_grad_acc:
                                 loss_fn.y_mean = None
 

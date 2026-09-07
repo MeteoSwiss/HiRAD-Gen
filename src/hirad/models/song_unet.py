@@ -20,6 +20,7 @@ Diffusion-Based Generative Models".
 """
 
 import contextlib
+import math
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
 
@@ -544,16 +545,28 @@ class SongUNetPosEmbd(SongUNet):
     amp_mode : bool, optional
         A boolean flag indicating whether mixed-precision (AMP) training is enabled. Defaults to False.
     lead_time_mode : bool, optional
-        A boolean flag indicating whether we are running SongUNet with lead time embedding. Defaults to False.
+        A boolean flag indicating whether to condition SongUNet on forecast lead time.
+        The lead-time embedding is indexed by an integer ``lead_time_label`` (the lead
+        step index) and concatenated to the input, like the positional embedding.
+        Defaults to False.
     lead_time_channels : int, optional
-        Number of channels in the lead time embedding. These are learned embeddings that
-        encode temporal forecast information. By default None.
+        Number of channels in the lead time embedding. By default None.
     lead_time_steps : int, optional
-        Number of discrete lead time steps to support. Each step gets its own learned
-        embedding vector. By default 9.
-    prob_channels : List[int], optional
-        Indices of probability output channels that should use softmax activation.
-        Used for classification outputs. By default empty list.
+        Number of discrete lead-time steps (the size of the embedding table / the number
+        of encoded lead positions). Used by both encodings. By default 9.
+    lead_time_encoding : str, optional
+        How the per-step embedding is produced when ``lead_time_mode`` is True:
+        ``"learnable"`` uses a learned per-pixel table of shape
+        ``(lead_time_steps, lead_time_channels, H, W)``; ``"sinusoidal"`` uses a fixed,
+        non-learnable sinusoidal positional encoding of the step index, shape
+        ``(lead_time_steps, lead_time_channels)``, broadcast spatially (requires
+        ``lead_time_channels`` even). By default ``"learnable"``.
+    lead_time_base : float, optional
+        Base of the geometric frequency ladder for the ``"sinusoidal"`` encoding: the
+        slowest channel's wavelength is ~``2*pi*lead_time_base`` (positions). Defaults to
+        ``lead_time_steps`` so the wavelengths span the lead range (the Transformer default
+        of 10000 targets thousand-token sequences and wastes channels here). Ignored for the
+        ``"learnable"`` encoding.
 
     Note
     -----
@@ -629,7 +642,8 @@ class SongUNetPosEmbd(SongUNet):
         lead_time_mode: bool = False,
         lead_time_channels: int = None,
         lead_time_steps: int = 9,
-        prob_channels: List[int] = [],
+        lead_time_encoding: str = "learnable",
+        lead_time_base: float = None,
     ):
         super().__init__(
             img_resolution,
@@ -670,11 +684,29 @@ class SongUNetPosEmbd(SongUNet):
         if self.lead_time_mode:
             self.lead_time_channels = lead_time_channels
             self.lead_time_steps = lead_time_steps
-            self.lt_embd = self._get_lead_time_embedding()
-            self.prob_channels = prob_channels
-            if self.prob_channels:
-                self.scalar = torch.nn.Parameter(
-                    torch.ones((1, len(self.prob_channels), 1, 1))
+            self.lead_time_encoding = lead_time_encoding
+            if lead_time_encoding == "learnable":
+                # Learned per-pixel field per lead step: (steps, channels, H, W).
+                self.lt_embd = self._get_lead_time_embedding()
+            elif lead_time_encoding == "sinusoidal":
+                # Fixed, non-learnable per-step vector: (steps, channels), broadcast
+                # spatially at forward time.
+                if lead_time_channels is None or lead_time_channels % 2 != 0:
+                    raise ValueError(
+                        "lead_time_channels must be a positive even integer for the "
+                        f"sinusoidal lead-time encoding, got {lead_time_channels}"
+                    )
+                # Frequency-ladder base. Default = lead_time_steps so the slowest wavelength
+                # is ~the lead range (10000 is tuned for thousand-token sequences and wastes
+                # channels on wavelengths far longer than our ~lead_time_steps positions).
+                self.lead_time_base = lead_time_base if lead_time_base is not None else lead_time_steps
+                self.register_buffer(
+                    "lt_embd", self._get_sinusoidal_lead_time_embedding().float()
+                )
+            else:
+                raise ValueError(
+                    f"Unknown lead_time_encoding '{lead_time_encoding}', expected "
+                    "'learnable' or 'sinusoidal'."
                 )
 
     def forward(
@@ -721,34 +753,6 @@ class SongUNetPosEmbd(SongUNet):
                 x = torch.cat((x, selected_pos_embd), dim=1)
 
             out = super().forward(x, noise_labels, class_labels, augment_labels)
-
-            if self.lead_time_mode:
-                # if training mode, let crossEntropyLoss do softmax. The model outputs logits.
-                # if eval mode, the model outputs probability
-                all_channels = list(range(out.shape[1]))  # [0, 1, 2, ..., 10]
-                scalar_channels = [
-                    item for item in all_channels if item not in self.prob_channels
-                ]
-                if self.prob_channels and (not self.training):
-                    out_final = torch.cat(
-                        (
-                            out[:, scalar_channels],
-                            (out[:, self.prob_channels] * self.scalar).softmax(dim=1),
-                        ),
-                        dim=1,
-                    )
-                elif self.prob_channels and self.training:
-                    out_final = torch.cat(
-                        (
-                            out[:, scalar_channels],
-                            (out[:, self.prob_channels] * self.scalar),
-                        ),
-                        dim=1,
-                    )
-                else:
-                    out_final = out
-                return out_final
-
             return out
 
     def positional_embedding_indexing(
@@ -810,25 +814,23 @@ class SongUNetPosEmbd(SongUNet):
 
         if global_index is None:
             if self.lead_time_mode:
-                selected_pos_embd = []
+                parts = []
                 if self.pos_embd is not None:
-                    selected_pos_embd.append(
-                        self.pos_embd[None].expand((x.shape[0], -1, -1, -1))
+                    parts.append(self.pos_embd[None].expand((x.shape[0], -1, -1, -1)))
+                lt = self.lt_embd[lead_time_label.int()]
+                if self.lead_time_encoding == "learnable":
+                    # (B, C, H, W) learned per-pixel field
+                    lt = torch.reshape(
+                        lt,
+                        (x.shape[0], self.lead_time_channels, self.img_shape_y, self.img_shape_x),
                     )
-                if self.lt_embd is not None:
-                    selected_pos_embd.append(
-                        torch.reshape(
-                            self.lt_embd[lead_time_label.int()],
-                            (
-                                x.shape[0],
-                                self.lead_time_channels,
-                                self.img_shape_y,
-                                self.img_shape_x,
-                            ),
-                        )
+                else:
+                    # sinusoidal: (B, C) fixed per-step vector, broadcast spatially
+                    lt = lt[:, :, None, None].expand(
+                        x.shape[0], self.lead_time_channels, self.img_shape_y, self.img_shape_x
                     )
-                if len(selected_pos_embd) > 0:
-                    selected_pos_embd = torch.cat(selected_pos_embd, dim=1)
+                parts.append(lt.to(x.dtype))
+                selected_pos_embd = torch.cat(parts, dim=1)
             else:
                 selected_pos_embd = self.pos_embd[None].expand(
                     (x.shape[0], -1, -1, -1)
@@ -860,12 +862,10 @@ class SongUNetPosEmbd(SongUNet):
                 embeds = []
                 if self.pos_embd is not None:
                     embeds.append(selected_pos_embd)  # reuse code below
-                if self.lt_embd is not None:
-                    lt_embds = self.lt_embd[
-                        lead_time_label.int()
-                    ]  # (B, self.lead_time_channels, self.img_shape_y, self.img_shape_x),
-
-                    selected_lt_pos_embd = lt_embds[
+                lt = self.lt_embd[lead_time_label.int()]
+                if self.lead_time_encoding == "learnable":
+                    # (B, C, Hf, Wf) -> select patch indices -> (B*P, C, H, W)
+                    selected_lt_pos_embd = lt[
                         :, :, global_index[0], global_index[1]
                     ]  # (B, N_lt, P*X*Y)
                     selected_lt_pos_embd = torch.reshape(
@@ -877,8 +877,14 @@ class SongUNetPosEmbd(SongUNet):
                             (0, 2, 1, 3, 4),
                         ).contiguous(),
                         (B * P, self.lead_time_channels, H, W),
-                    )  # (B*P, N_pe, X, Y)
-                    embeds.append(selected_lt_pos_embd)
+                    )  # (B*P, N_lt, H, W)
+                else:
+                    # sinusoidal: (B, C) constant in space; repeat per patch (patch order
+                    # is b-major: index b*P + p, matching selected_pos_embd.repeat(B,...))
+                    selected_lt_pos_embd = lt.repeat_interleave(P, dim=0)[
+                        :, :, None, None
+                    ].expand(B * P, self.lead_time_channels, H, W)
+                embeds.append(selected_lt_pos_embd.to(x.dtype))
 
                 if len(embeds) > 0:
                     selected_pos_embd = torch.cat(embeds, dim=1)
@@ -1016,4 +1022,24 @@ class SongUNetPosEmbd(SongUNet):
             )
         )  # (lead_time_steps, lead_time_channels, img_shape_y, img_shape_x)
         return grid
+
+    def _get_sinusoidal_lead_time_embedding(self):
+        """Fixed sinusoidal positional encoding of the lead-time step index.
+
+        Returns a (lead_time_steps, lead_time_channels) table (non-learnable); at forward
+        time the row selected by ``lead_time_label`` is broadcast over the spatial grid.
+        """
+        steps = self.lead_time_steps
+        channels = self.lead_time_channels
+        base = self.lead_time_base
+        position = torch.arange(steps, dtype=torch.float32).unsqueeze(1)  # (steps, 1)
+        # Geometric ladder of frequencies: div_term[k] = 1 / base^(2k/channels), i.e.
+        # wavelengths spanning ~2*pi .. ~2*pi*base across the channel pairs.
+        div_term = torch.exp(
+            torch.arange(0, channels, 2, dtype=torch.float32) * (-math.log(base) / channels)
+        )  # (channels/2,)
+        table = torch.zeros(steps, channels, dtype=torch.float32)
+        table[:, 0::2] = torch.sin(position * div_term)
+        table[:, 1::2] = torch.cos(position * div_term)
+        return table  # (lead_time_steps, lead_time_channels)
 
