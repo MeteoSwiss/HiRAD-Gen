@@ -1,0 +1,39 @@
+# Full training-set build: IFS-HRES trajectories, 2020-10-01 .. 2025-02-28 (00/12Z), leads +1..+33h.
+# Train/val are selected downstream from this single zarr by init-time date ranges.
+description: "IFS-HRES 2020-10-01..2025-02-28 00/12Z +1..33h"
+
+base_dates:
+  start: 2020-10-01T00:00:00
+  end: 2025-02-28T12:00:00
+  frequency: 12h
+  # Incomplete inits (missing any of leads 1..33) are added here after the completeness check.
+  missing: []
+
+steps:
+  start: 1h
+  end: 33h
+  frequency: 1h
+
+input:
+  ifs-hres-files:
+    directory: /capstor/scratch/cscs/pstamenk/ifs-hres-realch1/precompute_2020_202502
+
+output:
+  layout: trajectories
+  dtype: float32
+  chunking:
+    base_dates: 1
+    steps: 1
+    ensembles: 1
+
+build:
+  variable_naming: "{param}_{levelist}"
+  remapping:
+    param_level: "{param}_{levelist}"
+  use_grib_paramid: false
+
+# Full-envelope statistics: every trajectory [base+1h, base+33h] inside the window
+# (last base 2025-02-28T12 + 33h = 2025-03-01T21).
+statistics:
+  start: 2020-10-01T01:00:00
+  end: 2025-03-01T21:00:00
