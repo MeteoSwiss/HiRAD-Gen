@@ -1,0 +1,28 @@
+# Debug-partition smoke test - same dataset/training config as prod, mini model size for
+# a fast run. Loads whatever regression checkpoint currently exists (see
+# training/ifso1280_real_diffusion_patched.yaml's regression_checkpoint_path).
+hydra:
+  job:
+    chdir: true
+    name: diffusion_ifso1280_real_test
+  run:
+    dir: ./outputs/training/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/anemoi_ifso1280_real
+
+  # Model
+  - model/era_real_diffusion_patched
+
+  - model_size/mini
+
+  # Training
+  # Leave same as prod
+  - training/ifso1280_real_diffusion_patched
+
+  # Logging
+  - logging/ifso1280_real_diffusion

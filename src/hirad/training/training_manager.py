@@ -206,8 +206,12 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
 
         return model, model_args
 
-    def load_regression_model(self, regression_checkpoint_path: str):
-        """Load the regression model for the residual loss if applicable."""
+    def load_regression_model(self, regression_checkpoint_path: str, epoch: int = None):
+        """Load the regression model for the residual loss if applicable.
+
+        epoch pins a specific checkpoint (e.g. 100096, matching checkpoint.0.100096.pt);
+        None (default) loads the latest checkpoint in the directory.
+        """
 
         if not os.path.isdir(regression_checkpoint_path):
             raise FileNotFoundError(
@@ -233,7 +237,8 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         _ = load_checkpoint(
             path=regression_checkpoint_path,
             model=regression_net,
-            device=self.dist.device
+            device=self.dist.device,
+            epoch=epoch,
         )
         regression_net.eval().requires_grad_(False).to(self.dist.device)
         if self.use_apex_gn:

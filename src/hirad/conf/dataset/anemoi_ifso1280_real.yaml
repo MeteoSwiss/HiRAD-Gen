@@ -1,0 +1,30 @@
+# IFS HRES (native ~9km O1280 octahedral reduced-Gaussian grid) forecast trajectories,
+# downscaled to REAL-CH1. Input is a 5D forecast store (base_dates x variables x ensemble
+# x step x values) - see AnemoiForecastDataset. Unlike the ifsn320 datasets, no separate
+# input_stats_anemoi_dataset_path is given: this store carries its own per-channel stats,
+# and AnemoiForecastDataset reorders them to input_channel_names order itself.
+type: anemoi_ifso1280_real
+input_anemoi_dataset_path: '/capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+# Computed via src/hirad/input_data/calculate_ifso1280_real_boxcox_stats.py
+# --lead-time-hours 1 --stride 3, restricted to lead_time_hours=[1] below (2860 train
+# pairs, every 3rd sampled). Close to but not identical to the all-lead-time stats.
+transform_input_means: {'tp-box_cox_025': -3.8314857933045876}
+transform_input_stdevs: {'tp-box_cox_025': 0.22341283479847723}
+transform_output_means: {'tp-box_cox_025': -3.9242106178081904}
+transform_output_stdevs: {'tp-box_cox_025': 0.1912158784643011}
+n_month_hour_channels: 4
+# Data spans 2020-10-01 to 2025-02-28 (base_dates, 12h apart) x steps 1h-33h.
+# Only the 1h lead time is used (much smaller dataset - one sample per base_date
+# instead of 33).
+lead_time_hours: [1]
+start_date: '2020-10-01'
+end_date: '2024-08-31'
+trim_edge: 41
+validation: True
+validation_start_date: '2024-09-01'
+validation_end_date: '2025-02-28'

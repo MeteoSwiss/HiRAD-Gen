@@ -252,7 +252,10 @@ def main(cfg: DictConfig) -> None:
     # Load the regression checkpoint if applicable #TODO test when training correction
     regression_net = None
     if hasattr(cfg.training.io, "regression_checkpoint_path"):
-        regression_net = training_manager.load_regression_model(to_absolute_path(cfg.training.io.regression_checkpoint_path))
+        regression_net = training_manager.load_regression_model(
+            to_absolute_path(cfg.training.io.regression_checkpoint_path),
+            epoch=cfg.training.io.get("regression_checkpoint_epoch", None),
+        )
 
 
     # Compute the number of required gradient accumulation rounds

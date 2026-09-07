@@ -1,0 +1,24 @@
+hydra:
+  job:
+    chdir: true
+    name: regression_ifso1280_real
+  run:
+    dir: /capstor/scratch/cscs/mmcgloho/outputs/training/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset
+  - dataset/anemoi_ifso1280_real
+
+  # Model
+  - model/era_real_regression
+
+  - model_size/normal_real
+
+  # Training
+  - training/ifso1280_real_regression
+
+  # Logging
+  - logging/ifso1280_real_regression

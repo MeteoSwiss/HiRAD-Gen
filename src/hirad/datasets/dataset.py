@@ -24,7 +24,7 @@ from hirad.distributed import DistributedManager
 from .era5_cosmo import ERA5_COSMO
 from .era5_real import ERA5_REAL
 from .anemoi_dataset import ANEMOI_ERA5_COSMO, ANEMOI_ERA5_REAL
-from .anemoi_forecast_dataset import ANEMOI_IFSN320_REAL
+from .anemoi_forecast_dataset import ANEMOI_IFSN320_REAL, ANEMOI_IFSO1280_REAL
 from .anemoi_dataset_copernicus_tp import ANEMOI_ERA5COPERNICUSTP_COSMO, ANEMOI_ERA5COPERNICUSTP_REAL
 from .base import DownscalingDataset
 
@@ -36,6 +36,7 @@ known_datasets = {
     "anemoi_era5_cosmo": ANEMOI_ERA5_COSMO,
     "anemoi_era5_real": ANEMOI_ERA5_REAL,
     "anemoi_ifsn320_real": ANEMOI_IFSN320_REAL,
+    "anemoi_ifso1280_real": ANEMOI_IFSO1280_REAL,
     "anemoi_era5_copernicus_tp_real": ANEMOI_ERA5COPERNICUSTP_REAL,
     "anemoi_era5_copernicus_tp_cosmo": ANEMOI_ERA5COPERNICUSTP_COSMO,
 }

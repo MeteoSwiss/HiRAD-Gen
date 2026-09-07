@@ -22,16 +22,21 @@ class AnemoiForecastDataset(AnemoiDataset):
 
     Most methods inherited from AnemoiDataset.
 
-    NOTE: This class can currently only be used for inference-only tasks.
-    TODO: Add proper handling which does target data pairing (when config
-    specifies that this is not inference-only). Will need new config variable.
+    Also usable for training: passing start_date/end_date restricts which
+    (base_date, step) pairs are included by valid time (see
+    _align_input_output), giving a train/validation split. Unlike AnemoiDataset,
+    the target dataset is always opened over its full range here rather than
+    restricted to start_date/end_date, since the input can't be date-restricted
+    at open time (see _open_input_dataset) - restricting the target instead
+    would make in-range input pairs look "missing".
 
-    `type` follows "anemoi_ifsn320_real" - the input is IFS forecast data
-    on the N320 grid, not era5, hence the distinct VALID_INPUT_DATASETS name.
-    Could be extended to COSMO grid if needed.
+    `type` follows "anemoi_ifsn320_real" or "anemoi_ifso1280_real" - the input is
+    IFS forecast data on the N320 grid or the native ~9km O1280 octahedral
+    reduced-Gaussian grid (IFS HRES), not era5, hence the distinct
+    VALID_INPUT_DATASETS names. Could be extended to COSMO grid if needed.
     """
 
-    VALID_INPUT_DATASETS = {'ifsn320'}
+    VALID_INPUT_DATASETS = {'ifsn320', 'ifso1280'}
 
     def __init__(self,
                 type: str,
@@ -53,15 +58,26 @@ class AnemoiForecastDataset(AnemoiDataset):
                 trim_edge: int = 0,
                 target_missing_as_zeros: bool = False,
                 input_frequency: str = None,
+                lead_time_hours: List[int] = None,
                 ):
+        # Stashed for _align_input_output to filter pairs by valid time. Not forwarded to
+        # the base class: unlike AnemoiDataset, the target here must stay open over its
+        # full range (see _open_input_dataset - the input can't be date-restricted at open
+        # time, so restricting the target instead would make in-range input pairs look
+        # "missing").
+        self._split_start_date = to_datetime(start_date) if start_date is not None else None
+        self._split_end_date = to_datetime(end_date) if end_date is not None else None
+        # Restrict which forecast steps are used (e.g. [1] for 1h-lead-time-only training).
+        # None (default) keeps every step, as before.
+        self._lead_time_hours = set(lead_time_hours) if lead_time_hours is not None else None
         super().__init__(
             type=type,
             input_anemoi_dataset_path=input_anemoi_dataset_path,
             target_anemoi_dataset_path=target_anemoi_dataset_path,
             input_stats_anemoi_dataset_path=input_stats_anemoi_dataset_path,
             target_stats_anemoi_dataset_path=target_stats_anemoi_dataset_path,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=None,
+            end_date=None,
             input_channel_names=input_channel_names,
             output_channel_names=output_channel_names,
             static_channel_names=static_channel_names,
@@ -97,6 +113,13 @@ class AnemoiForecastDataset(AnemoiDataset):
         self._channel_indices = [native_names.index(name) for name in input_channel_names]
         return dataset
 
+    def _fallback_input_statistics(self, input_channel_names):
+        # The trajectory store can't be opened with select= (see _open_input_dataset), so
+        # its native-order statistics must be reordered to match input_channel_names, same
+        # as the data itself in __getitem__.
+        stats = self._input_dataset.statistics
+        return {k: v[self._channel_indices] for k, v in stats.items()}
+
     def _align_input_output(self):
         """
         Align input and output samples by valid time.
@@ -106,9 +129,15 @@ class AnemoiForecastDataset(AnemoiDataset):
         valid_time (where valid_time = base_time + step). This supports
         different input/target frequencies (e.g. 6h input with an
         hourly target, where only the matching target times are used) as well as
-        targets missing some dates. each member of  `_pairs` is a tuple
-        (base_date_idx, step_idx, target_idx) where target_idx is the index of
-        the matching target or None when the target has no matching date.
+        targets missing some dates. Pairs whose valid time falls outside
+        [self._split_start_date, self._split_end_date] (set from the
+        start_date/end_date constructor args, when given) are excluded - this is
+        how train/validation splits are implemented for this class. Steps whose
+        lead time isn't in self._lead_time_hours (set from the lead_time_hours
+        constructor arg, when given) are excluded entirely. each member of
+        `_pairs` is a tuple (base_date_idx, step_idx, target_idx) where
+        target_idx is the index of the matching target or None when the target
+        has no matching date.
         """
         base_dates = to_datetime(self._input_dataset.base_dates)
         steps = self._input_dataset.steps
@@ -120,13 +149,25 @@ class AnemoiForecastDataset(AnemoiDataset):
         }
 
         self._pairs = []
-        
+
         # Shape of a single (pre-squeeze) target sample, used to emit zeros when missing.
         self._target_sample_shape = self._output_dataset.shape[1:]
 
+        step_indices = range(len(steps))
+        if self._lead_time_hours is not None:
+            step_indices = [
+                i for i in step_indices
+                if int(round(steps[i] / np.timedelta64(1, 'h'))) in self._lead_time_hours
+            ]
+
         for ref_idx, base_date in enumerate(base_dates):
-            for step_idx, step in enumerate(steps):
+            for step_idx in step_indices:
+                step = steps[step_idx]
                 valid_time = base_date + step
+                if self._split_start_date is not None and valid_time < self._split_start_date:
+                    continue
+                if self._split_end_date is not None and valid_time > self._split_end_date:
+                    continue
                 target_idx = np.nonzero(target_dates == valid_time)[0]
                 assert (len(target_idx) != 0 or self.target_missing_as_zeros), \
                     f"Expected at least one target match for valid_time={valid_time} (base_date={base_date}, step={step}), found {len(target_idx)}."
@@ -194,3 +235,4 @@ class AnemoiForecastDataset(AnemoiDataset):
         ]
 
 ANEMOI_IFSN320_REAL = AnemoiForecastDataset
+ANEMOI_IFSO1280_REAL = AnemoiForecastDataset

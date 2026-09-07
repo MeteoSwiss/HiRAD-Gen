@@ -1,0 +1,6 @@
+# Same as logging/era_real_regression.yaml, except run_name.
+method: mlflow
+experiment_name: hirad-corrdiff-regression-training
+run_name: ifso1280-1h-leadtime
+uri: null
+log_images: false
