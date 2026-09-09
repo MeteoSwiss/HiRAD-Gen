@@ -197,13 +197,7 @@ class AnemoiDataset(DownscalingDataset):
         self.output_mean = target_stats['mean'][:]
         self.output_std = target_stats['stdev'][:]
 
-        if input_stats_anemoi_dataset_path is not None:
-            input_stats = open_dataset(
-                input_stats_anemoi_dataset_path,
-                select=input_channel_names,
-            ).statistics
-        else:
-            input_stats = self._input_dataset.statistics
+        input_stats = self._input_statistics(input_stats_anemoi_dataset_path, input_channel_names)
         self.input_mean = input_stats['mean'][:]
         self.input_std = input_stats['stdev'][:]
 
@@ -243,6 +237,22 @@ class AnemoiDataset(DownscalingDataset):
             self._input_dataset.latitudes,
             self.longitude(),
             self.latitude())
+
+    def _input_statistics(self, input_stats_anemoi_dataset_path, input_channel_names):
+        """Per-channel input statistics (mean/stdev/...), in input_channel_names order."""
+        if input_stats_anemoi_dataset_path is not None:
+            return open_dataset(input_stats_anemoi_dataset_path, select=input_channel_names).statistics
+        return self._fallback_input_statistics(input_channel_names)
+
+    def _fallback_input_statistics(self, input_channel_names):
+        """Statistics from the input dataset itself, used when no separate
+        input_stats_anemoi_dataset_path is given. Already in input_channel_names order,
+        guaranteed by _open_input_dataset's select=input_channel_names.
+
+        Overridden by subclasses (e.g. AnemoiForecastDataset) whose input dataset can't be
+        opened with select=input_channel_names and so must reorder these explicitly.
+        """
+        return self._input_dataset.statistics
 
     def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
         """Open the input dataset, restricted to the target's date range and area.
