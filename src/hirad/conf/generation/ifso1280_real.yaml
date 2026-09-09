@@ -1,0 +1,45 @@
+num_ensembles: 2
+  # Small ensemble - this is just an example/smoke-test generation, not a scored eval run.
+seed_batch_size: 1
+inference_mode: all
+  # regression + diffusion, so we get baseline/target/regression-prediction/diffusion-prediction
+
+randomize: False
+  # Fixed seeds for a reproducible example run.
+random_seed: 0
+
+# Patching parameters - must match training (patch_shape_x/y in
+# training/ifso1280_real_diffusion_patched.yaml).
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+hr_mean_conditioning: True
+
+# A few days from the inference dataset's window (dataset/anemoi_ifso1280_real_inference.yaml
+# starts 2024-09-01) - lead_time_hours=[1] means one valid time per base_date, 12h apart
+# (01:00/13:00), so the interval here must be 12, not 1. Yields ~8 example timesteps.
+times_range: ['20240901-0100', '20240905-0100', 12]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: False
+    # Skip compile overhead for a one-off small run.
+  num_writer_workers: 2
+  enable_timing: True
+
+io:
+  res_ckpt_path: /capstor/scratch/cscs/mmcgloho/outputs/training/diffusion_ifso1280_real/checkpoints_patched_diffusion
+  # Latest diffusion checkpoint in this dir is used (no res_ckpt_epoch pin).
+  reg_ckpt_path: /capstor/scratch/cscs/mmcgloho/outputs/training/regression_ifso1280_real/checkpoints_regression
+  reg_ckpt_epoch: 100000
+  # Must match training/ifso1280_real_diffusion_patched.yaml's regression_checkpoint_epoch -
+  # diffusion's residual was learned against this specific regression checkpoint's error
+  # pattern, not whatever's newest in this directory.
+  output_path: /capstor/scratch/cscs/mmcgloho/outputs/generation/ifso1280_real_example/
+  output_format: 'both'
+  grib_template_path: '/capstor/store/cscs/pasc/c38/evalml/resources/inference/templates'

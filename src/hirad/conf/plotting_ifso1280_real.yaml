@@ -1,0 +1,32 @@
+hydra:
+  job:
+    chdir: true
+    name: plotting_ifso1280_real_example
+  run:
+    dir: /capstor/scratch/cscs/mmcgloho/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/anemoi_ifso1280_real_inference
+
+# Output of generate_ifso1280_real.yaml (generation.io.output_path).
+results_dir: /capstor/scratch/cscs/mmcgloho/outputs/generation/ifso1280_real_example
+output_dir: /capstor/scratch/cscs/mmcgloho/outputs/generation/ifso1280_real_example/plots
+time_steps: null
+  # null -> auto-discover every generated timestep (handles the nested base_time layout)
+plot_box_precipitation: True
+  # Routes tp through plotting.plot_map_precipitation (discrete color bounds) instead
+  # of the generic plot_map.
+
+# REAL-CH1 grid (matches src/hirad/conf/eval_real.yaml and trim_edge=41 in the dataset
+# config - 704x1088 after trimming). Without these, plot_maps.py falls back to
+# DEFAULT_GRID_CONFIG, which is sized for COSMO's 352x544 grid and errors on this shape.
+lat_start: -4.42
+lat_end: 3.36
+lat_step: 0.01
+lon_start: -6.82
+lon_end: 4.80
+lon_step: 0.01
+relax_zone: 41
+height: 704
+width: 1088

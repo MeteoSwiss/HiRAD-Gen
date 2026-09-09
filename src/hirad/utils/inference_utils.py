@@ -560,6 +560,18 @@ def pad_image(image, padding_margin, fill_value):
 ############################################################################
 
 
+def transform_channel(values: np.ndarray, channel_name: str) -> np.ndarray:
+    """Convert a channel's raw physical-unit values (as stored by save_results_as_torch)
+    to display units for plotting: 2t Kelvin -> Celsius, tp meters -> millimeters,
+    everything else unchanged. Used by plot_maps.py.
+    """
+    if channel_name == '2t':
+        return values - 273.15
+    if channel_name == 'tp':
+        return values * 1000.0
+    return values
+
+
 def calculate_bounds(*arrays: np.ndarray) -> tuple[float]:
     """Calculate consistent bounds across all arrays"""
     valid_arrays = [arr for arr in arrays if arr is not None]

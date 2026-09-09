@@ -1,0 +1,18 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_ifso1280_real_example
+  run:
+    dir: ./outputs/generation/${hydra:job.name}
+
+# Get defaults
+defaults:
+  - _self_
+  # Dataset
+  - dataset/anemoi_ifso1280_real_inference
+
+  # Sampler
+  - sampler/stochastic
+
+  # Generation
+  - generation/ifso1280_real

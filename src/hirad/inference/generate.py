@@ -116,7 +116,8 @@ def main(cfg: DictConfig) -> None:
         _ = load_checkpoint(
             path=res_ckpt_path,
             model=net_res,
-            device=dist.device
+            device=dist.device,
+            epoch=cfg.generation.io.get("res_ckpt_epoch", None),
         )
         
         net_res = net_res.eval().to(device)
@@ -150,7 +151,8 @@ def main(cfg: DictConfig) -> None:
         _ = load_checkpoint(
             path=reg_ckpt_path,
             model=net_reg,
-            device=dist.device
+            device=dist.device,
+            epoch=cfg.generation.io.get("reg_ckpt_epoch", None),
         )
         
         net_reg = net_reg.eval().to(device)
