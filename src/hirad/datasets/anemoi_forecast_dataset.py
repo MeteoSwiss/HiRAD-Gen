@@ -132,6 +132,14 @@ class AnemoiForecastDataset(AnemoiDataset):
         self._channel_indices = [native_names.index(name) for name in input_channel_names]
         return dataset
 
+    def _fallback_input_statistics(self, input_channel_names):
+        # The trajectory store can't be opened with select= (see _open_input_dataset), so its
+        # native-order statistics must be reordered to input_channel_names order (via
+        # self._channel_indices), same as the data are in __getitem__. Without this the
+        # per-channel mean/std are mismatched to the (reordered) data channels.
+        stats = self._input_dataset.statistics
+        return {k: v[self._channel_indices] for k, v in stats.items()}
+
     def _align_input_output(self):
         """
         Align input and output samples by valid time.
