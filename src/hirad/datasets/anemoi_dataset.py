@@ -33,7 +33,7 @@ REAL_TO_ERA_CHANNEL_MAP_BY_FREQUENCY_HOURS = {
 
 class AnemoiDataset(DownscalingDataset):
     # Names accepted for the "input dataset" segment of `type` (e.g. "anemoi_era5_cosmo").
-    # Overridden by subclasses backed by a different input source (e.g. AnemoiForecastDataset's "ifsn320").
+    # Overridden by subclasses backed by a different input source (e.g. AnemoiForecastDataset's "ifs").
     VALID_INPUT_DATASETS = {'era5'}
 
     def __init__(self,

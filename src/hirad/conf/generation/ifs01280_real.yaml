@@ -1,0 +1,57 @@
+num_ensembles: 4
+  # Number of ensembles to generate per input
+seed_batch_size: 4
+  # Size of the batched inference
+inference_mode: all
+  # Choose between "all" (regression + diffusion), "regression" or "diffusion"
+  # Patch size. Patch-based sampling will be utilized if these dimensions differ from 
+  # img_shape_x and img_shape_y
+
+randomize: True
+  # Whether to randomize the random seeds for each generation. If false, fixed seeds
+  # from 0 to num_ensembles-1 will be used for each time step in times/times_range.
+random_seed: 2578458
+  # Base random seed. This is only used when randomize is True.
+  # random seed will be set for numpy random module to have reproducible randomized generative process.
+
+# Patching parameters
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+#   # Number of overlapping pixels between adjacent patches
+boundary_pix: 2
+#   # Number of boundary pixels to be cropped out. 2 is recommanded to address the boundary
+#   # artifact.
+
+hr_mean_conditioning: True
+
+# times_range: ['20260730-0100','20260803-0000',1]
+times_range: ['20240712-1600','20240712-1600',1]
+  # Start date, end date and time interval (in hours) for the generation
+
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+    # Whether to force fp16 precision for the model. If false, it'll use the precision
+    # specified upon training.
+  use_torch_compile: True
+    # whether to use torch.compile on the diffusion model
+    # this will make the first time stamp generation very slow due to compilation overheads
+    # but will significantly speed up subsequent inference runs
+  num_writer_workers: 8
+    # number of workers to use for writing file
+    # To support multiple workers a threadsafe version of the netCDF library must be used
+  enable_timing: True
+    # Whether to collect and log detailed per-step timing breakdowns.
+    # Disabling removes all torch.cuda.synchronize() calls from the hot path,
+    # which improves throughput for production runs.
+
+io:
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/diffusion/
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/regression/
+  output_path: .
+  output_format: 'torch'
+  grib_template_path: ''

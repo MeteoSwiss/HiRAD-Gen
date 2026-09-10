@@ -1,0 +1,27 @@
+# IFS-HRES -> RealCH1 training dataset.
+# Same as the base IFS train dataset but: provide_lead_time=False and max_lead_hours=12.
+# With 2 usable inits/day (00Z, 12Z) leads 1..12 tile the full 24h diurnal cycle
+# (00Z->valid 01..12, 12Z->valid 13..24);
+type: anemoi_ifs_real
+input_anemoi_dataset_path: '/capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+transform_input_means: {'tp-box_cox_025': -3.847969383912039}
+transform_input_stdevs: {'tp-box_cox_025': 0.21939737330078693}
+transform_output_means: {'tp-box_cox_025': -3.923594846877984}
+transform_output_stdevs: {'tp-box_cox_025': 0.19256625704644262}
+n_month_hour_channels: 4
+trim_edge: 41
+# Whether to return lead-time labels (for lead-time conditioning) or not.
+provide_lead_time: False
+# Maximum lead time to use in training. Higher lead times are ignored.
+max_lead_hours: 12
+# Split by INIT time. Zarr covers 2020-10..2025-02.
+start_date: '2020-10-01'
+end_date: '2024-06-30'
+validation: True
+validation_start_date: '2024-07-01'
+validation_end_date: '2025-02-28'

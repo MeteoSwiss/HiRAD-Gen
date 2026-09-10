@@ -1,0 +1,12 @@
+# Patched diffusion (residual) model for IFS-HRES -> RealCH1, NO lead-time conditioning.
+# lead_time_mode: False -> plain patched diffusion (ERA5-style architecture); hour-of-day is
+# carried by the dataset's month/hour channels.
+name: patched_diffusion
+hr_mean_conditioning: True
+  # High-res mean (the regression's output) is fed as an extra condition.
+
+model_args:
+  gridtype: "learnable"
+  N_grid_channels: 100
+  embedding_type: "positional"
+  lead_time_mode: False
