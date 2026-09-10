@@ -30,12 +30,12 @@ class AnemoiForecastDataset(AnemoiDataset):
     TODO: Add proper handling which does target data pairing (when config
     specifies that this is not inference-only). Will need new config variable.
 
-    `type` follows "anemoi_ifsn320_real" - the input is IFS forecast data
-    on the N320 grid, not era5, hence the distinct VALID_INPUT_DATASETS name.
-    Could be extended to COSMO grid if needed.
+    `type` follows "anemoi_ifs_real" - the input is IFS forecast data
+    (grid-agnostic; both N320 and O1280 inputs work under this class), not era5,
+    hence the distinct VALID_INPUT_DATASETS name. Could be extended to COSMO grid if needed.
     """
 
-    VALID_INPUT_DATASETS = {'ifsn320'}
+    VALID_INPUT_DATASETS = {'ifs'}
 
     def __init__(self,
                 type: str,
@@ -259,4 +259,4 @@ class AnemoiForecastDataset(AnemoiDataset):
             for ref_idx, step_idx, _ in self._pairs
         ]
 
-ANEMOI_IFSN320_REAL = AnemoiForecastDataset
+ANEMOI_IFS_REAL = AnemoiForecastDataset

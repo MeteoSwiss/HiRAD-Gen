@@ -1,0 +1,21 @@
+# Regression model for IFS-HRES -> RealCH1 with lead-time conditioning.
+# Architecture matches the ERA5 regression checkpoint (for the fine-tune warm start); only
+# the input width differs, growing by lead_time_channels (appended after the positional
+# embedding, so the pretrained first-conv weights map onto the leading input channels and the
+# new lead channels are zero-initialised — see utils/checkpoint.load_model_weights_partial).
+name: regression
+hr_mean_conditioning: False
+
+model_args:
+  "N_grid_channels": 4
+  # Number of channels for positional grid embeddings
+  "embedding_type": "zero"
+  # Type of timestep embedding ('zero' for none)
+  # --- Lead-time conditioning (switch: set lead_time_mode False for the plain ERA5-style
+  # regression, which is then bit-identical to the pretrained model on init). ---
+  "lead_time_mode": True
+  "lead_time_channels": 8
+  # lead label = lead hours (1..33); table/encoding needs indices up to 33
+  "lead_time_steps": 34
+  "lead_time_encoding": "sinusoidal"
+  # lead_time_base defaults to lead_time_steps (34) -> wavelengths span the lead range

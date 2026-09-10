@@ -1,0 +1,12 @@
+hydra:
+  job:
+    chdir: true
+    name: gen_test_ifso1280_real
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/generation/${hydra:job.name}
+
+defaults:
+  - _self_
+  - dataset/anemoi_ifso1280_real_inference
+  - sampler/stochastic
+  - generation/ifs01280_real

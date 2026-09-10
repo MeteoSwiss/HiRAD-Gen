@@ -1,0 +1,16 @@
+# Patched diffusion (residual) model for IFS-HRES -> RealCH1, lead-time conditioned.
+# Architecture matches the ERA5 diffusion checkpoint (for the warm start); input grows by
+# lead_time_channels (appended last, zero-initialised on load).
+name: patched_diffusion
+hr_mean_conditioning: True
+  # High-res mean (the regression's output) is fed as an extra condition.
+
+model_args:
+  gridtype: "learnable"
+  N_grid_channels: 100
+  embedding_type: "positional"
+  # --- lead-time conditioning (matches the regression stage) ---
+  lead_time_mode: True
+  lead_time_channels: 8
+  lead_time_steps: 34
+  lead_time_encoding: "sinusoidal"

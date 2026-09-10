@@ -1,0 +1,10 @@
+# Regression model for IFS-HRES -> RealCH1, NO lead-time conditioning (plain ERA5-style).
+# lead_time_mode: False -> the network takes no lead label; hour-of-day comes from the
+# dataset's month/hour channels.
+name: regression
+hr_mean_conditioning: False
+
+model_args:
+  "N_grid_channels": 4
+  "embedding_type": "zero"
+  "lead_time_mode": False

@@ -1,0 +1,32 @@
+# Regression mean predictor for IFS-HRES -> RealCH1, trained FROM SCRATCH (no ERA5 warm start) or finetuned from existing checkpoint.
+
+hp:
+    training_duration: 3000000
+    total_batch_size: "auto"
+    batch_size_per_gpu: 4
+    lr: 0.0002
+    # From-scratch peak (ERA5 regression from-scratch used 2e-4). Constant LR (lr_decay=1)
+    # after a short rampup, as in the original regression schedule.
+    grad_clip_threshold: null
+    lr_decay: 1
+    lr_rampup: 100000
+    lr_decay_rate: 5e5
+
+perf:
+    fp_optimizations: amp-bf16
+    dataloader_workers: 10
+    songunet_checkpoint_level: 0
+    use_apex_gn: True
+    torch_compile: True
+    profile_mode: False
+
+io:
+    # No finetune_checkpoint_path -> from scratch (cur_nimg starts at 0).
+    print_progress_freq: 1000
+    save_checkpoint_freq: 100000
+    validation_freq: 50000
+    validation_steps: 10
+    checkpoint_dir: .
+    # If finetuning from ERA5, provide the checkpoint path
+    # finetune_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression
+

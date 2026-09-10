@@ -1,0 +1,25 @@
+hydra:
+  job:
+    chdir: true
+    name: regression_ifso1280_real_nolt_l12
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset (IFS-HRES forecast input -> RealCH1 target, NO lead labels, leads 1..12)
+  - dataset/anemoi_ifso1280_real_train
+
+  # Model (plain regression, no lead-time conditioning)
+  - model/ifso1280_real_regression_nolt
+
+  - model_size/normal_real
+
+  # Training
+  - training/ifso1280_real_regression
+
+  # Logging
+  - logging/ifso1280_real_regression

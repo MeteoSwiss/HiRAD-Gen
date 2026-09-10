@@ -1,0 +1,6 @@
+# set method to mlflow to log with mlflow; null to disable
+method: mlflow
+experiment_name: hirad-corrdiff-diffusion-training
+run_name: ifso1280-real-lt
+uri: null
+log_images: false

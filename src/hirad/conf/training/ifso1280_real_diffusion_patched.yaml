@@ -1,0 +1,37 @@
+# Patched diffusion (residual) for IFS-HRES -> RealCH1,
+
+hp:
+    # First chunk (LR schedule decoupled from this: pure function of cur_nimg + decay params;
+    # bump and resubmit to continue the same trajectory).
+    training_duration: 12000000
+    total_batch_size: "auto"
+    batch_size_per_gpu: 8
+    lr: 0.0002
+    # From-scratch peak, smooth 0.85/1M decay planned for a ~20M horizon.
+    grad_clip_threshold: 1e6
+    lr_decay: 0.85
+    lr_rampup: 1000000
+    lr_decay_rate: 1e6
+    patch_shape_x: 384
+    patch_shape_y: 384
+    patch_num: 2
+    max_patch_per_gpu: 300
+
+perf:
+    fp_optimizations: amp-bf16
+    dataloader_workers: 30
+    songunet_checkpoint_level: 0
+    use_apex_gn: True
+    torch_compile: True
+    profile_mode: False
+
+io:
+    regression_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/regression/
+    # Warm start the diffusion weights from the ERA5 diffusion checkpoint (weights only, fresh
+    # optimizer; input grows by the lead-time channels -> partial load zero-inits them).
+    # finetune_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion
+    print_progress_freq: 2000
+    save_checkpoint_freq: 250000
+    validation_freq: 100000
+    validation_steps: 45
+    checkpoint_dir: .
