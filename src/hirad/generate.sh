@@ -12,18 +12,18 @@
 ### HARDWARE ###
 #SBATCH --partition=normal
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2
-#SBATCH --gpus-per-node=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:30:00
+#SBATCH --time=00:10:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
 ### OUTPUT ###
-#SBATCH --output=./logs/regression_generation_%A_%a.log
+#SBATCH --output=./logs/generation_%A_%a.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A c38
 
 set -euo pipefail
 
@@ -55,6 +55,6 @@ export OMP_NUM_THREADS=1
 
 EXTRA_ARGS_STR="${EXTRA_ARGS[*]@Q}"
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
-    pip install -e .
-    python src/hirad/inference/generate.py --config-name=generate_era_real.yaml ${EXTRA_ARGS_STR}
+    export PYTHONPATH=\${PWD}/src:\${PYTHONPATH:-}
+    python src/hirad/inference/generate.py --config-name=generate_ifso1280_real.yaml ${EXTRA_ARGS_STR}
 "
