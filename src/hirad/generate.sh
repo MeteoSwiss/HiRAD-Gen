@@ -15,7 +15,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --time=00:10:00
+#SBATCH --time=06:00:00
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
@@ -55,6 +55,6 @@ export OMP_NUM_THREADS=1
 
 EXTRA_ARGS_STR="${EXTRA_ARGS[*]@Q}"
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
-    export PYTHONPATH=\${PWD}/src:\${PYTHONPATH:-}
+    pip install -e .
     python src/hirad/inference/generate.py --config-name=generate_ifso1280_real.yaml ${EXTRA_ARGS_STR}
 "

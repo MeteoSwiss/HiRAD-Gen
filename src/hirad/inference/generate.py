@@ -24,6 +24,25 @@ from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
 
+def _remap_apex_groupnorm_state_dict(state_dict: dict) -> dict:
+    """Remap ApexGroupNorm's trained weight/bias onto the plain norm.weight/bias keys used
+    when running with use_apex_gn=False.
+
+    In layers.GroupNorm, the outer weight/bias are a dead interface parameter when apex is
+    active -- forward() calls self.gn(x) directly, so they never receive gradients and stay
+    at their init values throughout training. The real trained scale/bias live under the
+    `gn` submodule (norm*.gn.weight/bias). To run a checkpoint trained with use_apex_gn=True
+    on an apex-less environment, those real values must replace the dead ones.
+    """
+    remapped = {k: v for k, v in state_dict.items() if ".gn." not in k}
+    for k, v in state_dict.items():
+        if k.endswith(".gn.weight"):
+            remapped[k[: -len(".gn.weight")] + ".weight"] = v
+        elif k.endswith(".gn.bias"):
+            remapped[k[: -len(".gn.bias")] + ".bias"] = v
+    return remapped
+
+
 def _sync_t() -> float:
     """Return wall-clock time after synchronizing all pending CUDA ops."""
     if torch.cuda.is_available():
@@ -107,16 +126,17 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in diffusion_model_args:
             diffusion_model_args["amp_mode"] = False
-        use_apex_gn = diffusion_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
-        #use_apex_gn = False
-        #diffusion_model_args["use_apex_gn"] = use_apex_gn
+        checkpoint_used_apex_gn = diffusion_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
+        use_apex_gn = False
+        diffusion_model_args["use_apex_gn"] = use_apex_gn
 
         net_res = EDMPrecondSuperResolution(**diffusion_model_args)
 
         _ = load_checkpoint(
             path=res_ckpt_path,
             model=net_res,
-            device=dist.device
+            device=dist.device,
+            state_dict_transform=_remap_apex_groupnorm_state_dict if checkpoint_used_apex_gn else None,
         )
         
         net_res = net_res.eval().to(device)
@@ -141,16 +161,17 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in regression_model_args:
             regression_model_args["amp_mode"] = False
-        use_apex_gn_reg = regression_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
-        #use_apex_gn_reg = False
-        #regression_model_args["use_apex_gn"] = use_apex_gn_reg
+        checkpoint_used_apex_gn_reg = regression_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
+        use_apex_gn_reg = False
+        regression_model_args["use_apex_gn"] = use_apex_gn_reg
 
         net_reg = UNet(**regression_model_args)
 
         _ = load_checkpoint(
             path=reg_ckpt_path,
             model=net_reg,
-            device=dist.device
+            device=dist.device,
+            state_dict_transform=_remap_apex_groupnorm_state_dict if checkpoint_used_apex_gn_reg else None,
         )
         
         net_reg = net_reg.eval().to(device)

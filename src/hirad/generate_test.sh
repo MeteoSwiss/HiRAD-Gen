@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name="corrdiff-test-genreate"
+#SBATCH --job-name="corrdiff-test-generate"
 
 ### HARDWARE ###
 #SBATCH --partition=debug
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2
-#SBATCH --gpus-per-node=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --time=00:30:00
 #SBATCH --no-requeue
@@ -16,7 +16,7 @@
 #SBATCH --output=./logs/generation_test.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A c38
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -42,7 +42,8 @@ export OMP_NUM_THREADS=72
 # echo "Local processes: $LOCAL_PROCS"
 # echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
-srun --environment=./ci/edf/modulus_env.toml bash -c "
+srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
-    python src/hirad/inference/generate.py --config-name=generate_era_cosmo_test.yaml
+    pip install anemoi-datasets==0.5.42
+    python src/hirad/inference/generate.py --config-name=generate_ifso1280_real.yaml
 "

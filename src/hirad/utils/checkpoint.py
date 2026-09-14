@@ -17,7 +17,7 @@
 import glob
 import re
 from pathlib import Path
-from typing import Any, Dict, List, NewType, Optional, Union, Tuple
+from typing import Any, Callable, Dict, List, NewType, Optional, Union, Tuple
 
 import torch
 from torch.cuda.amp import GradScaler
@@ -298,6 +298,7 @@ def load_checkpoint(
     epoch: Union[int, None] = None,
     metadata_dict: Optional[Dict[str, Any]] = {},
     device: Union[str, torch.device] = "cpu",
+    state_dict_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
 ) -> int:
     """Checkpoint loading utility
 
@@ -323,6 +324,10 @@ def load_checkpoint(
         Dictionary to store metadata from the checkpoint, by default None
     device : Union[str, torch.device], optional
         Target device, by default "cpu"
+    state_dict_transform : Optional[Callable[[Dict[str, Any]], Dict[str, Any]]], optional
+        Applied to the loaded model state dict before ``model.load_state_dict``, e.g. to
+        remap parameter names when the model was constructed differently than at save time
+        (see ``generate.py``'s apex GroupNorm remap). By default None (no transform).
 
     Returns
     -------
@@ -358,7 +363,10 @@ def load_checkpoint(
             )
         else:
             # Load state dictionary
-            model.load_state_dict(torch.load(file_name, map_location=device))
+            state_dict = torch.load(file_name, map_location=device)
+            if state_dict_transform is not None:
+                state_dict = state_dict_transform(state_dict)
+            model.load_state_dict(state_dict)
 
             checkpoint_logging.success(
                 f"Loaded model state dictionary {file_name} to device {device}"

@@ -27,7 +27,10 @@ boundary_pix: 2
 hr_mean_conditioning: True
 
 # times_range: ['20260730-0100','20260803-0000',1]
-times_range: ['20240712-1600','20240712-1600',1]
+# Init 2025-04-01 12Z + 4h lead = valid 16:00, within the new 2025-04..2025-05 test window
+# (dataset/anemoi_ifso1280_real_inference.yaml).
+#times_range: ['20250401-1600','20250401-1600',1]
+times_range: ['20250402-0100','20250601-0000',1]
   # Start date, end date and time interval (in hours) for the generation
 
 times: null
@@ -52,6 +55,6 @@ perf:
 io:
   res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/diffusion/
   reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/regression/
-  output_path: .
-  output_format: 'torch'
-  grib_template_path: ''
+  output_path: /capstor/scratch/cscs/mmcgloho/outputs/generation/${hydra:job.name}
+  output_format: 'both'
+  grib_template_path: '/capstor/store/cscs/pasc/c38/evalml/resources/inference/templates'

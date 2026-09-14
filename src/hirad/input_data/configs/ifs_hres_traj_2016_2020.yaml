@@ -1,0 +1,97 @@
+# MARS-retrieved IFS-HRES trajectories, native O1280 grid, cropped to the
+# same Alps/Switzerland box as medrange.yaml (50.5/0/42/17.5). Historical
+# range starts 2016-03 (when HRES moved to TCo1279/O1280, the same effective
+# ~9km resolution used since -- older than that and native resolution is
+# coarser). No longer trying to match pstamenk's local-GRIB-built
+# /capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr
+# (rotated 0.1deg grid) -- this dataset is being regenerated from scratch.
+#
+# tp comes out as two variables: tp_cumulative (raw MARS accumulated-from-
+# forecast-start value, undifferenced) and tp_1h (de-accumulated to hourly).
+
+
+# hirad-od-fc-oper-0001-mars-o1280-2016-2026-6h-1h-v0
+
+# Divide the 126-month timeline into clean monthly batches, reducing
+# the number of MARS requests and making it easier to parallelize the
+# retrieval.
+split:
+  frequency: 1 month
+  start: 2016-03-01 00:00:00
+  end: 2026-09-01 00:00:00
+
+base_dates:
+  start: 2016-03-01 00:00:00
+  #start: 2020-10-30 00:00:00
+  #end:   2020-10-31 12:00:00
+  end: 2026-09-01 00:00:00
+  frequency: 6h
+
+steps:
+  start: 1h
+  end: 12h
+  frequency: 1h
+
+input:
+  join:
+    - mars:
+        type: fc
+        class: od
+        expver: "0001"
+        grid: o1280
+        area: 50.5/0/42/17.5
+        param: [t,z,u,v]
+        levtype: pl
+        level: [500,850]
+        stream: oper
+        # Force hour-based sequence alignment here
+        step: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+    - mars:
+        type: fc
+        class: od
+        expver: "0001"
+        grid: o1280
+        area: 50.5/0/42/17.5
+        param: [2t,10u,10v,tcw]
+        levtype: sfc
+        stream: oper
+        # Force hour-based sequence alignment here
+        step: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+    - pipe:
+        # tp as MARS oper/fc archives it: accumulated from forecast start
+        # (step 0), no de-accumulation. Renamed so it doesn't collide with
+        # the hourly version below.
+        - mars:
+            type: fc
+            class: od
+            expver: "0001"
+            grid: o1280
+            area: 50.5/0/42/17.5
+            param: [tp]
+            levtype: sfc
+            stream: oper
+            # Force hour-based sequence alignment here
+            step: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33]
+        - rename:
+            param: {tp: tp_cumulative}
+    - pipe:
+        # De-accumulated to a 1h period so each step holds hourly precip,
+        # matching the instantaneous sfc fields above.
+        - accumulate:
+            period: 1h
+            accumulation: from-zero
+            source:
+              mars:
+                type: fc
+                class: od
+                expver: "0001"
+                grid: o1280
+                area: 50.5/0/42/17.5
+                param: [tp]
+                levtype: sfc
+                stream: oper
+        - rename:
+            param: {tp: tp_1h}
+
+output:
+  layout: trajectories
