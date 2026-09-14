@@ -341,7 +341,7 @@ def load_results_as_torch(output_path, time_step, base_time=None):
         if not os.path.exists(path):
             return None
         data = torch.load(path, weights_only=False)
-        return dmpy() if isinstance(data, torch.Tensor) else data
+        return data.numpy() if isinstance(data, torch.Tensor) else data
 
     target = _load('target')
     prediction_ensemble = _load('predictions')
@@ -356,7 +356,7 @@ def convert_torch_to_grib(output_path, time_step, dataset, grib_template_path, b
     Lets GRIB be (re)generated after the fact -- e.g. inference originally ran with
     output_format='torch' -- without rerunning inference. dataset and
     grib_template_path are the same arguments save_results/save_results_as_grib take.
-    """ata.nu
+    """
     target, prediction_ensemble, baseline, mean_pred = load_results_as_torch(output_path, time_step, base_time)
     _, grib_savedir = _result_dirs(output_path, time_step, base_time)
     os.makedirs(grib_savedir, exist_ok=True)
