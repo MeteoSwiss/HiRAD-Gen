@@ -17,4 +17,5 @@ RUN pip install \
     scoringrules \
     mlflow \
     meteodata-lab \
-    eccodes
+    eccodes \
+    ecmwf-api-client
