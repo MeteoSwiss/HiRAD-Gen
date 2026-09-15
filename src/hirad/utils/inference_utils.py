@@ -441,7 +441,7 @@ def expected_grib_file(output_path, time_step, base_time=None):
     return os.path.join(grib_savedir, _grib_filename(time_step, base_time))
 
 
-def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip):
+def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip, final_step=False):
     """Turn this step's per-step (1h) tp prediction into a running total since forecast
     start, in place. GRIB/EvalML expect tp as cumulative-from-start (see the 'tp'
     comment in get_grib_template), but the model only predicts the 1h increment.
@@ -450,6 +450,11 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     threads through across steps. Must be called for a given run_key's steps in
     increasing step order -- raises otherwise, since an out-of-order running total
     would be silently wrong.
+
+    final_step: when True this is the run's last step; its running total has been baked
+    into prediction_ensemble, so the run's entry is dropped from cumulative_precip. This
+    bounds memory to the runs still in flight (~max_lead / init_spacing) rather than every
+    run ever seen -- important for long, many-forecast generations.
     """
     channel_axis = prediction_ensemble.ndim - 3  # (..., channels, H, W)
     tp_step = np.take(prediction_ensemble, tp_idx, axis=channel_axis)
@@ -466,6 +471,10 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     index = [slice(None)] * prediction_ensemble.ndim
     index[channel_axis] = tp_idx
     prediction_ensemble[tuple(index)] = running_total
+
+    # Run complete: its total is now in prediction_ensemble, so free it from the dict.
+    if final_step:
+        cumulative_precip.pop(run_key, None)
 
 
 def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):

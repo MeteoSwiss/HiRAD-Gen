@@ -245,11 +245,26 @@ def main(cfg: DictConfig) -> None:
                     # on writer_executor's thread pool where step order isn't guaranteed.
                     # Keyed per forecast run (base_time, or the fake base date for reanalysis
                     # data) since generation can cover multiple runs/times out of any order.
+                    # Toggle via generation.accumulate_tp (default False): saved tp stays the
+                    # per-step 1h increment. Set True to accumulate a running total since
+                    # forecast start (GRIB/EvalML); tp_idx=None skips the accumulation.
+                    accumulate_tp = cfg.generation.get("accumulate_tp", False)
                     tp_idx = next(
                         (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
                         None,
-                    )
+                    ) if accumulate_tp else None
                     cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
+                    # Largest step a run reaches, so accumulate_tp_channel can drop a run from
+                    # cumulative_precip once its final step is done (bounds memory to the runs
+                    # still in flight, ~max_lead/init_spacing, rather than every run seen).
+                    tp_run_max_lead = None
+                    if tp_idx is not None:
+                        if hasattr(dataset, "base_time"):  # forecast: last step = (capped) max lead
+                            steps_h = (dataset._input_dataset.steps / np.timedelta64(1, "h")).astype(int)
+                            cap = getattr(dataset, "_max_lead_hours", None)
+                            tp_run_max_lead = int(steps_h.max()) if cap is None else min(int(steps_h.max()), int(cap))
+                        else:                              # reanalysis: fake step = hour of day (0..23)
+                            tp_run_max_lead = 23
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -373,7 +388,10 @@ def main(cfg: DictConfig) -> None:
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
-                            accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+                            accumulate_tp_channel(
+                                prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip,
+                                final_step=(tp_run_max_lead is not None and step_num >= tp_run_max_lead),
+                            )
                     t_postproc_end = _t()
 
                     t_write_start = _t()
