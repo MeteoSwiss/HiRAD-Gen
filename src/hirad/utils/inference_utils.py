@@ -388,10 +388,9 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     run_key, step_num = forecast_run_key_and_step(time_step, base_time)
     if base_time is not None:
         ref_date_str, ref_time_str = base_time.split('-')
-        output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
         ref_date_str, ref_time_str = run_key, '0000'
-        output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
+    output_file = os.path.join(output_path, _grib_filename(time_step, base_time))
     # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
     # with step_num carrying the lead time -- not time_step (the valid time), which
     # would make every output file its own 0h analysis instead of one step of a
@@ -422,6 +421,24 @@ def forecast_run_key_and_step(time_step, base_time=None):
         run_key = time_step.split('-')[0]
         step_num = int(time_step.split('-')[1][:2])
     return run_key, step_num
+
+
+def _grib_filename(time_step, base_time=None):
+    """Filename save_results_as_grib writes for this (time_step, base_time). Shared
+    with expected_grib_file so the two can never disagree on the naming scheme.
+    """
+    run_key, step_num = forecast_run_key_and_step(time_step, base_time)
+    if base_time is not None:
+        return f'{base_time.replace("-", "")}_{step_num}.grib'
+    return f'{run_key}0000_{step_num}.grib'
+
+
+def expected_grib_file(output_path, time_step, base_time=None):
+    """Path save_results_as_grib will write for this (time_step, base_time), without
+    actually doing the conversion -- lets a caller check for/skip already-converted runs.
+    """
+    _, grib_savedir = _result_dirs(output_path, time_step, base_time)
+    return os.path.join(grib_savedir, _grib_filename(time_step, base_time))
 
 
 def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip):
