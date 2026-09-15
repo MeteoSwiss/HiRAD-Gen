@@ -246,3 +246,33 @@ sbatch src/hirad/train_diffusion.sh
 
 During training MLflow can be used to log metrics.
 Logging config files for regression and diffusion are located in `src/hirad/conf/logging/`. Set `method` to `mlflow` and specify `uri` if you want to log on remote server, otherwise run will be logged locally in output directory. Other options can also be modified here.
+
+## EvalML
+
+Displaying results in EvalML is work-in-progress.
+
+After running inference and generating GRIB, copy files in the `grib` directory over to Balfrin.
+(The subdirectories of the `grib` directory should be dates, which then each a further `grib` subdirectory inside of it. Don't ask.)
+
+On your local machine:
+```
+scp -r santis:/capstor/scratch/cscs/mmcgloho/outputs/generation/ifsn320_real_results_tp_deaccum/grib/ .
+scp -r grib/ balfrin:/store_new/mch/msopr/ml/evalml/hirad_grib_data/
+```
+
+On balfrin:
+
+Download the git repo from https://github.com/MeteoSwiss/evalml/
+
+Check out branch `feat/hirad-integration` which has the implementation for using models directly from GRIB.
+
+Follow [installation](https://github.com/MeteoSwiss/evalml/tree/feat/hirad-integration#installation) instructions for EvalML.
+
+Edit the file `tests/integration/configs/hirad.yaml` to adjust the base `dates` field to use init times in the data you want to evaluate. (You can also adjust the `steps` under the `grib_forecaster`). You might want to edit the config_label as well. 
+
+Run the experiment:
+```
+evalml experiment tests/integration/configs/hirad.yaml 
+```
+
+Your results will appear in relative path `output/results/<date>_hirad-forecast-test-1.0-<some key thing>`

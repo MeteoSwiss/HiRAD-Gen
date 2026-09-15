@@ -1,4 +1,4 @@
-image = "/capstor/scratch/cscs/pstamenk/corr_diff.sqsh"
+image = "/capstor/scratch/cscs/mmcgloho/images/corrdiff-anemoidatasets541.sqsh"
 
 mounts = ["/capstor", "/iopsstor", "/users"]
 
