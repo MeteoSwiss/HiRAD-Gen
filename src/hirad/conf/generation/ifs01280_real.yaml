@@ -26,6 +26,11 @@ boundary_pix: 2
 
 hr_mean_conditioning: True
 
+# Accumulate the tp channel across the forecast (per-step 1h increment -> running total since
+# forecast start, keyed per base_time). Default False = saved tp stays the per-step 1h increment
+# (matches the 1h target for snapshots/eval). Set True for the running total (GRIB/EvalML).
+accumulate_tp: False
+
 # times_range: ['20260730-0100','20260803-0000',1]
 times_range: ['20240712-1600','20240712-1600',1]
   # Start date, end date and time interval (in hours) for the generation
