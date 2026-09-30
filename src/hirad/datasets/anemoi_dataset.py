@@ -56,6 +56,8 @@ class AnemoiDataset(DownscalingDataset):
                 trim_edge: int = 0,
                 target_missing_as_zeros: bool = False,
                 input_frequency: str = None,
+                exclude_start_date: datetime.datetime = None,
+                exclude_end_date: datetime.datetime = None,
                 ):
         super().__init__()
 
@@ -138,6 +140,29 @@ class AnemoiDataset(DownscalingDataset):
         assert self._input_dataset.shape[1] == len(input_channel_names)
 
         self._align_input_output()
+
+        # Optional single exclude-window carved out of [start_date, end_date], used for
+        # non-contiguous training ranges (e.g. cross-validation folds that hold out a middle
+        # block). Input timesteps whose valid time falls within [exclude_start_date,
+        # exclude_end_date] are dropped from the sample index; the remaining samples keep their
+        # original input-dataset positions via self._sample_indices. When no window is given,
+        # this is the identity map, so iteration is unchanged for every other dataset/config.
+        self._sample_indices = list(range(len(self._input_dataset.dates)))
+        if exclude_start_date is not None and exclude_end_date is not None:
+            excl_start = to_datetime(exclude_start_date)
+            excl_end = to_datetime(exclude_end_date)
+            # A bare end date excludes the whole day, matching anemoi's inclusive `end` semantics.
+            if excl_end == excl_end.normalize():
+                excl_end = excl_end + to_timedelta("1D") - to_timedelta("1s")
+            dates = to_datetime(self._input_dataset.dates)
+            self._sample_indices = [
+                i for i in self._sample_indices if not (excl_start <= dates[i] <= excl_end)
+            ]
+            logger.info(
+                f"Excluding [{excl_start} .. {excl_end}] from the training range: "
+                f"{len(self._input_dataset.dates) - len(self._sample_indices)} timesteps dropped, "
+                f"{len(self._sample_indices)} kept."
+            )
 
         # Load static info and channel names
         if static_channel_names:
@@ -321,6 +346,10 @@ class AnemoiDataset(DownscalingDataset):
     def __getitem__(self, idx):
         """Get input and target data. Transform and normalize, but do not interpolate."""
 
+        # Map sample position to input-dataset index (identity unless an exclude-window
+        # dropped some timesteps; see self._sample_indices).
+        idx = self._sample_indices[idx]
+
         # Pull input, replacing the corrected tp if applicable
         date_str = to_datetime(self._input_dataset.dates[idx]).strftime('%Y%m%d-%H%M')
         
@@ -353,8 +382,9 @@ class AnemoiDataset(DownscalingDataset):
     
     def __len__(self):
         # Iteration is driven by the input dataset (each input date is paired with the
-        # target at the same valid time), so the length is the number of input dates.
-        return len(self._input_dataset.dates)
+        # target at the same valid time). Length is the number of kept samples, which
+        # equals the number of input dates unless an exclude-window dropped some.
+        return len(self._sample_indices)
 
     # Question: Do we need an input longitude as well?
     def longitude(self) -> np.ndarray:
@@ -384,9 +414,10 @@ class AnemoiDataset(DownscalingDataset):
     def time(self) -> List:
         """Get time values from the dataset."""
         #TODO Choose the time format and convert to that, currently it's a string from a filename
-        # Iteration is driven by the input dataset, so its dates define the sample times.
+        # Iteration is driven by the input dataset, so its dates define the sample times
+        # (restricted to the kept samples when an exclude-window is in effect).
         dates = self._input_dataset.dates
-        return [to_datetime(dt64).strftime('%Y%m%d-%H%M') for dt64 in dates]
+        return [to_datetime(dates[i]).strftime('%Y%m%d-%H%M') for i in self._sample_indices]
 
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data."""

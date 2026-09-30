@@ -85,6 +85,19 @@ class AnemoiForecastDataset(AnemoiDataset):
             avail_start, avail_end = to_datetime(tgt_dates[0]), to_datetime(tgt_dates[-1])
             target_start = max(self._pair_start + min_lead, avail_start)
             target_end = min(self._pair_end + max_lead, avail_end)
+            if target_start >= target_end:
+                # Forecast inits are entirely outside the target's coverage: no pair has a
+                # matching target. Open a minimal valid target slice (last two available
+                # timesteps) just so the target dataset constructs; every pair then falls back
+                # to target_missing_as_zeros. Stats come from the zarr's precomputed values, so
+                # the tiny slice doesn't affect (de)normalization.
+                if not target_missing_as_zeros:
+                    raise ValueError(
+                        f"Forecast inits [{self._pair_start} .. {self._pair_end}] are entirely "
+                        f"past the target coverage (ends {avail_end}); set "
+                        f"target_missing_as_zeros=True to generate without targets."
+                    )
+                target_start, target_end = to_datetime(tgt_dates[-2]), to_datetime(tgt_dates[-1])
         super().__init__(
             type=type,
             input_anemoi_dataset_path=input_anemoi_dataset_path,
