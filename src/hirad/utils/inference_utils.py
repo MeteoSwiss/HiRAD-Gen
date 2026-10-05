@@ -282,29 +282,40 @@ def diffusion_step(
 ############################################################################
 
 
-def _result_dirs(output_path, time_step, base_time=None):
+def _result_dirs(output_path, time_step, base_time=None, grib_output_path=None):
     """Directory layout shared by the torch and GRIB writers/readers below, so the
     two formats always agree on where a given (output_path, time_step, base_time)
     lives on disk.
+
+    grib_output_path lets GRIB be written under a different root than the torch
+    output_path (e.g. re-converting someone else's torch output into your own
+    scratch dir); it defaults to output_path, preserving the normal co-located layout.
     """
+    grib_root = output_path if grib_output_path is None else grib_output_path
     if base_time is not None:
         # base_time is only defined for forecast-type datasets (AnemoiForecastDataset);
         # nest under it to keep overlapping (reference_time, step) pairs from colliding
         # on valid_time alone.
         torch_savedir = os.path.join(output_path, base_time, time_step)
-        grib_savedir = os.path.join(output_path, 'grib', base_time.replace('-', ''), 'grib')
+        grib_pred_savedir = os.path.join(grib_root, 'grib-pred', base_time.replace('-', ''), 'grib')
+        grib_regression_pred_savedir = os.path.join(grib_root, 'grib-regression-pred', base_time.replace('-', ''), 'grib')
+        grib_ensemble_mean_savedir = os.path.join(grib_root, 'grib-ensemble-mean', base_time.replace('-', ''), 'grib')
+        grib_baseline_savedir = os.path.join(grib_root, 'grib-baseline', base_time.replace('-', ''), 'grib')
     else:
         torch_savedir = os.path.join(output_path, time_step)
         # Fake out a base_date for reanalysis data, to compare to forecast data
         base_date = time_step.split('-')[0] + '0000'
-        grib_savedir = os.path.join(output_path, 'grib', base_date, 'grib')
-    return torch_savedir, grib_savedir
+        grib_pred_savedir = os.path.join(output_path, 'grib-pred', base_date, 'grib')
+        grib_regression_pred_savedir = os.path.join(output_path, 'grib-regression-pred', base_date, 'grib')
+        grib_ensemble_mean_savedir = os.path.join(output_path, 'grib-ensemble-mean', base_date, 'grib')
+        grib_baseline_savedir = os.path.join(output_path, 'grib-baseline', base_date, 'grib')
+    return torch_savedir, grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir
 
 
 def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr, mean_pred, base_time=None, output_format='torch', grib_template_path=''):
     # output_format is validated once at config-read time in generate.py's main(),
     # before this runs (repeatedly, per step) on the writer thread pool.
-    torch_savedir, grib_savedir = _result_dirs(output_path, time_step, base_time)
+    torch_savedir, grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = _result_dirs(output_path, time_step, base_time)
     # Data arrives already denormalized and spatially oriented (physical units, numpy)
     target = image_hr
     prediction_ensemble = image_pred
@@ -313,8 +324,10 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
         os.makedirs(torch_savedir, exist_ok=True)
         save_results_as_torch(torch_savedir, time_step, target, prediction_ensemble, baseline, mean_pred)
     if output_format in ('grib', 'both'):
-        os.makedirs(grib_savedir, exist_ok=True)
-        save_results_as_grib(grib_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
+        os.makedirs(grib_pred_savedir, exist_ok=True)
+        os.makedirs(grib_ensemble_mean_savedir, exist_ok=True)
+        os.makedirs(grib_baseline_savedir, exist_ok=True)
+        save_results_as_grib(grib_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
 
 def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:
@@ -334,7 +347,7 @@ def load_results_as_torch(output_path, time_step, base_time=None):
     mean_pred is None if no regression-prediction file was written (i.e. a
     diffusion-only run).
     """
-    torch_savedir, _ = _result_dirs(output_path, time_step, base_time)
+    torch_savedir, _, _, _, _ = _result_dirs(output_path, time_step, base_time)
 
     def _load(name):
         path = os.path.join(torch_savedir, f'{time_step}-{name}')
@@ -350,22 +363,27 @@ def load_results_as_torch(output_path, time_step, base_time=None):
     return target, prediction_ensemble, baseline, mean_pred
 
 
-def convert_torch_to_grib(output_path, time_step, dataset, grib_template_path, base_time=None):
+def convert_torch_to_grib(output_path, time_step, dataset, grib_template_path, base_time=None, grib_output_path=None):
     """Load torch-format results for one time step and write them out as GRIB.
 
     Lets GRIB be (re)generated after the fact -- e.g. inference originally ran with
     output_format='torch' -- without rerunning inference. dataset and
     grib_template_path are the same arguments save_results/save_results_as_grib take.
+    grib_output_path optionally redirects the GRIB output under a different root
+    than output_path (see _result_dirs); defaults to output_path.
     """
     target, prediction_ensemble, baseline, mean_pred = load_results_as_torch(output_path, time_step, base_time)
-    _, grib_savedir = _result_dirs(output_path, time_step, base_time)
-    os.makedirs(grib_savedir, exist_ok=True)
-    save_results_as_grib(grib_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
+    _, grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = _result_dirs(output_path, time_step, base_time, grib_output_path)
+    os.makedirs(grib_pred_savedir, exist_ok=True)
+    os.makedirs(grib_regression_pred_savedir, exist_ok=True)
+    os.makedirs(grib_ensemble_mean_savedir, exist_ok=True)
+    os.makedirs(grib_baseline_savedir, exist_ok=True)
+    save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
                           dataset, grib_template_path, base_time)
-    return grib_savedir
+    return grib_pred_savedir
 
 # Takes templates from EvalML
-def save_results_as_grib(output_path, time_step, target, prediction_ensemble, baseline, mean_pred,
+def save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
     dataset, grib_template_path, base_time=None):
 
     # Somewhat kludgey way of getting the grid.
@@ -376,7 +394,9 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
 
     output_fields = dataset.output_channels()
     static_fields = dataset.static_channels()
-    static_data = dataset.get_static_data()
+    static_data = dataset.get_static_data_raw()
+    if isinstance(static_data, torch.Tensor):
+        static_data = static_data.numpy()
 
     # Target - temporarily disabled, since EvalML doesn't use it.
     #output_file = os.path.join(output_path, f'{time_step}-target.grib')
@@ -388,20 +408,33 @@ def save_results_as_grib(output_path, time_step, target, prediction_ensemble, ba
     run_key, step_num = forecast_run_key_and_step(time_step, base_time)
     if base_time is not None:
         ref_date_str, ref_time_str = base_time.split('-')
-        output_file = os.path.join(output_path, f'{(base_time).replace("-","")}_{step_num}.grib')
     else:
         ref_date_str, ref_time_str = run_key, '0000'
-        output_file = os.path.join(output_path, f'{ref_date_str}0000_{step_num}.grib')
+    pred_output_file = os.path.join(grib_pred_savedir, _grib_filename(time_step, base_time))
     # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
     # with step_num carrying the lead time -- not time_step (the valid time), which
     # would make every output file its own 0h analysis instead of one step of a
     # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
     ref_date, ref_time = int(ref_date_str), int(ref_time_str)
-    save_image_as_grib(output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
+    logging.info('writing prediction GRIB for %s to %s', time_step, pred_output_file)
+    save_image_as_grib(pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
+
+    ensemble_mean_output_file = os.path.join(grib_ensemble_mean_savedir, _grib_filename(time_step, base_time))
+    ensemble_mean = np.mean(prediction_ensemble, axis=0) if prediction_ensemble.ndim == 4 else prediction_ensemble
+    #TODO: Re-enable
+    save_image_as_grib(ensemble_mean_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, ensemble_mean, static_data, grid=grid)
+
+    regression_pred_output_file = os.path.join(grib_regression_pred_savedir, _grib_filename(time_step, base_time))
+    if mean_pred is not None:
+        logging.info('writing ensemble mean GRIB for %s to %s', time_step, ensemble_mean_output_file)
+        save_image_as_grib(regression_pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, mean_pred, static_data, grid=grid)
+    
 
     # Baseline - temporarily disabled, since EvalML doesn't use it.
-    #output_file = os.path.join(output_path, f'{time_step}-baseline.grib')
-    #save_image_as_grib(output_file, time_step, grib_template_path, input_fields, baseline, grid=grid)
+    baseline_output_file = os.path.join(grib_baseline_savedir, _grib_filename(time_step, base_time))
+    input_fields = dataset.input_channels()
+    logging.info(f'Writing baseline GRIB for {time_step} to {baseline_output_file}')
+    save_image_as_grib(baseline_output_file, ref_date, ref_time, step_num, grib_template_path, input_fields, static_fields, baseline, static_data, grid=grid)
 
     return
 
@@ -422,6 +455,27 @@ def forecast_run_key_and_step(time_step, base_time=None):
         run_key = time_step.split('-')[0]
         step_num = int(time_step.split('-')[1][:2])
     return run_key, step_num
+
+
+def _grib_filename(time_step, base_time=None):
+    """Filename save_results_as_grib writes for this (time_step, base_time). Shared
+    with expected_grib_files so the two can never disagree on the naming scheme.
+    """
+    run_key, step_num = forecast_run_key_and_step(time_step, base_time)
+    if base_time is not None:
+        return f'{base_time.replace("-", "")}_{step_num}.grib'
+    return f'{run_key}0000_{step_num}.grib'
+
+
+def expected_grib_files(output_path, time_step, base_time=None, grib_output_path=None):
+    """Path save_results_as_grib will write for this (time_step, base_time), without
+    actually doing the conversion -- lets a caller check for/skip already-converted runs.
+    """
+    _, grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = _result_dirs(output_path, time_step, base_time, grib_output_path)
+    return [os.path.join(grib_pred_savedir, _grib_filename(time_step, base_time)),
+            os.path.join(grib_regression_pred_savedir, _grib_filename(time_step, base_time)),
+            os.path.join(grib_ensemble_mean_savedir, _grib_filename(time_step, base_time)),
+            os.path.join(grib_baseline_savedir, _grib_filename(time_step, base_time))]
 
 
 def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip):
@@ -452,10 +506,8 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
 
 
 def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):
-    """Write one GRIB message per output channel to output_filename.
-
-    static_channels/static_data aren't written yet -- they're threaded through for
-    the planned orography output below (see TODO) and are otherwise unused here.
+    """Write one GRIB message per output channel, followed by one per static
+    channel (e.g. surface geopotential), to output_filename.
     """
     if grid == "co2":
         padding_margin = 19
@@ -464,28 +516,34 @@ def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_templ
     else:
         raise ValueError("only co1e and co2 grid supported")
 
+    def _write_channel(f_out, channel, values):
+        result = get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid)
+        if result is None:
+            return
+        template_field, grib_keys = result
+        values = pad_image(values, padding_margin, np.nan)
+        grib_id = eccodes.codes_new_from_message(template_field.message())
+        try:
+            for key, val in grib_keys.items():
+                eccodes.codes_set(grib_id, key, val)
+            flat = values.flatten().astype(float)
+            missing = 9999.0
+            eccodes.codes_set(grib_id, 'bitmapPresent', 1)
+            eccodes.codes_set(grib_id, 'missingValue', missing)
+            flat[np.isnan(flat)] = missing
+            eccodes.codes_set_values(grib_id, flat)
+            eccodes.codes_write(grib_id, f_out)
+        finally:
+            eccodes.codes_release(grib_id)
+
     with open(output_filename, 'wb') as f_out:
         for i, channel in enumerate(output_channels):
-            result = get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num, grid)
-            if result is None:
-                continue
-            template_field, grib_keys = result
-            values = pad_image(image[i, ::], padding_margin, np.nan)
-            grib_id = eccodes.codes_new_from_message(template_field.message())
-            try:
-                for key, val in grib_keys.items():
-                    eccodes.codes_set(grib_id, key, val)
-                flat = values.flatten().astype(float)
-                missing = 9999.0
-                eccodes.codes_set(grib_id, 'bitmapPresent', 1)
-                eccodes.codes_set(grib_id, 'missingValue', missing)
-                flat[np.isnan(flat)] = missing
-                eccodes.codes_set_values(grib_id, flat)
-                eccodes.codes_write(grib_id, f_out)
-            finally:
-                eccodes.codes_release(grib_id)
+            _write_channel(f_out, channel, image[i, ::])
 
-        # TODO: Output orography into GRIB coordinates file.
+        # Static fields (e.g. surface geopotential) are time-invariant, but are
+        # written into every per-step file so each GRIB output is self-contained.
+        for i, channel in enumerate(static_channels):
+            _write_channel(f_out, channel, static_data[i, ::])
 
 # grid: co2 (COSMO-2), or co1e (COSMO-1E)
 # Returns (template_field, grib_keys_dict) or None if channel has no template.
@@ -513,10 +571,15 @@ def get_grib_template(grib_template_path, channel, ref_date, ref_time, step_num,
             'step': step_num, 'startStep': 0, 'endStep': step_num,
         }
 
+    # FIS (the anemoi/COSMO name for surface geopotential) is ECMWF's 'z' surface
+    # param; the IFS index files are keyed by IFS/eccodes shortNames, not the
+    # dataset's own channel naming.
+    lookup_name = 'z' if channel.name == 'FIS' else channel.name
+
     levtype_index_sfc = ekd.from_source("file", os.path.join(grib_template_path, "ifs-levtype=sfc.grib"))
     sfc_shortnames = levtype_index_sfc.metadata("shortName")
-    if channel.name in sfc_shortnames and (channel.level==None or channel.level=='' or int(channel.level) < 50):
-        idx = sfc_shortnames.index(channel.name)
+    if lookup_name in sfc_shortnames and (channel.level==None or channel.level=='' or int(channel.level) < 50):
+        idx = sfc_shortnames.index(lookup_name)
         levtype = levtype_index_sfc[idx].metadata("typeOfLevel")
         levelval = levtype_index_sfc[idx].metadata("level")
         param_id = levtype_index_sfc[idx].metadata("paramId")
