@@ -230,6 +230,65 @@ def save_checkpoint(
         checkpoint_logging.success(f"Saved training checkpoint: {output_filename}")
 
 
+def load_model_weights_partial(
+    path: str,
+    model: torch.nn.Module,
+    device: Union[str, torch.device] = "cpu",
+) -> None:
+    """Initialise ``model`` weights from a pretrained checkpoint, tolerating a grown input.
+
+    Loads only the model state dict (no optimizer / step counter) from ``path`` for
+    fine-tuning. Parameters with matching shapes are copied directly. A parameter that
+    differs only in its input-channel dimension (dim 1) — e.g. the first conv after
+    enabling lead-time conditioning, whose input grows by ``lead_time_channels`` appended
+    at the end — is copied over its overlapping slice with the new channels zero-initialised
+    (an identity warm start: the new conditioning contributes nothing until trained).
+    """
+    if hasattr(model, "module"):
+        model = model.module
+    if isinstance(model, torch._dynamo.eval_frame.OptimizedModule):
+        model = model._orig_mod
+    name = model.__class__.__name__
+    file_name = _get_checkpoint_filename(path, name)
+    if not Path(file_name).exists():
+        raise FileNotFoundError(f"No pretrained weights found at {file_name}")
+
+    pretrained = torch.load(file_name, map_location=device)
+    model_sd = model.state_dict()
+    new_sd = {}
+    copied, adapted, missing = [], [], []
+    for k, v in model_sd.items():
+        if k not in pretrained:
+            new_sd[k] = v
+            missing.append(k)
+            continue
+        pv = pretrained[k]
+        if pv.shape == v.shape:
+            new_sd[k] = pv
+            copied.append(k)
+        elif (
+            pv.dim() == v.dim()
+            and all(a == b for i, (a, b) in enumerate(zip(pv.shape, v.shape)) if i != 1)
+        ):
+            w = torch.zeros_like(v)
+            n = min(pv.shape[1], v.shape[1])
+            w[:, :n] = pv[:, :n]
+            new_sd[k] = w
+            adapted.append((k, tuple(pv.shape), tuple(v.shape)))
+        else:
+            new_sd[k] = v
+            missing.append(k)
+    model.load_state_dict(new_sd, strict=True)
+    checkpoint_logging.success(
+        f"Fine-tune init from {file_name}: {len(copied)} copied, "
+        f"{len(adapted)} shape-adapted, {len(missing)} kept-random"
+    )
+    for k, ps, vs in adapted:
+        checkpoint_logging.warning(f"  adapted {k}: {ps} -> {vs} (new in-channels zero-init)")
+    if missing:
+        checkpoint_logging.warning(f"  kept random (not in checkpoint): {missing}")
+
+
 def load_checkpoint(
     path: str,
     model: torch.nn.Module = None,

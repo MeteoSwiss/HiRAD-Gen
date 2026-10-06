@@ -1,0 +1,22 @@
+# Single-sample generation from the trained IFS-HRES lead-time regression. Must use the SAME
+# normalization as training (full zarr + the recomputed tp box-cox stats).
+type: anemoi_ifs_real
+input_anemoi_dataset_path: '/capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+transform_input_means: {'tp-box_cox_025': -3.847969383912039}
+transform_input_stdevs: {'tp-box_cox_025': 0.21939737330078693}
+transform_output_means: {'tp-box_cox_025': -3.923594846877984}
+transform_output_stdevs: {'tp-box_cox_025': 0.19256625704644262}
+n_month_hour_channels: 4
+trim_edge: 41
+provide_lead_time: False
+max_lead_hours: 12
+# Init 2024-07-12 12Z (validation period); valid 16:00 = init12Z + 4h (smallest lead for that
+# valid time — 00Z init would reach 16:00 only at +16h).
+start_date: '2024-07-12T12:00'
+end_date: '2024-07-12T12:00'
+target_missing_as_zeros: True

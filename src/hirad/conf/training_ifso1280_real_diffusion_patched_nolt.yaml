@@ -1,0 +1,25 @@
+hydra:
+  job:
+    chdir: true
+    name: diffusion_ifso1280_real_nolt
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+
+# Get defaults
+defaults:
+  - _self_
+
+  # Dataset (IFS-HRES forecast input -> RealCH1 target, NO lead labels, leads 1..12)
+  - dataset/anemoi_ifso1280_real_train
+
+  # Model (patched diffusion residual, no lead-time conditioning)
+  - model/ifso1280_real_diffusion_patched_nolt
+
+  - model_size/normal_real
+
+  # Training
+  - training/ifso1280_real_diffusion_patched
+
+  # Logging
+  - logging/ifso1280_real_diffusion

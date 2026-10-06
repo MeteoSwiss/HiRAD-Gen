@@ -134,7 +134,11 @@ class Generator():
                         rank=self.dist.rank,
                         device=image_lr.device,
                         mean_hr=mean_hr,
-                        lead_time_label=lead_time_label,
+                        # Match the ensemble batch of img_lr; the patched lead-time embedding
+                        # indexing expects one label per batch element (regression stays batch-1).
+                        lead_time_label=lead_time_label.expand(
+                            self.batch_size, *lead_time_label.shape[1:]
+                        ) if lead_time_label is not None else None,
                         static_channels=static_channels,
                         date_embedding=date_embedding,
                         use_apex_gn=use_apex_gn,

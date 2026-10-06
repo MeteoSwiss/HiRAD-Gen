@@ -245,11 +245,26 @@ def main(cfg: DictConfig) -> None:
                     # on writer_executor's thread pool where step order isn't guaranteed.
                     # Keyed per forecast run (base_time, or the fake base date for reanalysis
                     # data) since generation can cover multiple runs/times out of any order.
+                    # Toggle via generation.accumulate_tp (default False): saved tp stays the
+                    # per-step 1h increment. Set True to accumulate a running total since
+                    # forecast start (GRIB/EvalML); tp_idx=None skips the accumulation.
+                    accumulate_tp = cfg.generation.get("accumulate_tp", False)
                     tp_idx = next(
                         (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
                         None,
-                    )
+                    ) if accumulate_tp else None
                     cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
+                    # Largest step a run reaches, so accumulate_tp_channel can drop a run from
+                    # cumulative_precip once its final step is done (bounds memory to the runs
+                    # still in flight, ~max_lead/init_spacing, rather than every run seen).
+                    tp_run_max_lead = None
+                    if tp_idx is not None:
+                        if hasattr(dataset, "base_time"):  # forecast: last step = (capped) max lead
+                            steps_h = (dataset._input_dataset.steps / np.timedelta64(1, "h")).astype(int)
+                            cap = getattr(dataset, "_max_lead_hours", None)
+                            tp_run_max_lead = int(steps_h.max()) if cap is None else min(int(steps_h.max()), int(cap))
+                        else:                              # reanalysis: fake step = hour of day (0..23)
+                            tp_run_max_lead = 23
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -290,8 +305,6 @@ def main(cfg: DictConfig) -> None:
                             .to(input_dtype)
                             .contiguous()
                         )
-                lead_time_label = None
-
                 times = dataset.time()
                 # Present only on datasets where a valid time can be reached by more
                 # than one (reference_time, step) pair (e.g. forecast datasets with
@@ -301,9 +314,17 @@ def main(cfg: DictConfig) -> None:
                 # t_iter_end is updated at the end of each loop body; the gap between
                 # t_iter_end[i] and the start of body[i+1] equals DataLoader fetch time.
                 t_iter_end = _t()
-                for index, (image_tar, image_lr, *date_str) in enumerate(
+                for index, (image_tar, image_lr, *rest) in enumerate(
                     iter(data_loader)
                 ):
+                    # Lead-time-conditioned forecast datasets append an integer lead label;
+                    # everything before it is the date info for make_time_grids.
+                    if getattr(dataset, "provides_lead_time", False):
+                        lead_time_label = rest[-1].to(dist.device).contiguous()
+                        date_str = rest[:-1]
+                    else:
+                        lead_time_label = None
+                        date_str = rest
                     t_iter_start = _t()
                     t_data_load = t_iter_start - t_iter_end
 
@@ -329,10 +350,6 @@ def main(cfg: DictConfig) -> None:
                         #image_tar = image_tar.flip(-2)  # May be needed
                     else:
                         image_tar = image_tar.reshape(*image_tar.shape[:-1], *dataset.image_shape())
-                    if lead_time_label:
-                        lead_time_label = lead_time_label[0].to(dist.device).contiguous()
-                    else:
-                        lead_time_label = None
                     image_lr = dataset.interpolator(image_lr.to(dist.device, dtype=input_dtype)).reshape(*image_lr.shape[:-1], *dataset.image_shape()).flip(-2)
                     image_lr = dataset.normalize_input(image_lr)
                     if use_apex_gn:
@@ -371,7 +388,10 @@ def main(cfg: DictConfig) -> None:
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
-                            accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+                            accumulate_tp_channel(
+                                prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip,
+                                final_step=(tp_run_max_lead is not None and step_num >= tp_run_max_lead),
+                            )
                     t_postproc_end = _t()
 
                     t_write_start = _t()

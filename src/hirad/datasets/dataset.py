@@ -24,7 +24,7 @@ from hirad.distributed import DistributedManager
 from .era5_cosmo import ERA5_COSMO
 from .era5_real import ERA5_REAL
 from .anemoi_dataset import ANEMOI_ERA5_COSMO, ANEMOI_ERA5_REAL
-from .anemoi_forecast_dataset import ANEMOI_IFSN320_REAL
+from .anemoi_forecast_dataset import ANEMOI_IFS_REAL
 from .anemoi_dataset_copernicus_tp import ANEMOI_ERA5COPERNICUSTP_COSMO, ANEMOI_ERA5COPERNICUSTP_REAL
 from .base import DownscalingDataset
 
@@ -35,7 +35,7 @@ known_datasets = {
     "era5_real": ERA5_REAL,
     "anemoi_era5_cosmo": ANEMOI_ERA5_COSMO,
     "anemoi_era5_real": ANEMOI_ERA5_REAL,
-    "anemoi_ifsn320_real": ANEMOI_IFSN320_REAL,
+    "anemoi_ifs_real": ANEMOI_IFS_REAL,
     "anemoi_era5_copernicus_tp_real": ANEMOI_ERA5COPERNICUSTP_REAL,
     "anemoi_era5_copernicus_tp_cosmo": ANEMOI_ERA5COPERNICUSTP_COSMO,
 }
@@ -85,6 +85,10 @@ def init_train_valid_datasets_from_config(
         valid_dataset_cfg["end_date"] = valid_dataset_cfg["validation_end_date"]
         del valid_dataset_cfg['validation_start_date']
         del valid_dataset_cfg['validation_end_date']
+        # The train-range exclude-window must not touch the validation set: the validation year
+        # is deliberately drawn from the held-out block, so applying the exclusion would empty it.
+        valid_dataset_cfg.pop('exclude_start_date', None)
+        valid_dataset_cfg.pop('exclude_end_date', None)
 
         (valid_dataset, valid_dataset_iter) = init_dataset_from_config(
             valid_dataset_cfg, dataloader_cfg, batch_size=batch_size, seed=seed
