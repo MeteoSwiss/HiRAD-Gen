@@ -85,6 +85,10 @@ def init_train_valid_datasets_from_config(
         valid_dataset_cfg["end_date"] = valid_dataset_cfg["validation_end_date"]
         del valid_dataset_cfg['validation_start_date']
         del valid_dataset_cfg['validation_end_date']
+        # The train-range exclude-window must not touch the validation set: the validation year
+        # is deliberately drawn from the held-out block, so applying the exclusion would empty it.
+        valid_dataset_cfg.pop('exclude_start_date', None)
+        valid_dataset_cfg.pop('exclude_end_date', None)
 
         (valid_dataset, valid_dataset_iter) = init_dataset_from_config(
             valid_dataset_cfg, dataloader_cfg, batch_size=batch_size, seed=seed

@@ -250,13 +250,17 @@ def main(cfg: DictConfig) -> None:
                     # on writer_executor's thread pool where step order isn't guaranteed.
                     # Keyed per forecast run (base_time, or the fake base date for reanalysis
                     # data) since generation can cover multiple runs/times out of any order.
+                    # Toggle via generation.accumulate_tp (default False): saved tp stays the
+                    # per-step 1h increment. Set True to accumulate a running total since
+                    # forecast start (GRIB/EvalML); tp_idx/input_tp_idx=None skips it.
                     # Diffusion prediction and regression prediction are two independent per-step
                     # predictions, so each needs its own running total (cumulative_precip /
                     # cumulative_precip_reg) -- one can't be derived from the other.
+                    accumulate_tp = cfg.generation.get("accumulate_tp", False)
                     tp_idx = next(
                         (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
                         None,
-                    )
+                    ) if accumulate_tp else None
                     cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
                     cumulative_precip_reg: dict = {}
                     # Baseline tp is the low-res input, not a model prediction. It only needs
@@ -268,13 +272,24 @@ def main(cfg: DictConfig) -> None:
                     input_tp_idx = next(
                         (i for i, ch in enumerate(dataset.input_channels()) if ch.name == 'tp'),
                         None,
-                    )
+                    ) if accumulate_tp else None
                     cumulative_precip_baseline: dict = {}
                     # Per-run history of baseline's raw (pre-accumulation) per-step tp, as a
                     # cheap spatial-mean scalar -- checked once per run after generation
                     # finishes (see validate_tp_not_pre_accumulated below) in case the "always
                     # deaccumulated" assumption above is ever wrong for some input pipeline.
                     baseline_tp_raw_history: dict = {}  # run_key -> [mean(tp_step), ...]
+                    # Largest step a run reaches, so accumulate_tp_channel can drop a run from
+                    # its cumulative dict once its final step is done (bounds memory to the runs
+                    # still in flight, ~max_lead/init_spacing, rather than every run seen).
+                    tp_run_max_lead = None
+                    if tp_idx is not None or input_tp_idx is not None:
+                        if hasattr(dataset, "base_time"):  # forecast: last step = (capped) max lead
+                            steps_h = (dataset._input_dataset.steps / np.timedelta64(1, "h")).astype(int)
+                            cap = getattr(dataset, "_max_lead_hours", None)
+                            tp_run_max_lead = int(steps_h.max()) if cap is None else min(int(steps_h.max()), int(cap))
+                        else:                              # reanalysis: fake step = hour of day (0..23)
+                            tp_run_max_lead = 23
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -399,6 +414,7 @@ def main(cfg: DictConfig) -> None:
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
+                            final_step = tp_run_max_lead is not None and step_num >= tp_run_max_lead
                             if input_tp_idx is not None and is_forecast:
                                 raw_tp = np.take(baseline, input_tp_idx, axis=baseline.ndim - 3)
                                 baseline_tp_raw_history.setdefault(run_key, []).append(float(np.nanmean(raw_tp)))
@@ -409,6 +425,7 @@ def main(cfg: DictConfig) -> None:
                                 tp_idx, input_tp_idx, is_forecast,
                                 run_key, step_num,
                                 cumulative_precip, cumulative_precip_reg, cumulative_precip_baseline,
+                                final_step=final_step,
                             )
                     t_postproc_end = _t()
 

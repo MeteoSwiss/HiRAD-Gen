@@ -484,7 +484,7 @@ def expected_grib_files(output_path, time_step, base_time=None, grib_output_path
             os.path.join(grib_baseline_savedir, _grib_filename(time_step, base_time))]
 
 
-def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip):
+def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip, final_step=False):
     """Turn this step's per-step (1h) tp prediction into a running total since forecast
     start, in place. GRIB/EvalML expect tp as cumulative-from-start (see the 'tp'
     comment in get_grib_template), but the model only predicts the 1h increment.
@@ -493,6 +493,11 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     threads through across steps. Must be called for a given run_key's steps in
     increasing step order -- raises otherwise, since an out-of-order running total
     would be silently wrong.
+
+    final_step: when True this is the run's last step; its running total has been baked
+    into prediction_ensemble, so the run's entry is dropped from cumulative_precip. This
+    bounds memory to the runs still in flight (~max_lead / init_spacing) rather than every
+    run ever seen -- important for long, many-forecast generations.
     """
     channel_axis = prediction_ensemble.ndim - 3  # (..., channels, H, W)
     tp_step = np.take(prediction_ensemble, tp_idx, axis=channel_axis)
@@ -510,12 +515,17 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     index[channel_axis] = tp_idx
     prediction_ensemble[tuple(index)] = running_total
 
+    # Run complete: its total is now in prediction_ensemble, so free it from the dict.
+    if final_step:
+        cumulative_precip.pop(run_key, None)
+
 
 def accumulate_tp_channels(
     prediction_ensemble, mean_pred, baseline,
     tp_idx, input_tp_idx, is_forecast,
     run_key, step_num,
     cumulative_precip, cumulative_precip_reg, cumulative_precip_baseline,
+    final_step=False,
 ):
     """Apply accumulate_tp_channel (in place) to every one of this step's generate.py
     outputs that carries a per-step tp needing a cumulative-from-start total: the
@@ -525,7 +535,9 @@ def accumulate_tp_channels(
     tp_idx/input_tp_idx are the tp channel's index in output_channels()/input_channels()
     respectively (None if that channel set has no tp). mean_pred is None when there is no
     regression prediction for this step (diffusion-only inference mode). is_forecast is
-    True for real forecast runs (base_time is not None) and False for reanalysis.
+    True for real forecast runs (base_time is not None) and False for reanalysis. final_step
+    is forwarded to every accumulate_tp_channel call (see its docstring) so all three
+    cumulative dicts get freed for a run at the same time, once its last step is done.
 
     prediction_ensemble and mean_pred are independent per-step predictions, so each needs
     its own running total -- cumulative_precip and cumulative_precip_reg respectively; one
@@ -535,11 +547,11 @@ def accumulate_tp_channels(
     already a native 1h accumulation.
     """
     if tp_idx is not None:
-        accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+        accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip, final_step=final_step)
         if mean_pred is not None:
-            accumulate_tp_channel(mean_pred, tp_idx, run_key, step_num, cumulative_precip_reg)
+            accumulate_tp_channel(mean_pred, tp_idx, run_key, step_num, cumulative_precip_reg, final_step=final_step)
     if input_tp_idx is not None and is_forecast:
-        accumulate_tp_channel(baseline, input_tp_idx, run_key, step_num, cumulative_precip_baseline)
+        accumulate_tp_channel(baseline, input_tp_idx, run_key, step_num, cumulative_precip_baseline, final_step=final_step)
 
 
 def validate_tp_not_pre_accumulated(raw_tp_steps, run_key, min_steps_to_flag=4):

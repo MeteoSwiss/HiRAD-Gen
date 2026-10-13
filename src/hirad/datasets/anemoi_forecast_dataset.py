@@ -95,6 +95,15 @@ class AnemoiForecastDataset(AnemoiDataset):
             avail_start, avail_end = to_datetime(tgt_dates[0]), to_datetime(tgt_dates[-1])
             target_start = max(self._pair_start + min_lead, avail_start)
             target_end = min(self._pair_end + max_lead, avail_end)
+            if target_start >= target_end:
+                # Forecast inits are entirely outside the target's coverage: no pair in this
+                # (train/val) split would have a matching target. Raise here with a clear
+                # cause instead of letting the generic start_date < end_date assert below fire.
+                raise ValueError(
+                    f"Forecast inits [{self._pair_start} .. {self._pair_end}] are entirely "
+                    f"past the target coverage (ends {avail_end}); no train/val pair would "
+                    f"have a matching target."
+                )
         super().__init__(
             type=type,
             input_anemoi_dataset_path=input_anemoi_dataset_path,
