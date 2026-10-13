@@ -148,9 +148,9 @@ def main():
                 skipped_existing += 1
                 continue
         try:
-            grib_savedir = convert_torch_to_grib(args.torch_out_dir, time_step, dataset, args.templates, base_time=base_time, grib_output_path=args.grib_out_dir)
-            print(f'  [ok]   {label} -> {grib_savedir}')
-            grib_savedirs.append(grib_savedir)
+            grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = convert_torch_to_grib(args.torch_out_dir, time_step, dataset, args.templates, base_time=base_time, grib_output_path=args.grib_out_dir)
+            print(f'  [ok]   {label} -> {grib_pred_savedir} {grib_regression_pred_savedir} {grib_ensemble_mean_savedir} {grib_baseline_savedir}')
+            grib_savedirs.append(grib_pred_savedir)
         except Exception as e:
             print(f'  [fail] {label}: {e}')
             failures.append(label)

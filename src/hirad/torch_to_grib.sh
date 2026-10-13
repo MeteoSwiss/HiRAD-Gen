@@ -14,7 +14,7 @@
 #SBATCH --no-requeue
 
 ### OUTPUT ###
-#SBATCH --output=./logs/torch_to_grib_march2025_%j.log
+#SBATCH --output=./logs/torch_to_grib_%j.log
 
 ### ENVIRONMENT ####
 #SBATCH -A a0269
@@ -27,9 +27,9 @@ DST_DIR=/capstor/scratch/cscs/mmcgloho/outputs/generation/gen_ifs_ft_new/grib_wi
 
 BASE_TIMES=""
 for d in $(seq -w 1 31); do
-    BASE_TIMES="${BASE_TIMES} 202507${d}-0000 202507${d}-1200"
+    BASE_TIMES="${BASE_TIMES} 202503${d}-0000 202503${d}-1200"
 done
-#BASE_TIMES='all'
+BASE_TIMES='all'
 
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-deps
