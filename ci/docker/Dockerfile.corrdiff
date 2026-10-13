@@ -5,6 +5,7 @@ FROM nvcr.io/nvidia/physicsnemo/physicsnemo:25.06
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libeccodes-dev \
     libeccodes-tools \
+    cdo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --upgrade pip
