@@ -7,14 +7,15 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --time=03:00:00
-#SBATCH --output=/users/pstamenk/other/HiRAD-Gen/logs/ifs_build_full.log
+#SBATCH --output=/users/mmcgloho/hirad-gen/HiRAD-Gen/logs/ifs_build_full.log
 #SBATCH -A c38
 set -euo pipefail
-cd /users/pstamenk/other/HiRAD-Gen
+cd /users/mmcgloho/hirad-gen/HiRAD-Gen
 RECIPE=${RECIPE:-src/hirad/input_data/configs/ifs_hres_train_full.yaml}
-ZARR=${ZARR:-/capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr}
-srun --environment=/users/pstamenk/other/HiRAD-Gen/ci/edf/modulus_env.toml bash -c "
-    export PYTHONPATH=\${PWD}/src:\${PYTHONPATH:-}
+ZARR=${ZARR:-/capstor/scratch/cscs/mmcgloho/ifs-hres-realch1/ifs_hres_traj_202503_202608_1h_90step.zarr}
+srun --environment=/users/mmcgloho/hirad-gen/HiRAD-Gen/ci/edf/modulus_env.toml bash -c "
+    pip install -e . --no-deps
+    pip install anemoi-datasets==0.5.42
     python -m hirad.input_data.build_ifs_hres_anemoi --recipe '${RECIPE}' --path '${ZARR}' --overwrite
     echo '===== VERIFY ====='
     python - <<'PY'

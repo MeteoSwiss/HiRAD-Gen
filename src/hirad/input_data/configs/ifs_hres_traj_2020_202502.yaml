@@ -1,0 +1,43 @@
+base_dates:
+  end: '2025-02-28T12:00:00'
+  frequency: 12h
+  missing: []
+  start: '2020-10-01T00:00:00'
+build:
+  additions: null
+  allow_nans: false
+  env: {}
+  group_by: 1
+  max_fragment_size: 268435456
+  max_workers: null
+  remapping:
+    param_level: '{param}_{levelist}'
+  use_grib_paramid: false
+  validate_date_ranges: false
+  variable_naming: '{param}_{levelist}'
+data_sources: null
+dates: null
+description: IFS-HRES 2020-10-01..2025-02-28 00/12Z +1..33h
+env: null
+input:
+  ifs_hres_files:
+    directory: /.../precompute_2020_202502
+licence: unknown
+output:
+  chunking:
+    base_dates: 1
+    ensembles: 1
+    steps: 1
+  dtype: float32
+  layout: trajectories
+  remapping: null
+  sanitise: true
+statistics:
+  allow_nans: null
+  end: '2025-03-01T21:00:00'
+  start: '2020-10-01T01:00:00'
+  tendencies: null
+steps:
+  end: 33h
+  frequency: 1h
+  start: 1h

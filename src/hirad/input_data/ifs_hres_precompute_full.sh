@@ -14,11 +14,11 @@
 #SBATCH --cpus-per-task=64
 #SBATCH --time=00:45:00
 #SBATCH --array=0-52%16
-#SBATCH --output=/users/pstamenk/other/HiRAD-Gen/logs/ifs_pre_full_%A_%a.log
+#SBATCH --output=/users/mmcgloho/hirad-gen/HiRAD-Gen/logs/ifs_pre_full_%A_%a.log
 #SBATCH -A c38
 
 set -euo pipefail
-cd /users/pstamenk/other/HiRAD-Gen
+cd /users/mmcgloho/hirad-gen/HiRAD-Gen
 
 START=${START:-2020-10-01}
 END=${END:-2025-02-28}
@@ -51,8 +51,9 @@ while [[ "$d" < "$month_next" && ( "$d" < "$END" || "$d" == "$END" ) ]]; do
 done
 echo "task ${SLURM_ARRAY_TASK_ID}: month ${M}, ${#INIT_DIRS[@]} init dirs -> ${OUT_DIR}"
 
-srun --environment=/users/pstamenk/other/HiRAD-Gen/ci/edf/modulus_env.toml bash -c "
-    export PYTHONPATH=\${PWD}/src:\${PYTHONPATH:-}
+srun --environment=/users/mmcgloho/hirad-gen/HiRAD-Gen/ci/edf/modulus_env.toml bash -c "
+    pip install -e . --no-deps
+    pip install anemoi-datasets==0.5.42
     export OMP_NUM_THREADS=1
     python -m hirad.input_data.ifs_hres_precompute \
         --init-dirs ${INIT_DIRS[*]} --out-dir '${OUT_DIR}' --leads ${LEADS} --workers ${WORKERS}
