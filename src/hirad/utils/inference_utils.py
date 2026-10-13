@@ -511,6 +511,65 @@ def accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumula
     prediction_ensemble[tuple(index)] = running_total
 
 
+def accumulate_tp_channels(
+    prediction_ensemble, mean_pred, baseline,
+    tp_idx, input_tp_idx, is_forecast,
+    run_key, step_num,
+    cumulative_precip, cumulative_precip_reg, cumulative_precip_baseline,
+):
+    """Apply accumulate_tp_channel (in place) to every one of this step's generate.py
+    outputs that carries a per-step tp needing a cumulative-from-start total: the
+    diffusion prediction, the regression prediction (if present), and the baseline
+    input (only for real forecast data -- see below).
+
+    tp_idx/input_tp_idx are the tp channel's index in output_channels()/input_channels()
+    respectively (None if that channel set has no tp). mean_pred is None when there is no
+    regression prediction for this step (diffusion-only inference mode). is_forecast is
+    True for real forecast runs (base_time is not None) and False for reanalysis.
+
+    prediction_ensemble and mean_pred are independent per-step predictions, so each needs
+    its own running total -- cumulative_precip and cumulative_precip_reg respectively; one
+    can't be derived from the other. baseline only needs re-accumulating for forecast data:
+    the IFS input pipeline deaccumulates tp to a 1h increment during zarr build (see
+    ifs_hres_precompute.py), same as the training target, but reanalysis (ERA5) input tp is
+    already a native 1h accumulation.
+    """
+    if tp_idx is not None:
+        accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+        if mean_pred is not None:
+            accumulate_tp_channel(mean_pred, tp_idx, run_key, step_num, cumulative_precip_reg)
+    if input_tp_idx is not None and is_forecast:
+        accumulate_tp_channel(baseline, input_tp_idx, run_key, step_num, cumulative_precip_baseline)
+
+
+def validate_tp_not_pre_accumulated(raw_tp_steps, run_key, min_steps_to_flag=4):
+    """Sanity check for one completed forecast run's raw (pre-accumulation) per-step tp
+    values, as passed to accumulate_tp_channel over the run.
+
+    A true 1h tp increment is noisy: across enough steps it should decrease at least
+    once, since it can't keep raining the same amount or more every single hour
+    indefinitely. An input that is already cumulative-from-start can never decrease.
+    Meant to be called once, after a run's steps have all been processed (too few
+    steps give this no basis to judge monotonicity on -- see min_steps_to_flag).
+
+    raw_tp_steps is the ordered (by increasing step_num) sequence of per-step tp values
+    accumulate_tp_channel was called with for this run -- e.g. one scalar spatial
+    summary (such as a mean) per step, cheaper to retain for a whole run than the full
+    field. Raises if every step is >= the previous one.
+    """
+    if len(raw_tp_steps) < min_steps_to_flag:
+        return
+    non_decreasing = all(
+        np.all(curr >= prev) for prev, curr in zip(raw_tp_steps, raw_tp_steps[1:])
+    )
+    if non_decreasing:
+        raise RuntimeError(
+            f"tp for forecast run {run_key} never decreased across {len(raw_tp_steps)} "
+            f"steps -- this looks like it's already cumulative-from-start, not a per-step "
+            f"1h increment. Accumulating it again here would double-count rather than fix it."
+        )
+
+
 def save_image_as_grib(output_filename, ref_date, ref_time, step_num, grib_template_path, output_channels, static_channels, image, static_data, grid):
     """Write one GRIB message per output channel, followed by one per static
     channel (e.g. surface geopotential), to output_filename.

@@ -15,7 +15,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results, forecast_run_key_and_step, accumulate_tp_channel
+from hirad.utils.inference_utils import (
+    save_results,
+    forecast_run_key_and_step,
+    accumulate_tp_channels,
+    validate_tp_not_pre_accumulated,
+)
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
@@ -265,6 +270,11 @@ def main(cfg: DictConfig) -> None:
                         None,
                     )
                     cumulative_precip_baseline: dict = {}
+                    # Per-run history of baseline's raw (pre-accumulation) per-step tp, as a
+                    # cheap spatial-mean scalar -- checked once per run after generation
+                    # finishes (see validate_tp_not_pre_accumulated below) in case the "always
+                    # deaccumulated" assumption above is ever wrong for some input pipeline.
+                    baseline_tp_raw_history: dict = {}  # run_key -> [mean(tp_step), ...]
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -383,17 +393,23 @@ def main(cfg: DictConfig) -> None:
                         if image_reg is not None:
                             mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
 
-                        if tp_idx is not None or (input_tp_idx is not None and base_times is not None):
+                        is_forecast = base_times is not None
+                        if tp_idx is not None or (input_tp_idx is not None and is_forecast):
                             run_key, step_num = forecast_run_key_and_step(
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
-                            if tp_idx is not None:
-                                accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
-                                if image_reg is not None:
-                                    accumulate_tp_channel(mean_pred, tp_idx, run_key, step_num, cumulative_precip_reg)
-                            if input_tp_idx is not None and base_times is not None:
-                                accumulate_tp_channel(baseline, input_tp_idx, run_key, step_num, cumulative_precip_baseline)
+                            if input_tp_idx is not None and is_forecast:
+                                raw_tp = np.take(baseline, input_tp_idx, axis=baseline.ndim - 3)
+                                baseline_tp_raw_history.setdefault(run_key, []).append(float(np.nanmean(raw_tp)))
+                            accumulate_tp_channels(
+                                prediction_ensemble,
+                                mean_pred if image_reg is not None else None,
+                                baseline,
+                                tp_idx, input_tp_idx, is_forecast,
+                                run_key, step_num,
+                                cumulative_precip, cumulative_precip_reg, cumulative_precip_baseline,
+                            )
                     t_postproc_end = _t()
 
                     t_write_start = _t()
@@ -427,6 +443,15 @@ def main(cfg: DictConfig) -> None:
 
                 end.record()
                 end.synchronize()
+
+                if dist.rank == 0:
+                    # Sanity check, now that every run's steps are in: flag any forecast run
+                    # whose baseline tp never decreased (see validate_tp_not_pre_accumulated),
+                    # in case the "input is always deaccumulated" assumption behind
+                    # baseline_tp_raw_history above doesn't hold for some input pipeline.
+                    for run_key, raw_history in baseline_tp_raw_history.items():
+                        validate_tp_not_pre_accumulated(raw_history, run_key)
+
                 elapsed_time = (
                     start.elapsed_time(end) / 1000.0 if use_cuda_timing else 0
                 )  # Convert ms to s
