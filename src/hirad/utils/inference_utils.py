@@ -374,13 +374,9 @@ def convert_torch_to_grib(output_path, time_step, dataset, grib_template_path, b
     """
     target, prediction_ensemble, baseline, mean_pred = load_results_as_torch(output_path, time_step, base_time)
     _, grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = _result_dirs(output_path, time_step, base_time, grib_output_path)
-    os.makedirs(grib_pred_savedir, exist_ok=True)
-    os.makedirs(grib_regression_pred_savedir, exist_ok=True)
-    os.makedirs(grib_ensemble_mean_savedir, exist_ok=True)
-    os.makedirs(grib_baseline_savedir, exist_ok=True)
     save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
                           dataset, grib_template_path, base_time)
-    return grib_pred_savedir
+    return grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir
 
 # Takes templates from EvalML
 def save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred,
@@ -402,39 +398,49 @@ def save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_e
     #output_file = os.path.join(output_path, f'{time_step}-target.grib')
     #save_image_as_grib(output_file, time_step, grib_template_path, output_fields + static_fields, target, grid=grid)
 
-    # Prediction - only output 1 ensemble member for EvalML.
-    if len(prediction_ensemble.shape) == 4:
-        prediction_ensemble = prediction_ensemble[0,:,:,:]
     run_key, step_num = forecast_run_key_and_step(time_step, base_time)
     if base_time is not None:
         ref_date_str, ref_time_str = base_time.split('-')
     else:
         ref_date_str, ref_time_str = run_key, '0000'
-    pred_output_file = os.path.join(grib_pred_savedir, _grib_filename(time_step, base_time))
     # GRIB reference time (dataDate/dataTime) must be the forecast's fixed init time,
     # with step_num carrying the lead time -- not time_step (the valid time), which
     # would make every output file its own 0h analysis instead of one step of a
     # single multi-step forecast (breaks EvalML's forecast_reference_time/step model).
     ref_date, ref_time = int(ref_date_str), int(ref_time_str)
-    logging.info('writing prediction GRIB for %s to %s', time_step, pred_output_file)
-    save_image_as_grib(pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble, static_data,grid=grid)
 
-    ensemble_mean_output_file = os.path.join(grib_ensemble_mean_savedir, _grib_filename(time_step, base_time))
-    ensemble_mean = np.mean(prediction_ensemble, axis=0) if prediction_ensemble.ndim == 4 else prediction_ensemble
-    #TODO: Re-enable
-    save_image_as_grib(ensemble_mean_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, ensemble_mean, static_data, grid=grid)
+    # Prediction - only output 1 ensemble member for EvalML.
+    if grib_pred_savedir:
+        os.makedirs(grib_pred_savedir, exist_ok=True)
+        if len(prediction_ensemble.shape) == 4:
+            prediction_ensemble_member = prediction_ensemble[0,:,:,:]
+        else:
+            prediction_ensemble_member = prediction_ensemble
+        pred_output_file = os.path.join(grib_pred_savedir, _grib_filename(time_step, base_time))
 
-    regression_pred_output_file = os.path.join(grib_regression_pred_savedir, _grib_filename(time_step, base_time))
-    if mean_pred is not None:
-        logging.info('writing ensemble mean GRIB for %s to %s', time_step, ensemble_mean_output_file)
-        save_image_as_grib(regression_pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, mean_pred, static_data, grid=grid)
+        logging.info('writing prediction GRIB for %s to %s', time_step, pred_output_file)
+        save_image_as_grib(pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, prediction_ensemble_member, static_data,grid=grid)
+
+    if grib_ensemble_mean_savedir:
+        os.makedirs(grib_ensemble_mean_savedir, exist_ok=True)
+        ensemble_mean_output_file = os.path.join(grib_ensemble_mean_savedir, _grib_filename(time_step, base_time))
+        ensemble_mean = np.mean(prediction_ensemble, axis=0) if prediction_ensemble.ndim == 4 else prediction_ensemble
+        #TODO: Re-enable
+        save_image_as_grib(ensemble_mean_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, ensemble_mean, static_data, grid=grid)
+
+    if grib_regression_pred_savedir:
+        os.makedirs(grib_regression_pred_savedir, exist_ok=True)
+        regression_pred_output_file = os.path.join(grib_regression_pred_savedir, _grib_filename(time_step, base_time))
+        if mean_pred is not None:
+            logging.info('writing ensemble mean GRIB for %s to %s', time_step, ensemble_mean_output_file)
+            save_image_as_grib(regression_pred_output_file, ref_date, ref_time, step_num, grib_template_path, output_fields, static_fields, mean_pred, static_data, grid=grid)
     
-
-    # Baseline - temporarily disabled, since EvalML doesn't use it.
-    baseline_output_file = os.path.join(grib_baseline_savedir, _grib_filename(time_step, base_time))
-    input_fields = dataset.input_channels()
-    logging.info(f'Writing baseline GRIB for {time_step} to {baseline_output_file}')
-    save_image_as_grib(baseline_output_file, ref_date, ref_time, step_num, grib_template_path, input_fields, static_fields, baseline, static_data, grid=grid)
+    if grib_baseline_savedir:
+        os.makedirs(grib_baseline_savedir, exist_ok=True)
+        baseline_output_file = os.path.join(grib_baseline_savedir, _grib_filename(time_step, base_time))
+        input_fields = dataset.input_channels()
+        logging.info(f'Writing baseline GRIB for {time_step} to {baseline_output_file}')
+        save_image_as_grib(baseline_output_file, ref_date, ref_time, step_num, grib_template_path, input_fields, static_fields, baseline, static_data, grid=grid)
 
     return
 

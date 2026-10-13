@@ -350,7 +350,18 @@ class AnemoiDataset(DownscalingDataset):
     
     def get_static_data(self):
         return self.static_data_normalized
-    
+
+    def get_static_data_raw(self):
+        """Static channel data in physical units, for writing to output (e.g. GRIB)
+        rather than feeding to the network -- inverts the per-channel normalization
+        applied in get_static_data().
+        """
+        if self.static_data_normalized is None:
+            return None
+        mean = torch.as_tensor(self.static_mean, dtype=self.static_data_normalized.dtype).reshape(-1, 1, 1)
+        std = torch.as_tensor(self.static_std, dtype=self.static_data_normalized.dtype).reshape(-1, 1, 1)
+        return self.static_data_normalized * std + mean
+
     def __len__(self):
         # Iteration is driven by the input dataset (each input date is paired with the
         # target at the same valid time), so the length is the number of input dates.

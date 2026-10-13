@@ -61,21 +61,31 @@ class AnemoiForecastDataset(AnemoiDataset):
                 max_lead_hours: int = None,
                 ):
         # Split by base (init) time: start_date/end_date are the first/last forecast init
-        # times, and _align_input_output keeps only base times within that range. The target is
-        # opened over exactly the valid-time window those inits produce: from the earliest
-        # (start + smallest non-zero lead; lead 0 is never in the store) to the latest
-        # (end + largest lead), clamped to the target's own availability. That way every lead of
-        # every kept init has a matching target and nothing is dropped, except leads whose valid
-        # time falls past the end of the target (handled in _align_input_output). A target field
-        # near a split boundary may be used by both train and val (a train init reaching, via a
-        # long lead, a valid time inside val); this small leakage is accepted by design.
+        # times, and _align_input_output keeps only base times within that range. When not
+        # target_missing_as_zeros (train/val), the target is opened over exactly the valid-time
+        # window those inits produce: from the earliest (start + smallest non-zero lead; lead 0
+        # is never in the store) to the latest (end + largest lead), clamped to the target's own
+        # availability. That way every lead of every kept init has a matching target and nothing
+        # is dropped, except leads whose valid time falls past the end of the target (handled in
+        # _align_input_output). A target field near a split boundary may be used by both train
+        # and val (a train init reaching, via a long lead, a valid time inside val); this small
+        # leakage is accepted by design. When target_missing_as_zeros (generation), this
+        # clamping is skipped entirely -- the target may not cover the requested window at all,
+        # and _align_input_output falls back to zeros per-pair instead.
         self._pair_start = to_datetime(start_date) if start_date is not None else None
         self._pair_end = to_datetime(end_date) if end_date is not None else None
         # Optional cap on the forecast lead used from the store (in hours); steps beyond it are
         # skipped in _align_input_output and excluded from the target window below.
         self._max_lead_hours = max_lead_hours
         target_start, target_end = start_date, end_date
-        if start_date is not None and end_date is not None:
+        if start_date is not None and end_date is not None and not target_missing_as_zeros:
+            # This clamping only matters for bounding the target's opened range (train/val
+            # split); skipped for generation (target_missing_as_zeros=True), where
+            # _align_input_output already handles a target with no matching valid time by
+            # emitting zeros, driven purely by self._pair_start/self._pair_end below. Without
+            # this guard, a target dataset that simply doesn't cover the requested window
+            # (e.g. inference past the target's last available date) would crash here instead
+            # of falling back to zeros as intended.
             steps = open_dataset(input_anemoi_dataset_path).steps
             nonzero = steps[steps > np.timedelta64(0, "h")]
             min_lead, max_lead = to_timedelta(nonzero.min()), to_timedelta(steps.max())

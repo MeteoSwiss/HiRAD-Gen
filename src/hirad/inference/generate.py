@@ -238,18 +238,33 @@ def main(cfg: DictConfig) -> None:
                         max_workers=cfg.generation.perf.num_writer_workers
                     )
                     writer_threads = []
-                    # tp (precip) is only predicted per-step (the 1h increment); GRIB/EvalML
-                    # need a running total since forecast start (see the 'tp' comment in
+                    # tp (precip) is only predicted/stored per-step (the 1h increment); GRIB/
+                    # EvalML need a running total since forecast start (see the 'tp' comment in
                     # get_grib_template). Accumulate it here -- in the main, strictly
                     # sequential loop -- rather than in save_results itself, since that runs
                     # on writer_executor's thread pool where step order isn't guaranteed.
                     # Keyed per forecast run (base_time, or the fake base date for reanalysis
                     # data) since generation can cover multiple runs/times out of any order.
+                    # Diffusion prediction and regression prediction are two independent per-step
+                    # predictions, so each needs its own running total (cumulative_precip /
+                    # cumulative_precip_reg) -- one can't be derived from the other.
                     tp_idx = next(
                         (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
                         None,
                     )
                     cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
+                    cumulative_precip_reg: dict = {}
+                    # Baseline tp is the low-res input, not a model prediction. It only needs
+                    # re-accumulating for real forecast data (base_times is not None): the IFS
+                    # input pipeline deaccumulates tp to a 1h-increment during zarr build (see
+                    # ifs_hres_precompute.py), same as the training target. Reanalysis (ERA5)
+                    # input tp is a native 1h accumulation, not a deaccumulated forecast
+                    # quantity, so it needs no re-accumulation.
+                    input_tp_idx = next(
+                        (i for i, ch in enumerate(dataset.input_channels()) if ch.name == 'tp'),
+                        None,
+                    )
+                    cumulative_precip_baseline: dict = {}
 
                 # Create timer objects only if CUDA is available
                 use_cuda_timing = torch.cuda.is_available()
@@ -368,12 +383,17 @@ def main(cfg: DictConfig) -> None:
                         if image_reg is not None:
                             mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
 
-                        if tp_idx is not None:
+                        if tp_idx is not None or (input_tp_idx is not None and base_times is not None):
                             run_key, step_num = forecast_run_key_and_step(
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
-                            accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+                            if tp_idx is not None:
+                                accumulate_tp_channel(prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip)
+                                if image_reg is not None:
+                                    accumulate_tp_channel(mean_pred, tp_idx, run_key, step_num, cumulative_precip_reg)
+                            if input_tp_idx is not None and base_times is not None:
+                                accumulate_tp_channel(baseline, input_tp_idx, run_key, step_num, cumulative_precip_baseline)
                     t_postproc_end = _t()
 
                     t_write_start = _t()
