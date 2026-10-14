@@ -2,6 +2,7 @@ import hydra
 import os
 import json
 import time
+import traceback
 from collections import defaultdict
 from omegaconf import OmegaConf, DictConfig
 import torch
@@ -15,7 +16,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from hirad.models import EDMPrecondSuperResolution, UNet
 from hirad.inference import Generator
-from hirad.utils.inference_utils import save_results, forecast_run_key_and_step, accumulate_tp_channel
+from hirad.utils.inference_utils import (
+    save_results,
+    forecast_run_key_and_step,
+    accumulate_tp_channels,
+    validate_tp_not_pre_accumulated,
+)
 from hirad.utils.function_utils import get_time_from_range
 from hirad.utils.checkpoint import load_checkpoint
 from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
@@ -23,6 +29,17 @@ from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
+
+def _log_writer_exception(logger, future):
+    """done_callback for a writer_executor future: log a save_results failure as soon
+    as it happens, rather than letting it sit silent until the final thread.result()
+    sweep after every step has already been submitted (which, on a long run, can be
+    well after the job's walltime runs out -- see thread.result() below)."""
+    exc = future.exception()
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        logger.error(f"Writer thread failed:\n{tb}")
+
 
 def _sync_t() -> float:
     """Return wall-clock time after synchronizing all pending CUDA ops."""
@@ -238,8 +255,8 @@ def main(cfg: DictConfig) -> None:
                         max_workers=cfg.generation.perf.num_writer_workers
                     )
                     writer_threads = []
-                    # tp (precip) is only predicted per-step (the 1h increment); GRIB/EvalML
-                    # need a running total since forecast start (see the 'tp' comment in
+                    # tp (precip) is only predicted/stored per-step (the 1h increment); GRIB/
+                    # EvalML need a running total since forecast start (see the 'tp' comment in
                     # get_grib_template). Accumulate it here -- in the main, strictly
                     # sequential loop -- rather than in save_results itself, since that runs
                     # on writer_executor's thread pool where step order isn't guaranteed.
@@ -247,18 +264,38 @@ def main(cfg: DictConfig) -> None:
                     # data) since generation can cover multiple runs/times out of any order.
                     # Toggle via generation.accumulate_tp (default False): saved tp stays the
                     # per-step 1h increment. Set True to accumulate a running total since
-                    # forecast start (GRIB/EvalML); tp_idx=None skips the accumulation.
+                    # forecast start (GRIB/EvalML); tp_idx/input_tp_idx=None skips it.
+                    # Diffusion prediction and regression prediction are two independent per-step
+                    # predictions, so each needs its own running total (cumulative_precip /
+                    # cumulative_precip_reg) -- one can't be derived from the other.
                     accumulate_tp = cfg.generation.get("accumulate_tp", False)
                     tp_idx = next(
                         (i for i, ch in enumerate(dataset.output_channels()) if ch.name == 'tp'),
                         None,
                     ) if accumulate_tp else None
                     cumulative_precip: dict = {}  # run_key -> (last_step_num, running total)
+                    cumulative_precip_reg: dict = {}
+                    # Baseline tp is the low-res input, not a model prediction. It only needs
+                    # re-accumulating for real forecast data (base_times is not None): the IFS
+                    # input pipeline deaccumulates tp to a 1h-increment during zarr build (see
+                    # ifs_hres_precompute.py), same as the training target. Reanalysis (ERA5)
+                    # input tp is a native 1h accumulation, not a deaccumulated forecast
+                    # quantity, so it needs no re-accumulation.
+                    input_tp_idx = next(
+                        (i for i, ch in enumerate(dataset.input_channels()) if ch.name == 'tp'),
+                        None,
+                    ) if accumulate_tp else None
+                    cumulative_precip_baseline: dict = {}
+                    # Per-run history of baseline's raw (pre-accumulation) per-step tp, as a
+                    # cheap spatial-mean scalar -- checked once per run after generation
+                    # finishes (see validate_tp_not_pre_accumulated below) in case the "always
+                    # deaccumulated" assumption above is ever wrong for some input pipeline.
+                    baseline_tp_raw_history: dict = {}  # run_key -> [mean(tp_step), ...]
                     # Largest step a run reaches, so accumulate_tp_channel can drop a run from
-                    # cumulative_precip once its final step is done (bounds memory to the runs
+                    # its cumulative dict once its final step is done (bounds memory to the runs
                     # still in flight, ~max_lead/init_spacing, rather than every run seen).
                     tp_run_max_lead = None
-                    if tp_idx is not None:
+                    if tp_idx is not None or input_tp_idx is not None:
                         if hasattr(dataset, "base_time"):  # forecast: last step = (capped) max lead
                             steps_h = (dataset._input_dataset.steps / np.timedelta64(1, "h")).astype(int)
                             cap = getattr(dataset, "_max_lead_hours", None)
@@ -383,34 +420,44 @@ def main(cfg: DictConfig) -> None:
                         if image_reg is not None:
                             mean_pred = dataset.denormalize_output(image_reg)[0].squeeze().flip(-2).cpu().numpy()
 
-                        if tp_idx is not None:
+                        is_forecast = base_times is not None
+                        if tp_idx is not None or (input_tp_idx is not None and is_forecast):
                             run_key, step_num = forecast_run_key_and_step(
                                 times[sampler[time_index]],
                                 base_times[sampler[time_index]] if base_times is not None else None,
                             )
-                            accumulate_tp_channel(
-                                prediction_ensemble, tp_idx, run_key, step_num, cumulative_precip,
-                                final_step=(tp_run_max_lead is not None and step_num >= tp_run_max_lead),
+                            final_step = tp_run_max_lead is not None and step_num >= tp_run_max_lead
+                            if input_tp_idx is not None and is_forecast:
+                                raw_tp = np.take(baseline, input_tp_idx, axis=baseline.ndim - 3)
+                                baseline_tp_raw_history.setdefault(run_key, []).append(float(np.nanmean(raw_tp)))
+                            accumulate_tp_channels(
+                                prediction_ensemble,
+                                mean_pred if image_reg is not None else None,
+                                baseline,
+                                tp_idx, input_tp_idx, is_forecast,
+                                run_key, step_num,
+                                cumulative_precip, cumulative_precip_reg, cumulative_precip_baseline,
+                                final_step=final_step,
                             )
                     t_postproc_end = _t()
 
                     t_write_start = _t()
                     if dist.rank == 0:
-                        writer_threads.append(
-                            writer_executor.submit(
-                                save_results,
-                                output_path,
-                                times[sampler[time_index]],
-                                dataset,
-                                prediction_ensemble,
-                                image_tar,
-                                baseline,
-                                mean_pred if image_reg is not None else None,
-                                base_time=base_times[sampler[time_index]] if base_times is not None else None,
-                                output_format=output_format,
-                                grib_template_path=grib_template_path,
-                            )
+                        writer_future = writer_executor.submit(
+                            save_results,
+                            output_path,
+                            times[sampler[time_index]],
+                            dataset,
+                            prediction_ensemble,
+                            image_tar,
+                            baseline,
+                            mean_pred if image_reg is not None else None,
+                            base_time=base_times[sampler[time_index]] if base_times is not None else None,
+                            output_format=output_format,
+                            grib_template_path=grib_template_path,
                         )
+                        writer_future.add_done_callback(lambda f: _log_writer_exception(logger, f))
+                        writer_threads.append(writer_future)
                     t_write_end = _t()
 
                     if enable_timing and time_index >= warmup_steps:
@@ -425,6 +472,15 @@ def main(cfg: DictConfig) -> None:
 
                 end.record()
                 end.synchronize()
+
+                if dist.rank == 0:
+                    # Sanity check, now that every run's steps are in: flag any forecast run
+                    # whose baseline tp never decreased (see validate_tp_not_pre_accumulated),
+                    # in case the "input is always deaccumulated" assumption behind
+                    # baseline_tp_raw_history above doesn't hold for some input pipeline.
+                    for run_key, raw_history in baseline_tp_raw_history.items():
+                        validate_tp_not_pre_accumulated(raw_history, run_key)
+
                 elapsed_time = (
                     start.elapsed_time(end) / 1000.0 if use_cuda_timing else 0
                 )  # Convert ms to s

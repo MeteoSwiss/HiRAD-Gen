@@ -276,3 +276,83 @@ evalml experiment tests/integration/configs/hirad.yaml
 ```
 
 Your results will appear in relative path `output/results/<date>_hirad-forecast-test-1.0-<some key thing>`
+
+## EvalML
+
+Running HiRAD in EvalML involves two parts: generating the GRIB output (either
+from inference `generate.py` directly, or converting from existing torch output),
+and then running the evaluation in EvalML.
+
+### Generating GRIB output
+
+The directory structure
+is a bit weird: it'll be the `<root>/<pred_type>/YYYYMMDDHHMM/grib/YYYYMMDDHHMM_HH.grib`
+This is just what evalML expects.
+
+#### New inference run
+
+If you are performing a new inference run, you can in the `/conf/generation/*.yaml` file,
+set `io: output_format: grib` or `io: output_format: both` (produces both torch and grib).
+Then run inference as usual.
+This will put all GRIB output into a directory called `grib` under the `io: output_path`.
+
+
+#### Existing inference run
+If you have already performed inference and only have `torch` output, you can
+run a script to convert it to GRIB format. See the `src/hirad/torch_to_grib.sh` 
+script to run. Update the SRC and DST directories and indicate what base times
+you want to use. (script generates a month worth of basetimes, or you can say "all")
+
+
+#### Copying to `balfrin`/`linard`
+EvalML currently only runs on balfrin/linard, so you will need to copy it over
+to make it usable.
+
+### Running EvalML
+
+#### Installing
+
+The implementation to enable EvalML to accept externally-generated GRIB files
+is not yet merged to main; it lives in a branch `feat/hirad-integration`. 
+
+From your $SCRATCH directory, check out the repo:
+
+`git clone -b feat/hirad-integration https://github.com/MeteoSwiss/evalml.git`
+
+Then use the installation instructions in the EvalML README:
+Install uv
+`curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+Install project
+`uv sync`
+
+Activate
+`source .venv/bin/activate`
+
+#### Configuring
+
+The HiRAD configuration is in `tests/integration/configs/hirad.yaml`.
+Each `-grib_forecaster` block will add another experiment for comparison.
+Change `root` to be the location where you copied the grib for each pred type.
+
+You can also change start and end dates (I suggest running a test with a couple days
+of base times just to make sure it works)
+
+It's also a good idea to change the `config_label` to differentiate between runs--
+this will be part of the output folder name. But if you forget to change the name,
+it'll still create a hash and use the run date to name the folder so there won't
+be any overwritten issue.
+
+#### Running
+
+To run, call:
+`evalml experiment tests/integration/configs/hirad.yaml`
+
+It will set up a Snakemake graph to execute dependencies and run.
+
+If the workflow fails, it is a bit annoying to debug manually; I recommend
+copying the snakemake log file path and asking Claude to find the failed job
+and error log.
+
+Outputs (plots, scorecards) will show up in the `outputs/results` subdirectory.
+A new directory is created for each run.
