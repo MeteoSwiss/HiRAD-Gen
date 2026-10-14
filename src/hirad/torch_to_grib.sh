@@ -25,11 +25,14 @@ SRC_DIR=/capstor/scratch/cscs/pstamenk/outputs/generation/gen_ifs_ft_new
 DST_DIR=/capstor/scratch/cscs/mmcgloho/outputs/generation/gen_ifs_ft_new/grib_with_baseline
 
 
+# Base times for March 2025
 BASE_TIMES=""
 for d in $(seq -w 1 31); do
     BASE_TIMES="${BASE_TIMES} 202503${d}-0000 202503${d}-1200"
 done
-BASE_TIMES='all'
+
+# If you want to regenerate all the GRIB files, uncomment the following line:
+#BASE_TIMES='all'
 
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-deps

@@ -299,11 +299,11 @@ This will put all GRIB output into a directory called `grib` under the `io: outp
 
 #### Existing inference run
 If you have already performed inference and only have `torch` output, you can
-run a script to convert it to GRIB format.
+run a script to convert it to GRIB format. See the `src/hirad/torch_to_grib.sh` 
+script to run. Update the SRC and DST directories and indicate what base times
+you want to use. (script generates a month worth of basetimes, or you can say "all")
 
-```
 
-```
 #### Copying to `balfrin`/`linard`
 EvalML currently only runs on balfrin/linard, so you will need to copy it over
 to make it usable.
