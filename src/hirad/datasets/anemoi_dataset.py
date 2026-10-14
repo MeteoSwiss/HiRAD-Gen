@@ -147,22 +147,28 @@ class AnemoiDataset(DownscalingDataset):
         # exclude_end_date] are dropped from the sample index; the remaining samples keep their
         # original input-dataset positions via self._sample_indices. When no window is given,
         # this is the identity map, so iteration is unchanged for every other dataset/config.
-        self._sample_indices = list(range(len(self._input_dataset.dates)))
-        if exclude_start_date is not None and exclude_end_date is not None:
-            excl_start = to_datetime(exclude_start_date)
-            excl_end = to_datetime(exclude_end_date)
-            # A bare end date excludes the whole day, matching anemoi's inclusive `end` semantics.
-            if excl_end == excl_end.normalize():
-                excl_end = excl_end + to_timedelta("1D") - to_timedelta("1s")
-            dates = to_datetime(self._input_dataset.dates)
-            self._sample_indices = [
-                i for i in self._sample_indices if not (excl_start <= dates[i] <= excl_end)
-            ]
-            logger.info(
-                f"Excluding [{excl_start} .. {excl_end}] from the training range: "
-                f"{len(self._input_dataset.dates) - len(self._sample_indices)} timesteps dropped, "
-                f"{len(self._sample_indices)} kept."
-            )
+        # Skipped entirely for trajectory/forecast stores (AnemoiForecastDataset, which has its
+        # own base_dates/steps-based iteration via self._pairs and never reads
+        # self._sample_indices) -- their input dataset has no .dates axis to index by.
+        if hasattr(self._input_dataset, 'dates'):
+            self._sample_indices = list(range(len(self._input_dataset.dates)))
+            if exclude_start_date is not None and exclude_end_date is not None:
+                excl_start = to_datetime(exclude_start_date)
+                excl_end = to_datetime(exclude_end_date)
+                # A bare end date excludes the whole day, matching anemoi's inclusive `end` semantics.
+                if excl_end == excl_end.normalize():
+                    excl_end = excl_end + to_timedelta("1D") - to_timedelta("1s")
+                dates = to_datetime(self._input_dataset.dates)
+                self._sample_indices = [
+                    i for i in self._sample_indices if not (excl_start <= dates[i] <= excl_end)
+                ]
+                logger.info(
+                    f"Excluding [{excl_start} .. {excl_end}] from the training range: "
+                    f"{len(self._input_dataset.dates) - len(self._sample_indices)} timesteps dropped, "
+                    f"{len(self._sample_indices)} kept."
+                )
+        else:
+            self._sample_indices = None
 
         # Load static info and channel names
         if static_channel_names:
