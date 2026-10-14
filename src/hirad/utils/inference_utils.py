@@ -326,10 +326,9 @@ def save_results(output_path, time_step, dataset, image_pred, image_hr, image_lr
     if output_format in ('grib', 'both'):
         if grib_template_path == '':
             raise ValueError("grib_template_path must be provided when output_format is 'grib' or 'both'")
-        os.makedirs(grib_pred_savedir, exist_ok=True)
-        os.makedirs(grib_ensemble_mean_savedir, exist_ok=True)
-        os.makedirs(grib_baseline_savedir, exist_ok=True)
-        save_results_as_grib(grib_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
+        # save_results_as_grib makes each of its savedirs itself (only when truthy), so no
+        # need to os.makedirs them here too.
+        save_results_as_grib(grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir, time_step, target, prediction_ensemble, baseline, mean_pred, dataset, grib_template_path, base_time)
 
 def save_results_as_torch(output_path, time_step, target, prediction_ensemble, baseline, mean_pred):
     if mean_pred is not None:

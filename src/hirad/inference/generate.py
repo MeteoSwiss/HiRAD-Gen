@@ -2,6 +2,7 @@ import hydra
 import os
 import json
 import time
+import traceback
 from collections import defaultdict
 from omegaconf import OmegaConf, DictConfig
 import torch
@@ -28,6 +29,17 @@ from hirad.utils.dataset_utils import regrid_icon_to_rotlatlon
 from hirad.datasets import get_dataset_and_sampler_inference
 
 from hirad.utils.train_helpers import set_patch_shape
+
+def _log_writer_exception(logger, future):
+    """done_callback for a writer_executor future: log a save_results failure as soon
+    as it happens, rather than letting it sit silent until the final thread.result()
+    sweep after every step has already been submitted (which, on a long run, can be
+    well after the job's walltime runs out -- see thread.result() below)."""
+    exc = future.exception()
+    if exc is not None:
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        logger.error(f"Writer thread failed:\n{tb}")
+
 
 def _sync_t() -> float:
     """Return wall-clock time after synchronizing all pending CUDA ops."""
@@ -431,21 +443,21 @@ def main(cfg: DictConfig) -> None:
 
                     t_write_start = _t()
                     if dist.rank == 0:
-                        writer_threads.append(
-                            writer_executor.submit(
-                                save_results,
-                                output_path,
-                                times[sampler[time_index]],
-                                dataset,
-                                prediction_ensemble,
-                                image_tar,
-                                baseline,
-                                mean_pred if image_reg is not None else None,
-                                base_time=base_times[sampler[time_index]] if base_times is not None else None,
-                                output_format=output_format,
-                                grib_template_path=grib_template_path,
-                            )
+                        writer_future = writer_executor.submit(
+                            save_results,
+                            output_path,
+                            times[sampler[time_index]],
+                            dataset,
+                            prediction_ensemble,
+                            image_tar,
+                            baseline,
+                            mean_pred if image_reg is not None else None,
+                            base_time=base_times[sampler[time_index]] if base_times is not None else None,
+                            output_format=output_format,
+                            grib_template_path=grib_template_path,
                         )
+                        writer_future.add_done_callback(lambda f: _log_writer_exception(logger, f))
+                        writer_threads.append(writer_future)
                     t_write_end = _t()
 
                     if enable_timing and time_index >= warmup_steps:

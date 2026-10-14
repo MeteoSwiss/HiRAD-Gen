@@ -9,6 +9,7 @@ from hirad.utils.inference_utils import (
     calculate_bounds,
     regression_step,
     diffusion_step,
+    save_results,
     save_results_as_torch,
     forecast_run_key_and_step,
     accumulate_tp_channel,
@@ -430,6 +431,77 @@ class TestSaveResultsAsTorch:
 
         assert torch.equal(loaded_0, t1)
         assert torch.equal(loaded_1, t2)
+
+
+############################################################################
+#                               save_results                               #
+############################################################################
+
+
+class TestSaveResults:
+    """Tests for save_results -- specifically its wiring into save_results_as_grib,
+    where a single missing argument once shifted every later positional argument by
+    one slot (grib_regression_pred_savedir silently dropped -> every argument after
+    it, including `dataset` itself, landed in the wrong parameter)."""
+
+    def _mock_savedirs(self, mock_result_dirs):
+        # Five distinct sentinel paths so a shifted argument is caught by identity,
+        # not accidentally matched by two dirs looking alike.
+        mock_result_dirs.return_value = (
+            "TORCH_DIR", "GRIB_PRED_DIR", "GRIB_REGRESSION_DIR", "GRIB_ENSEMBLE_MEAN_DIR", "GRIB_BASELINE_DIR",
+        )
+
+    @patch("hirad.utils.inference_utils.save_results_as_grib")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_grib_savedirs_passed_in_correct_positions(self, mock_result_dirs, mock_save_grib, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        dataset = MagicMock(name="dataset_sentinel")
+        image_pred = np.full((1, 1), 1.0)
+        image_hr = np.full((1, 1), 2.0)
+        image_lr = np.full((1, 1), 3.0)
+        mean_pred = np.full((1, 1), 4.0)
+
+        save_results(
+            str(tmp_path), "20230115-0300", dataset, image_pred, image_hr, image_lr, mean_pred,
+            base_time="20230115-0000", output_format="grib", grib_template_path="tpl",
+        )
+
+        args = mock_save_grib.call_args[0]
+        assert args[0] == "GRIB_PRED_DIR"
+        assert args[1] == "GRIB_REGRESSION_DIR"
+        assert args[2] == "GRIB_ENSEMBLE_MEAN_DIR"
+        assert args[3] == "GRIB_BASELINE_DIR"
+        assert args[4] == "20230115-0300"
+        np.testing.assert_array_equal(args[5], image_hr)
+        np.testing.assert_array_equal(args[6], image_pred)
+        np.testing.assert_array_equal(args[7], image_lr)
+        np.testing.assert_array_equal(args[8], mean_pred)
+        assert args[9] is dataset
+        assert args[10] == "tpl"
+        assert args[11] == "20230115-0000"
+
+    @patch("hirad.utils.inference_utils.save_results_as_grib")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_empty_template_path_raises_before_calling_grib_writer(self, mock_result_dirs, mock_save_grib, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        with pytest.raises(ValueError, match="grib_template_path"):
+            save_results(
+                str(tmp_path), "20230115-0300", MagicMock(), np.zeros((1, 1)), np.zeros((1, 1)), np.zeros((1, 1)),
+                None, output_format="grib", grib_template_path="",
+            )
+        mock_save_grib.assert_not_called()
+
+    @patch("hirad.utils.inference_utils.save_results_as_torch")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_torch_only_does_not_call_grib_writer(self, mock_result_dirs, mock_save_torch, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        with patch("hirad.utils.inference_utils.save_results_as_grib") as mock_save_grib:
+            save_results(
+                str(tmp_path), "20230115-0300", MagicMock(), np.zeros((1, 1)), np.zeros((1, 1)), np.zeros((1, 1)),
+                None, output_format="torch", grib_template_path="",
+            )
+        mock_save_grib.assert_not_called()
+        mock_save_torch.assert_called_once()
 
 
 ############################################################################
