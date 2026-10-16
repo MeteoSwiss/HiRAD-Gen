@@ -41,6 +41,7 @@ def stochastic_sampler(
     lead_time_label: Optional[torch.Tensor] = None,
     static_channels: Optional[torch.Tensor] = None,
     date_embedding: Optional[torch.Tensor] = None,
+    prev_hr: Optional[torch.Tensor] = None,
     num_steps: int = 18,
     sigma_min: float = 0.002,
     sigma_max: float = 800,
@@ -235,6 +236,13 @@ def stochastic_sampler(
             else:
                 date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous()
             img_lr = torch.cat((img_lr, date_embedding), dim=1)
+        # Previous-HR history conditioning: the last block of the interpolated conditioning
+        # (matches the training patched order, so patching.apply crops it per patch).
+        # History must be CROPPED with the patch (the input=x_lr path, aligned with the latents the
+        # net denoises), NOT bilinearly downsampled to a whole-domain thumbnail via additional_input.
+        # Mirrors the training fix in ResidualLoss.
+        if prev_hr is not None:
+            x_lr = torch.cat((x_lr, prev_hr.expand(x_lr.shape[0], -1, -1, -1)), dim=1)
         # (batch_size * patch_num, C_in + C_out, patch_shape_y, patch_shape_x)
         x_lr = patching.apply(input=x_lr, additional_input=img_lr)
         # print(f"Input for generator after patching {x_lr.shape}")
@@ -252,6 +260,9 @@ def stochastic_sampler(
             else:
                 date_embedding = date_embedding.to(x_lr.dtype, non_blocking=True).contiguous()
             x_lr = torch.cat((x_lr, date_embedding), dim=1)
+        # Previous-HR history conditioning as the last block (matches training non-patched order).
+        if prev_hr is not None:
+            x_lr = torch.cat((x_lr, prev_hr.expand(x_lr.shape[0], -1, -1, -1)), dim=1)
 
         patch_embedding_selector = None
 

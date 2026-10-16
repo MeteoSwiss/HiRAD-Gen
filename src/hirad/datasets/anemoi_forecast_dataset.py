@@ -59,6 +59,7 @@ class AnemoiForecastDataset(AnemoiDataset):
                 input_frequency: str = None,
                 provide_lead_time: bool = False,
                 max_lead_hours: int = None,
+                provide_prev_target: bool = False,
                 ):
         # Split by base (init) time: start_date/end_date are the first/last forecast init
         # times, and _align_input_output keeps only base times within that range. The target is
@@ -123,6 +124,7 @@ class AnemoiForecastDataset(AnemoiDataset):
         # lead-time-conditioned models. The training/inference loops detect it via this
         # attribute (see TrainingManagerCorrDiff.load_and_preprocess_batch).
         self.provides_lead_time = provide_lead_time
+        self.provides_prev_target = provide_prev_target
 
     def _open_input_dataset(self, input_anemoi_dataset_path, input_channel_names, start_date, end_date, area, open_dataset_kwargs):
         # No select/start/end/area here: anemoi-datasets' Select/date/Cropping
@@ -206,6 +208,12 @@ class AnemoiForecastDataset(AnemoiDataset):
                 f"time has no target (leads past the target range); {len(self._pairs)} pairs kept."
             )
 
+        # Reverse map (ref_idx, step_idx) -> position in self._pairs, so a pair can locate its
+        # predecessor (same run, previous lead step) for temporal conditioning (previous_index).
+        self._pair_position = {
+            (ref_idx, step_idx): pos for pos, (ref_idx, step_idx, _) in enumerate(self._pairs)
+        }
+
     def _input_frequency_hours(self, input_anemoi_dataset_path: str, input_frequency: str = None) -> int:
         """Effective input time step, in whole hours.
 
@@ -219,11 +227,32 @@ class AnemoiForecastDataset(AnemoiDataset):
             hours = (steps[1] - steps[0]) / np.timedelta64(1, 'h')
         return int(round(hours))
 
+    def _get_target_by_position(self, pos):
+        """Raw (squeezed) target for pair position `pos`, or zeros when the target is missing
+        (target_missing_as_zeros). Forecast pairs index the target via self._pairs rather than
+        the analysis-timeline map used by the base class."""
+        _, _, target_idx = self._pairs[pos]
+        if target_idx is None:
+            return np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
+        return self._output_dataset[target_idx].squeeze()
+
+    def previous_index(self, pos):
+        """See DownscalingDataset.previous_index. Forecast case: the previous lead step of the
+        same run, or None at the first kept step of a run (step_idx == 0), when that step has no
+        sample, or when it has no target."""
+        ref_idx, step_idx, _ = self._pairs[pos]
+        if step_idx == 0:
+            return None
+        prev_pos = self._pair_position.get((ref_idx, step_idx - 1))
+        if prev_pos is None or self._pairs[prev_pos][2] is None:
+            return None
+        return prev_pos
+
     def __getitem__(self, idx):
         """Get input and target data for one (reference_time, step) pair.
         Transform and normalize, but do not interpolate."""
 
-        ref_idx, step_idx, target_idx = self._pairs[idx]
+        ref_idx, step_idx, _ = self._pairs[idx]
         date_str = to_datetime(self._input_dataset.base_dates[ref_idx] + self._input_dataset.steps[step_idx]).strftime('%Y%m%d-%H%M')
 
         # Reorder the variable axis to input_channel_names order (the store's native
@@ -231,28 +260,28 @@ class AnemoiForecastDataset(AnemoiDataset):
         # the ensemble dimension.
         input_data = self._input_dataset[ref_idx, :, :, step_idx, :][self._channel_indices].squeeze()
 
-        # Pull target data at the same valid time as the input (squeeze the
-        # ensemble dimension). target_idx is None only when target_missing_as_zeros
-        # is set and the target has no data for this date, in which case a zeros
-        # tensor is returned.
-        if target_idx is None:
-            target_data = np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
-        else:
-            target_data = self._output_dataset[target_idx].squeeze()
+        # Pull target data at the same valid time as the input (squeeze the ensemble
+        # dimension). The target is zeros only when target_missing_as_zeros is set and the
+        # target has no data for this date.
+        target_data = self._get_target_by_position(idx)
 
         # If target is COSMO, see commented code in base class's __getitem__ method,
         # regarding reshaping.
 
+        # Optional trailing fields, in a fixed order: lead-time label first, then the
+        # previous-target pair (prev_target, has_prev). The loop pops them from the end in
+        # reverse (see TrainingManagerCorrDiff.load_and_preprocess_batch).
+        extras = []
         if self.provides_lead_time:
             lead_hours = int(round(self._input_dataset.steps[step_idx] / np.timedelta64(1, 'h')))
-            return torch.from_numpy(target_data.copy()),\
-                    torch.from_numpy(input_data),\
-                    date_str,\
-                    lead_hours
+            extras.append(lead_hours)
+        if self.provides_prev_target:
+            extras.extend(self._prev_target_sample(idx))
 
-        return torch.from_numpy(target_data.copy()),\
-                torch.from_numpy(input_data),\
-                date_str
+        return (torch.from_numpy(target_data.copy()),
+                torch.from_numpy(input_data),
+                date_str,
+                *extras)
 
     def __len__(self):
         return len(self._pairs)

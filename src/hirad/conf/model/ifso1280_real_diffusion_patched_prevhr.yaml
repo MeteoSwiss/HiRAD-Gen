@@ -1,0 +1,18 @@
+# Patched diffusion (residual) for IFS-HRES -> RealCH1 with previous-HR temporal conditioning
+# (Phase 1: teacher-forced + CFG dropout).
+# Architecture MATCHES the baseline diffusion checkpoint being warm-started from
+# (model_checkpoints/ifso1280_real/diffusion: lead_time_mode false, N_grid 100, img_in 140).
+# prev_hr_conditioning appends n_output_channels (4) to the diffusion input as the last
+# conditioning block (zero-initialised on warm start) -> img_in 144.
+name: patched_diffusion
+hr_mean_conditioning: True
+  # High-res mean (the regression's output) is fed as an extra condition.
+prev_hr_conditioning: True
+  # Previous-step high-res prediction fed as an extra condition (temporal correlation).
+
+model_args:
+  gridtype: "learnable"
+  N_grid_channels: 100
+  embedding_type: "positional"
+  # No lead-time conditioning: the baseline checkpoint was trained with lead_time_mode false.
+  lead_time_mode: False

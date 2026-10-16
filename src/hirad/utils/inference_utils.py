@@ -146,6 +146,7 @@ def diffusion_step(
     lead_time_label: torch.Tensor = None,
     static_channels: Optional[torch.Tensor] = None,
     date_embedding: Optional[torch.Tensor] = None,
+    prev_hr: Optional[torch.Tensor] = None,
     use_apex_gn: bool = False,
     _timings: Optional[dict] = None,
 ) -> torch.Tensor:
@@ -229,6 +230,8 @@ def diffusion_step(
         additional_args["static_channels"] = static_channels
     if date_embedding is not None:
         additional_args["date_embedding"] = date_embedding
+    if prev_hr is not None:
+        additional_args["prev_hr"] = prev_hr
     additional_args["use_apex_gn"] = use_apex_gn
 
     _t = _sync_t if _timings is not None else (lambda: 0.0)

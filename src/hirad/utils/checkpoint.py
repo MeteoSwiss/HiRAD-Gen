@@ -243,6 +243,11 @@ def load_model_weights_partial(
     enabling lead-time conditioning, whose input grows by ``lead_time_channels`` appended
     at the end — is copied over its overlapping slice with the new channels zero-initialised
     (an identity warm start: the new conditioning contributes nothing until trained).
+
+    When the model records ``prev_hr_channels`` / ``prev_hr_insert_offset`` (previous-HR temporal
+    conditioning adds its channels in the middle of the first-conv input, before the positional /
+    lead-time embeddings), the grown first conv is adapted by inserting the zero-init block at that
+    offset and shifting the pretrained trailing channels past it, so they stay aligned.
     """
     if hasattr(model, "module"):
         model = model.module
@@ -257,6 +262,10 @@ def load_model_weights_partial(
     model_sd = model.state_dict()
     new_sd = {}
     copied, adapted, missing = [], [], []
+    # Previous-HR conditioning inserts its channels mid-input (before pos/lead-time embeddings);
+    # these let the grown first conv be adapted in place rather than naively zero-padding the tail.
+    prev_hr_channels = getattr(model, "prev_hr_channels", 0)
+    prev_hr_insert_offset = getattr(model, "prev_hr_insert_offset", None)
     for k, v in model_sd.items():
         if k not in pretrained:
             new_sd[k] = v
@@ -271,8 +280,19 @@ def load_model_weights_partial(
             and all(a == b for i, (a, b) in enumerate(zip(pv.shape, v.shape)) if i != 1)
         ):
             w = torch.zeros_like(v)
-            n = min(pv.shape[1], v.shape[1])
-            w[:, :n] = pv[:, :n]
+            if (
+                prev_hr_channels
+                and prev_hr_insert_offset is not None
+                and v.shape[1] == pv.shape[1] + prev_hr_channels
+            ):
+                # Insert the zero-init prev-HR block at the recorded offset, shifting the
+                # pretrained trailing channels (pos / lead-time embeddings) past it.
+                off = prev_hr_insert_offset
+                w[:, :off] = pv[:, :off]
+                w[:, off + prev_hr_channels:] = pv[:, off:]
+            else:
+                n = min(pv.shape[1], v.shape[1])
+                w[:, :n] = pv[:, :n]
             new_sd[k] = w
             adapted.append((k, tuple(pv.shape), tuple(v.shape)))
         else:

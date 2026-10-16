@@ -58,8 +58,14 @@ class AnemoiDataset(DownscalingDataset):
                 input_frequency: str = None,
                 exclude_start_date: datetime.datetime = None,
                 exclude_end_date: datetime.datetime = None,
+                provide_prev_target: bool = False,
                 ):
         super().__init__()
+
+        # When True, __getitem__ appends the previous timestep's target field and a 0/1
+        # has-predecessor flag, used by temporally-conditioned models. The training/inference
+        # loops detect it via self.provides_prev_target (see load_and_preprocess_batch).
+        self.provides_prev_target = provide_prev_target
 
         input_dataset = type.split('_')[-2]
         target_dataset = type.split('_')[-1]
@@ -147,22 +153,33 @@ class AnemoiDataset(DownscalingDataset):
         # exclude_end_date] are dropped from the sample index; the remaining samples keep their
         # original input-dataset positions via self._sample_indices. When no window is given,
         # this is the identity map, so iteration is unchanged for every other dataset/config.
-        self._sample_indices = list(range(len(self._input_dataset.dates)))
-        if exclude_start_date is not None and exclude_end_date is not None:
-            excl_start = to_datetime(exclude_start_date)
-            excl_end = to_datetime(exclude_end_date)
-            # A bare end date excludes the whole day, matching anemoi's inclusive `end` semantics.
-            if excl_end == excl_end.normalize():
-                excl_end = excl_end + to_timedelta("1D") - to_timedelta("1s")
-            dates = to_datetime(self._input_dataset.dates)
-            self._sample_indices = [
-                i for i in self._sample_indices if not (excl_start <= dates[i] <= excl_end)
-            ]
-            logger.info(
-                f"Excluding [{excl_start} .. {excl_end}] from the training range: "
-                f"{len(self._input_dataset.dates) - len(self._sample_indices)} timesteps dropped, "
-                f"{len(self._sample_indices)} kept."
-            )
+        # Forecast (trajectory) input stores expose base_dates x steps rather than a single
+        # `.dates` axis and drive iteration via self._pairs (see AnemoiForecastDataset), so this
+        # analysis sample-index map and its exclude-window do not apply there.
+        if hasattr(self._input_dataset, "dates"):
+            self._sample_indices = list(range(len(self._input_dataset.dates)))
+            if exclude_start_date is not None and exclude_end_date is not None:
+                excl_start = to_datetime(exclude_start_date)
+                excl_end = to_datetime(exclude_end_date)
+                # A bare end date excludes the whole day, matching anemoi's inclusive `end` semantics.
+                if excl_end == excl_end.normalize():
+                    excl_end = excl_end + to_timedelta("1D") - to_timedelta("1s")
+                dates = to_datetime(self._input_dataset.dates)
+                self._sample_indices = [
+                    i for i in self._sample_indices if not (excl_start <= dates[i] <= excl_end)
+                ]
+                logger.info(
+                    f"Excluding [{excl_start} .. {excl_end}] from the training range: "
+                    f"{len(self._input_dataset.dates) - len(self._sample_indices)} timesteps dropped, "
+                    f"{len(self._sample_indices)} kept."
+                )
+        else:
+            self._sample_indices = None
+            if exclude_start_date is not None and exclude_end_date is not None:
+                raise ValueError(
+                    "exclude_start_date/exclude_end_date is not supported for forecast "
+                    "(trajectory) datasets; split by init time via start_date/end_date instead."
+                )
 
         # Load static info and channel names
         if static_channel_names:
@@ -188,10 +205,19 @@ class AnemoiDataset(DownscalingDataset):
             self.static_data_normalized = (static_data - self.static_mean.reshape((self.static_mean.shape[0],1))) \
                                             / self.static_std.reshape((self.static_std.shape[0],1))
             self.static_data_normalized = torch.from_numpy(self.static_data_normalized)
-            self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real)
-            if trim_edge > 0 and self.real_target:
-                self.static_data_normalized = self.static_data_normalized[:, trim_edge:-trim_edge, trim_edge:-trim_edge]
-            # self.normalize_input(np.flip(static_data.squeeze().reshape(-1, *target_shape), 1))
+            if self.real_target:
+                # REAL target is stored on the ICON unstructured grid: regrid onto the rotated
+                # lat-lon model grid, then trim the edge by slicing (an unstructured grid can't be
+                # edge-trimmed at open the way a regular non-real grid is, above).
+                self.static_data_normalized = regrid_icon_to_rotlatlon(self.static_data_normalized, self.regrid_indices_real, self.regrid_weights_real)
+                if trim_edge > 0:
+                    self.static_data_normalized = self.static_data_normalized[:, trim_edge:-trim_edge, trim_edge:-trim_edge]
+            else:
+                # Non-real target already lives on a regular grid (and was edge-trimmed at open):
+                # reshape the flat spatial axis to (H, W) so static matches the target field,
+                # mirroring _preprocess_hr_target.
+                self.static_data_normalized = self.static_data_normalized.reshape(
+                    *self.static_data_normalized.shape[:-1], *target_shape)
         else:
             self.static_data_normalized = None
             self._static_channels = []
@@ -343,27 +369,60 @@ class AnemoiDataset(DownscalingDataset):
             hours = (dates[1] - dates[0]) / np.timedelta64(1, 'h')
         return int(round(hours))
 
+    def _get_target_by_position(self, pos):
+        """Raw (squeezed) target sample for sample position `pos`, or zeros when the target
+        is missing (only possible under target_missing_as_zeros).
+
+        Overridden by subclasses whose input/target pairing isn't the analysis-timeline map
+        (e.g. AnemoiForecastDataset indexes via self._pairs)."""
+        native_idx = self._sample_indices[pos]
+        output_idx = self._output_index_for_input[native_idx]
+        if output_idx is None:
+            return np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
+        return self._output_dataset[output_idx].squeeze()
+
+    def previous_index(self, pos):
+        """See DownscalingDataset.previous_index. Analysis case: the predecessor is the
+        previous timestep on the continuous timeline, valid only if it is temporally
+        adjacent (no exclude-window gap) and has a target."""
+        if pos <= 0:
+            return None
+        native_idx = self._sample_indices[pos]
+        prev_native_idx = self._sample_indices[pos - 1]
+        if prev_native_idx != native_idx - 1:
+            return None
+        if self._output_index_for_input[prev_native_idx] is None:
+            return None
+        return pos - 1
+
+    def _prev_target_sample(self, pos):
+        """(prev_target, has_prev) for sample position `pos`: the raw previous target (to be
+        preprocessed in the loop like the clean target) with has_prev=1, or a zeros field with
+        has_prev=0 when there is no contiguous predecessor. Shared by both dataset families via
+        the overridable previous_index / _get_target_by_position."""
+        prev_pos = self.previous_index(pos)
+        if prev_pos is None:
+            zeros = np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
+            return torch.from_numpy(zeros.copy()), 0
+        return torch.from_numpy(self._get_target_by_position(prev_pos).copy()), 1
+
     def __getitem__(self, idx):
         """Get input and target data. Transform and normalize, but do not interpolate."""
 
         # Map sample position to input-dataset index (identity unless an exclude-window
         # dropped some timesteps; see self._sample_indices).
-        idx = self._sample_indices[idx]
+        native_idx = self._sample_indices[idx]
 
         # Pull input, replacing the corrected tp if applicable
-        date_str = to_datetime(self._input_dataset.dates[idx]).strftime('%Y%m%d-%H%M')
-        
+        date_str = to_datetime(self._input_dataset.dates[native_idx]).strftime('%Y%m%d-%H%M')
+
         # Don't reshape, but do squeeze ensemble dimension.
-        input_data = self._input_dataset[idx].squeeze()
+        input_data = self._input_dataset[native_idx].squeeze()
         # Pull target data at the same valid time as the input (squeeze the ensemble
-        # dimension). output_idx is None only when target_missing_as_zeros is set and the
-        # target has no data for this date, in which case a zeros tensor is returned.
-        output_idx = self._output_index_for_input[idx]
-        if output_idx is None:
-            target_data = np.zeros(self._target_sample_shape, dtype=np.float32).squeeze()
-        else:
-            target_data = self._output_dataset[output_idx].squeeze()
-        
+        # dimension). The target is zeros only when target_missing_as_zeros is set and the
+        # target has no data for this date.
+        target_data = self._get_target_by_position(idx)
+
         # next two steps only if target is cosmo, real has to be regridded first (done in training loop on gpu-s for efficiency)
         # reshape to image_shape
         # flip so that it starts in top-left corner (by default it is bottom left)
@@ -372,6 +431,14 @@ class AnemoiDataset(DownscalingDataset):
         #     target_data = np.flip(target_data \
         #             .reshape(-1,*target_shape),
         #         1)
+
+        if self.provides_prev_target:
+            prev_target, has_prev = self._prev_target_sample(idx)
+            return torch.from_numpy(target_data.copy()),\
+                    torch.from_numpy(input_data),\
+                    date_str,\
+                    prev_target,\
+                    has_prev
 
         return torch.from_numpy(target_data.copy()),\
                 torch.from_numpy(input_data),\

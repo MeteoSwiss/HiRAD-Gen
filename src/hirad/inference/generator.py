@@ -80,7 +80,7 @@ class Generator():
             overlap_pix=overlap_pix,
         )
 
-    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, randomize=False, random_seed=None, use_apex_gn=False, skip_timing=False):
+    def generate(self, image_lr, static_channels=None, date_embedding=None, lead_time_label=None, prev_hr=None, randomize=False, random_seed=None, use_apex_gn=False, skip_timing=False):
         with nvtx.annotate("generate_fn", color="green"):
             # (1, C, H, W)
             img_shape = image_lr.shape[-2:]
@@ -141,6 +141,7 @@ class Generator():
                         ) if lead_time_label is not None else None,
                         static_channels=static_channels,
                         date_embedding=date_embedding,
+                        prev_hr=prev_hr,
                         use_apex_gn=use_apex_gn,
                         _timings=_step_timings,
                     )

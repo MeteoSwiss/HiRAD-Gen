@@ -311,12 +311,40 @@ def main(cfg: DictConfig) -> None:
                 # overlapping lead times); used to keep such pairs from overwriting
                 # each other's output.
                 base_times = dataset.base_time() if hasattr(dataset, "base_time") else None
+
+                # Previous-HR temporal conditioning. When the diffusion net has the prev-HR input
+                # channels, every step must supply them: the model's own previous prediction during
+                # an autoregressive rollout, or a zeros ("null") field otherwise. `rollout` carries
+                # the prediction across temporally-adjacent samples (reset at segment boundaries via
+                # dataset.previous_index); without it the model runs in its no-history mode.
+                prev_hr_conditioning = cfg.generation.get("prev_hr_conditioning", False)
+                rollout = cfg.generation.get("rollout", False)
+                # Where the history field comes from: "rollout" = the model's own previous output
+                # (autoregressive), "teacher_forced" = the ground-truth previous target from the
+                # dataset (needs provide_prev_target; a diagnostic to separate exposure bias from
+                # a weak/unused conditioning), "zeros" = always null.
+                history_source = cfg.generation.get("history_source", "rollout")
+                if rollout and dist.world_size > 1:
+                    raise NotImplementedError(
+                        "Autoregressive rollout currently assumes a single rank (the carried "
+                        "previous prediction lives on rank 0 only). Run generation on 1 GPU."
+                    )
+                prev_out = None
+                prev_pos = None
+
                 # t_iter_end is updated at the end of each loop body; the gap between
                 # t_iter_end[i] and the start of body[i+1] equals DataLoader fetch time.
                 t_iter_end = _t()
                 for index, (image_tar, image_lr, *rest) in enumerate(
                     iter(data_loader)
                 ):
+                    # Datasets expose optional trailing fields in a fixed order (see the anemoi
+                    # datasets' __getitem__): the previous-target pair (prev_target, has_prev) is
+                    # last, then the lead-time label, then the date info. Pop them from the end.
+                    prev_target_raw = None
+                    if getattr(dataset, "provides_prev_target", False):
+                        prev_target_raw = rest[-2]  # GT previous-step target (for teacher-forced history)
+                        rest = rest[:-2]
                     # Lead-time-conditioned forecast datasets append an integer lead label;
                     # everything before it is the date info for make_time_grids.
                     if getattr(dataset, "provides_lead_time", False):
@@ -361,17 +389,53 @@ def main(cfg: DictConfig) -> None:
                     random_seed = cfg.generation.get("random_seed", None)+index if cfg.generation.get("randomize", False) and cfg.generation.get("random_seed", None) is not None else None
                     t_preproc_end = _t()
 
+                    prev_hr = None
+                    if prev_hr_conditioning:
+                        cur_pos = sampler[time_index]
+                        if history_source == "teacher_forced" and prev_target_raw is not None:
+                            # Ground-truth previous target, preprocessed to the model's normalized
+                            # output space exactly like training (regrid/trim/flip/normalize_output).
+                            if is_real_target:
+                                ph = regrid_icon_to_rotlatlon(
+                                    prev_target_raw.to(dist.device, dtype=input_dtype),
+                                    dataset.regrid_indices_real, dataset.regrid_weights_real,
+                                )
+                                if dataset.trim_edge > 0:
+                                    ph = ph[:, :, dataset.trim_edge:-dataset.trim_edge, dataset.trim_edge:-dataset.trim_edge]
+                                ph = ph.flip(-2)
+                            else:
+                                ph = prev_target_raw.to(dist.device, dtype=input_dtype)
+                                ph = ph.reshape(*ph.shape[:-1], *dataset.image_shape()).flip(-2)
+                            prev_hr = dataset.normalize_output(ph)
+                        elif history_source == "rollout" and rollout and prev_out is not None and dataset.previous_index(cur_pos) == prev_pos:
+                            prev_hr = prev_out
+                        else:
+                            # First step of a segment, no-history mode, or zeros source: the null token.
+                            prev_hr = torch.zeros(
+                                (1, img_out_channels, *image_lr.shape[-2:]),
+                                device=dist.device, dtype=input_dtype,
+                            )
+                        if use_apex_gn:
+                            prev_hr = prev_hr.to(memory_format=torch.channels_last)
+
                     t_gen_start = _t()
                     image_out, image_reg = generator.generate(
                                                 image_lr,
                                                 static_channels=static_channels,
                                                 date_embedding=date_embedding,
                                                 lead_time_label=lead_time_label,
+                                                prev_hr=prev_hr,
                                                 randomize=cfg.generation.get("randomize", False),
                                                 random_seed=random_seed,
                                                 skip_timing=(not enable_timing or time_index < warmup_steps),
                                             )
                     t_gen_end = _t()
+
+                    if rollout and prev_hr_conditioning:
+                        # Carry this step's prediction (normalized, model-internal orientation) as
+                        # the next step's history, reduced over the ensemble to a single field.
+                        prev_out = image_out.mean(dim=0, keepdim=True) if image_out is not None else None
+                        prev_pos = sampler[time_index]
 
                     t_postproc_start = _t()
                     if dist.rank == 0:
