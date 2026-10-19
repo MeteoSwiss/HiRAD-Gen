@@ -1,0 +1,39 @@
+# Temporal-correlation fine-tune (Phase 1): IFS-HRES -> RealCH1 patched diffusion with
+# previous-HR conditioning, teacher-forced + classifier-free-guidance dropout, warm-started
+# from the baseline diffusion checkpoint (new prev-HR channels zero-initialised).
+# _self_ is LAST so the overrides below win over the composed training group.
+defaults:
+  # Dataset (serves the previous lead step's target for temporal conditioning)
+  - dataset/anemoi_ifso1280_real_train_prevhr
+
+  # Model (patched diffusion residual + lead-time + prev-HR conditioning)
+  - model/ifso1280_real_diffusion_patched_prevhr
+
+  - model_size/normal_real
+
+  # Training (base hyperparameters; overridden below)
+  - training/ifso1280_real_diffusion_patched
+
+  # Logging
+  - logging/ifso1280_real_diffusion
+
+  - _self_
+
+hydra:
+  job:
+    chdir: true
+    name: diffusion_ifso1280_real_prevhr
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+training:
+  hp:
+    # Classifier-free-guidance dropout rate for the history channels (null -> no-history mode).
+    # 0.25 within the safe CFG band (Ho & Salimans 2022), matching the era_real prev-HR recipe.
+    prev_hr_dropout_prob: 0.25
+  # io.regression_checkpoint_path is inherited from training/ifso1280_real_diffusion_patched, and
+  # the diffusion trains from scratch by default. Optional warm start (NOT currently used): set
+  # io.finetune_checkpoint_path to a baseline IFS-HRES diffusion checkpoint to fine-tune instead
+  # (the partial loader zero-inits the new prev-HR channels).
+  # io:
+  #   finetune_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/diffusion

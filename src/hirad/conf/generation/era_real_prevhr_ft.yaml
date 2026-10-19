@@ -1,0 +1,35 @@
+# Fine-tuned prev-HR model, autoregressive rollout. Snapshot window 20210726 16-23Z.
+num_ensembles: 1
+seed_batch_size: 1
+inference_mode: all
+
+randomize: True
+random_seed: 2578458
+
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+hr_mean_conditioning: True
+prev_hr_conditioning: True
+rollout: True
+
+times_range: ['20210726-1600','20210726-2300',1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: False
+  num_writer_workers: 8
+  enable_timing: True
+
+io:
+  # Fine-tuned (cv1 warm-start) prev-HR diffusion checkpoint (img_in 144); latest index auto-picked.
+  res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era_real_prevhr/checkpoints_patched_diffusion/
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/regression/
+  output_path: .
+  output_format: 'torch'
+  grib_template_path: '/capstor/store/cscs/pasc/c38/evalml/resources/inference/templates'

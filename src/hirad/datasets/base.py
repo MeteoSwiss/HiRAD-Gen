@@ -16,7 +16,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -77,6 +77,14 @@ class DownscalingDataset(torch.utils.data.Dataset, ABC):
     def image_shape(self) -> Tuple[int, int]:
         """Get the (height, width) of the data (same for input and output)."""
         pass
+
+    def previous_index(self, pos: int) -> Optional[int]:
+        """Sample position of the temporal predecessor of ``pos`` (the same field one step
+        earlier on its trajectory/timeline), or ``None`` when there is no contiguous
+        predecessor (sequence start, forecast-run boundary, or an excluded gap). Used for
+        autoregressive temporal conditioning; datasets that don't support it return ``None``.
+        """
+        return None
 
     def normalize_input(self, x: np.ndarray) -> np.ndarray:
         """Convert input from physical units to normalized data."""

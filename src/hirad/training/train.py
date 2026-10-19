@@ -208,6 +208,7 @@ def main(cfg: DictConfig) -> None:
                                             songunet_checkpoint_level,
                                             use_patching,
                                             cfg.model.get("hr_mean_conditioning", False),
+                                            cfg.model.get("prev_hr_conditioning", False),
                                             cfg.logging.get("method", None)
                                             )
 
@@ -288,6 +289,8 @@ def main(cfg: DictConfig) -> None:
         loss_fn = ResidualLoss(
             regression_net=regression_net,
             hr_mean_conditioning=cfg.model.hr_mean_conditioning,
+            prev_hr_conditioning=cfg.model.get("prev_hr_conditioning", False),
+            prev_hr_dropout_prob=cfg.training.hp.get("prev_hr_dropout_prob", 0.0),
         )
     elif cfg.model.name == "regression":
         loss_fn = RegressionLoss()
@@ -387,7 +390,7 @@ def main(cfg: DictConfig) -> None:
                         ):
                             with nvtx.annotate("loading data", color="green"):
                                 tick_read_start_time = time.time()
-                                img_clean, img_lr, date_embedding, lead_time_label = training_manager.load_and_preprocess_batch(dataset_iterator)
+                                img_clean, img_lr, date_embedding, lead_time_label, prev_hr, has_prev = training_manager.load_and_preprocess_batch(dataset_iterator)
                                 tick_read_time = time.time() - tick_read_start_time
                             loss_fn_kwargs = {
                                 "net": model,
@@ -405,6 +408,9 @@ def main(cfg: DictConfig) -> None:
 
                             if lead_time_label is not None:
                                 loss_fn_kwargs["lead_time_label"] = lead_time_label
+                            if prev_hr is not None:
+                                loss_fn_kwargs["prev_hr"] = prev_hr
+                                loss_fn_kwargs["has_prev"] = has_prev
                             if use_patch_grad_acc:
                                 loss_fn.y_mean = None
 

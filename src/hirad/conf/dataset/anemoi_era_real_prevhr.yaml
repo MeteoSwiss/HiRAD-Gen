@@ -1,0 +1,27 @@
+type: anemoi_era5_real
+# ERA5 analysis -> RealCH1 with previous-timestep target served for temporal conditioning
+# (provide_prev_target=True). Otherwise identical to anemoi_era_real. The predecessor is the
+# previous timestep on the continuous timeline, valid only if contiguous (no exclude-window gap).
+input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-1h-v2-with-era51.zarr'
+target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
+input_channel_names: [2t, 10u, 10v, tcw, t_850, z_850, u_850, v_850, t_500, z_500, u_500, v_500, tp]
+output_channel_names: [2t, 10u, 10v, tp]
+static_channel_names: ['FIS']
+transform_channels: ['tp-box_cox_025']
+transform_input_means: {'tp-box_cox_025': -3.815209745618941}
+transform_input_stdevs: {'tp-box_cox_025': 0.22851179478814418}
+transform_output_means: {'tp-box_cox_025': -3.923594846877984}
+transform_output_stdevs: {'tp-box_cox_025': 0.19256625704644262}
+n_month_hour_channels: 4
+start_date: '2005-01-02'
+end_date: '2020-12-31'
+trim_edge: 41
+# Serve the previous timestep's target field for temporal (previous-HR) conditioning.
+provide_prev_target: True
+validation: True
+validation_start_date: '2021-01-01'
+validation_end_date: '2021-12-31'
+# Optional single window carved out of [start_date, end_date] for non-contiguous
+# training ranges (e.g. cross-validation folds). null = no exclusion.
+exclude_start_date: null
+exclude_end_date: null

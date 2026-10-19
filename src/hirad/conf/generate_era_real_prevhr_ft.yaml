@@ -1,0 +1,18 @@
+hydra:
+  job:
+    chdir: true
+    name: generation_era_real_prevhr_ft
+  run:
+    dir: ./outputs/generation/${hydra:job.name}
+
+defaults:
+  - dataset/anemoi_era_real_inference
+  - sampler/stochastic
+  - generation/era_real_prevhr_ft
+  - _self_
+
+# Override tp box-cox OUTPUT stats to the cv1 training values (the inference dataset ships stats
+# for an older checkpoint) so denormalized tp is on the right scale.
+dataset:
+  transform_output_means: {'tp-box_cox_025': -3.923594846877984}
+  transform_output_stdevs: {'tp-box_cox_025': 0.19256625704644262}

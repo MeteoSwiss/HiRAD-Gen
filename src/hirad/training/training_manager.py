@@ -53,6 +53,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 songunet_checkpoint_level: int,
                 use_patching: bool,
                 hr_mean_conditioning: bool,
+                prev_hr_conditioning: bool,
                 logging_method: str,
                 ):
         super().__init__(dist, logger)
@@ -69,16 +70,42 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         self.use_apex_gn = use_apex_gn
         self.use_patching = use_patching
         self.hr_mean_conditioning = hr_mean_conditioning
+        self.prev_hr_conditioning = prev_hr_conditioning
         self.logging_method = logging_method
 
+
+    def _preprocess_hr_target(self, img):
+        """Regrid/reshape, trim, flip and output-normalize a high-res target field, on device.
+        Same pipeline for the clean target and the previous-step history field."""
+        if self.is_real_target:
+            img = regrid_icon_to_rotlatlon(
+                img.to(self.dist.device, dtype=self.input_dtype),
+                self.dataset.regrid_indices_real,
+                self.dataset.regrid_weights_real,
+            )
+            if self.dataset.trim_edge > 0:
+                img = img[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,
+                                self.dataset.trim_edge:-self.dataset.trim_edge]
+            img = img.flip(-2)
+        else:
+            img = img.to(self.dist.device, dtype=self.input_dtype)
+            img = img.reshape(*img.shape[:-1], *self.img_shape).flip(-2)
+        return self.dataset.normalize_output(img)
 
     def load_and_preprocess_batch(self, dataset_iterator):
         """Load a batch from the iterator and preprocess it (interpolate, normalize, move to device)."""
         img_clean, img_lr, *rest = next(dataset_iterator)
-        # Datasets that condition on lead time append an integer lead-step label as the
-        # last element (see AnemoiForecastDataset.provides_lead_time). Everything before it
-        # is the date info for make_time_grids (a date string for anemoi, or hour+month for
-        # era5), passed through unchanged.
+        # Datasets expose optional trailing fields in a fixed order (see the anemoi datasets'
+        # __getitem__): the previous-target pair (prev_target, has_prev) is always last, then an
+        # integer lead-step label, then the date info for make_time_grids (a date string for
+        # anemoi, or hour+month for era5). Pop them from the end in reverse; whatever remains is
+        # the date info, passed through unchanged.
+        prev_target = None
+        has_prev = None
+        if getattr(self.dataset, "provides_prev_target", False):
+            has_prev = rest[-1].to(self.dist.device)
+            prev_target = rest[-2]
+            rest = rest[:-2]
         lead_time_label = None
         if getattr(self.dataset, "provides_lead_time", False):
             lead_time_label = rest[-1].to(self.dist.device)
@@ -91,21 +118,9 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         ).reshape(*img_lr.shape[:-1], *self.img_shape).flip(-2)
         img_lr = self.dataset.normalize_input(img_lr)
 
-        # Process high-res target
-        if self.is_real_target:
-            img_clean = regrid_icon_to_rotlatlon(
-                img_clean.to(self.dist.device, dtype=self.input_dtype),
-                self.dataset.regrid_indices_real,
-                self.dataset.regrid_weights_real,
-            )
-            if self.dataset.trim_edge > 0:
-                img_clean = img_clean[:, :, self.dataset.trim_edge:-self.dataset.trim_edge,
-                                            self.dataset.trim_edge:-self.dataset.trim_edge]
-            img_clean = img_clean.flip(-2)
-        else:
-            img_clean = img_clean.to(self.dist.device, dtype=self.input_dtype)
-            img_clean = img_clean.reshape(*img_clean.shape[:-1], *self.img_shape).flip(-2)
-        img_clean = self.dataset.normalize_output(img_clean)
+        # Process high-res target (and the previous-step history field the same way)
+        img_clean = self._preprocess_hr_target(img_clean)
+        prev_hr = self._preprocess_hr_target(prev_target) if prev_target is not None else None
 
         # Date embedding
         date_embedding = None
@@ -120,11 +135,17 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
             img_lr = img_lr.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
                 memory_format=torch.channels_last
             )
+            if prev_hr is not None:
+                prev_hr = prev_hr.to(self.dist.device, dtype=self.input_dtype, non_blocking=True).to(
+                    memory_format=torch.channels_last
+                )
         else:
             img_clean = img_clean.to(self.dist.device).to(self.input_dtype).contiguous()
             img_lr = img_lr.to(self.dist.device).to(self.input_dtype).contiguous()
+            if prev_hr is not None:
+                prev_hr = prev_hr.to(self.dist.device).to(self.input_dtype).contiguous()
 
-        return img_clean, img_lr, date_embedding, lead_time_label
+        return img_clean, img_lr, date_embedding, lead_time_label, prev_hr, has_prev
 
     def get_static_data(self):
         """Get static data from the dataset, preprocess it and move to device."""
@@ -163,6 +184,10 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         img_in_channels = n_input_channels + n_static_channels + self.n_month_hour_channels
         if self.hr_mean_conditioning:
             img_in_channels += n_output_channels
+        if self.prev_hr_conditioning and cfg_model_name != "regression":
+            # Previous-HR history conditioning (temporal correlation); diffusion stage only.
+            # Shaped like an extra output field, concatenated as the last block of y_lr.
+            img_in_channels += n_output_channels
         if self.use_patching:
             img_in_channels += n_input_channels + n_static_channels
 
@@ -199,6 +224,21 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         else:  # diffusion or patched diffusion
             model = EDMPrecondSuperResolution(img_in_channels=img_in_channels, **model_args)
         model_args["img_in_channels"] = img_in_channels
+
+        if self.prev_hr_conditioning and cfg_model_name != "regression":
+            # The history block is concatenated into the CROPPED conditioning (the `input` path of
+            # patching), right after [regression-mean?, low-res, static], so each patch gets its own
+            # region's previous-HR field aligned with the target. Record where it lands in the
+            # first-conv input (dim 1) so a warm start zero-inits exactly that block and shifts the
+            # pretrained channels after it (see load_model_weights_partial). First-conv input order:
+            # [noisy, y_mean?, low-res, static, HIST, low-res(interp), static(interp), date, pos_embd].
+            hr_mean_ch = n_output_channels if self.hr_mean_conditioning else 0
+            offset = img_out_channels + hr_mean_ch + n_input_channels + n_static_channels
+            if not self.use_patching:
+                # Non-patched: nothing is cropped; history is appended after the date embedding.
+                offset += self.n_month_hour_channels
+            model.prev_hr_channels = n_output_channels
+            model.prev_hr_insert_offset = offset
 
         return model, model_args
 
@@ -246,7 +286,7 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
         valid_loss_accum = 0
         with torch.no_grad():
             for _ in range(validation_steps):
-                img_clean_valid, img_lr_valid, date_embedding, lead_time_label = self.load_and_preprocess_batch(validation_dataset_iterator)
+                img_clean_valid, img_lr_valid, date_embedding, lead_time_label, prev_hr, has_prev = self.load_and_preprocess_batch(validation_dataset_iterator)
 
                 loss_valid_kwargs = {
                     "net": model,
@@ -259,6 +299,9 @@ class TrainingManagerCorrDiff(TrainingManagerBase):
                 }
                 if lead_time_label is not None:
                     loss_valid_kwargs["lead_time_label"] = lead_time_label
+                if prev_hr is not None:
+                    loss_valid_kwargs["prev_hr"] = prev_hr
+                    loss_valid_kwargs["has_prev"] = has_prev
                 if use_patch_grad_acc is not None:
                     loss_valid_kwargs["use_patch_grad_acc"] = use_patch_grad_acc
                 if use_patch_grad_acc:

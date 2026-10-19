@@ -200,6 +200,8 @@ class ResidualLoss:
         P_std: float = 1.2,
         sigma_data: float = 0.5,
         hr_mean_conditioning: bool = False,
+        prev_hr_conditioning: bool = False,
+        prev_hr_dropout_prob: float = 0.0,
     ):
         """
         Arguments
@@ -235,6 +237,10 @@ class ResidualLoss:
         self.P_std = P_std
         self.sigma_data = sigma_data
         self.hr_mean_conditioning = hr_mean_conditioning
+        # Previous-HR (temporal) conditioning, diffusion stage only. prev_hr_dropout_prob is the
+        # classifier-free-guidance drop rate for the history channels (null -> no-history mode).
+        self.prev_hr_conditioning = prev_hr_conditioning
+        self.prev_hr_dropout_prob = prev_hr_dropout_prob
         self.y_mean = None
 
     def get_noise_params(self, y: torch.Tensor) -> torch.Tensor:
@@ -263,6 +269,20 @@ class ResidualLoss:
         n = torch.randn_like(y) * sigma
         return n, sigma, weight
 
+    def _build_history(self, prev_hr, has_prev, y):
+        """Teacher-forced history conditioning for the diffusion stage: the normalized previous
+        HR field, zeroed where there is no real predecessor (has_prev == 0) and, with probability
+        prev_hr_dropout_prob, randomly dropped (classifier-free style) so the model keeps a
+        working no-history mode and the history strength can be guided at inference."""
+        hist = prev_hr.to(y.dtype)
+        mask = torch.ones(hist.shape[0], device=hist.device, dtype=hist.dtype)
+        if has_prev is not None:
+            mask = mask * has_prev.reshape(-1).to(hist.dtype)
+        if self.prev_hr_dropout_prob > 0:
+            keep = torch.rand(hist.shape[0], device=hist.device) >= self.prev_hr_dropout_prob
+            mask = mask * keep.to(hist.dtype)
+        return hist * mask.view(-1, *([1] * (hist.ndim - 1)))
+
     def __call__(
         self,
         net: torch.nn.Module,
@@ -277,6 +297,8 @@ class ResidualLoss:
         ] = None,
         use_patch_grad_acc: bool = False,
         use_apex_gn: bool = False,
+        prev_hr: Optional[torch.Tensor] = None,
+        has_prev: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Calculate and return the loss for denoising score matching.
@@ -466,6 +488,16 @@ class ResidualLoss:
 
         # print(f"Shape of y_lr after static channels diffusion: y_lr {y_lr.shape}")
 
+        # Previous-HR history conditioning: the (masked) normalized previous HR field, appended
+        # as the LAST block of the conditioning so it lands just before the model's positional /
+        # lead-time embeddings (keeps the warm-start alignment; see create_model). In patched mode
+        # it rides the interpolated-conditioning (img_lr) path so patching.apply crops it per patch.
+        hist = (
+            self._build_history(prev_hr, has_prev, y)
+            if self.prev_hr_conditioning and prev_hr is not None
+            else None
+        )
+
         # patchified training
         # conditioning: cat(y_mean, y_lr, input_interp, pos_embd), 4+12+100+4
         # removed patch_embedding_selector due to compilation issue with dynamo.
@@ -486,21 +518,30 @@ class ResidualLoss:
                 if use_apex_gn:
                     date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
                 else:
-                    date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous() 
+                    date_embedding = date_embedding.to(img_lr.dtype, non_blocking=True).contiguous()
                 img_lr = torch.cat((img_lr, date_embedding), dim=1)
             # print(f"Shape of img_lr after date embedding diffusion patching: img_lr {img_lr.shape}")
+            # History is a spatially-varying HR field: it must be CROPPED with the patch (the
+            # `input`=y_lr path, aligned with the residual target), NOT bilinearly downsampled to a
+            # whole-domain thumbnail as global context (the `additional_input`=img_lr path, which is
+            # where the smooth low-res/date/static context belongs). Add it to y_lr, like y_mean.
+            if hist is not None:
+                y_lr = torch.cat((y_lr, hist), dim=1)
             y_lr_patched = patching.apply(input=y_lr, additional_input=img_lr)
 
             y = y_patched
             y_lr = y_lr_patched
 
-        elif date_embedding is not None:
-            date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *y_lr.shape[2:])
-            if use_apex_gn:
-                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
-            else:
-                date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).contiguous() 
-            y_lr = torch.cat((y_lr, date_embedding), dim=1)
+        else:
+            if date_embedding is not None:
+                date_embedding = date_embedding[:, :, None, None].expand(*date_embedding.shape[:2], *y_lr.shape[2:])
+                if use_apex_gn:
+                    date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).to(memory_format=torch.channels_last)
+                else:
+                    date_embedding = date_embedding.to(y_lr.dtype, non_blocking=True).contiguous()
+                y_lr = torch.cat((y_lr, date_embedding), dim=1)
+            if hist is not None:
+                y_lr = torch.cat((y_lr, hist), dim=1)
 
         # print(f"Final shapes before noise addition: y {y.shape} y_lr {y_lr.shape}")
 

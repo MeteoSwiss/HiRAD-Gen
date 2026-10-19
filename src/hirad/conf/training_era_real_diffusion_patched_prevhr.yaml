@@ -1,0 +1,56 @@
+# Temporal-correlation training (default recipe): ERA5 analysis -> RealCH1 patched diffusion with
+# previous-HR conditioning, teacher-forced + classifier-free-guidance dropout. Trained FROM SCRATCH
+# (no warm start): the diffusion, incl. the prev-HR input channels, is randomly initialised and
+# trained from step 0 so the history channels get real gradient signal and the model co-adapts to
+# use history. (A gentle warm-start fine-tune from the baseline diffusion checkpoint instead left
+# the prev-HR channels near zero, so from-scratch is the validated recipe.)
+# The residual loss still conditions on the pretrained cv1 regression mean.
+# Wired to the cv1 fold (train 2005-01-02..2019-12-31, validate 2022). _self_ is LAST so the
+# overrides below win over the composed training group.
+defaults:
+  # Dataset (serves the previous timestep's target for temporal conditioning)
+  - dataset/anemoi_era_real_prevhr
+
+  # Model (patched diffusion residual + prev-HR conditioning; no lead time for analysis)
+  - model/era_real_diffusion_patched_prevhr
+
+  - model_size/normal_real
+
+  # Training (base hyperparameters; overridden below)
+  - training/era_real_diffusion_patched
+
+  # Logging
+  - logging/era_real_diffusion
+
+  - _self_
+
+hydra:
+  job:
+    chdir: true
+    name: diffusion_era_real_prevhr
+  run:
+    dir: /capstor/scratch/cscs/pstamenk/outputs/training/${hydra:job.name}
+
+# cv1 split (contiguous train 2005-2019, validate 2022).
+dataset:
+  start_date: '2005-01-02'
+  end_date: '2019-12-31'
+  validation_start_date: '2022-01-01'
+  validation_end_date: '2022-12-31'
+
+training:
+  hp:
+    # Classifier-free-guidance dropout for the history channels (null -> no-history mode).
+    # 0.25 to limit the model's reliance on prev-HR (history copying suppresses the diffusion's
+    # generative/small-scale power); within the safe CFG band (Ho & Salimans 2022: 0.1-0.2 best,
+    # 0.5 degrades).
+    prev_hr_dropout_prob: 0.25
+    # From-scratch schedule inherited from training/era_real_diffusion_patched
+    # (lr 2e-4, 1M rampup, decay 0.7, training_duration 8M). No finetune_checkpoint_path.
+  io:
+    # Pretrained cv1 regression (residual-loss conditioner). Diffusion trained from scratch.
+    regression_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/regression
+    # Optional warm start (NOT currently used): uncomment finetune_checkpoint_path to fine-tune a
+    # baseline diffusion checkpoint instead of training from scratch (the partial loader zero-inits
+    # the new prev-HR channels). From-scratch is the validated recipe, so this is left off.
+    # finetune_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/diffusion

@@ -1,0 +1,17 @@
+name: patched_diffusion
+  # Name of the preconditioner
+hr_mean_conditioning: True
+  # High-res mean (regression's output) as additional condition
+prev_hr_conditioning: True
+  # Previous-step high-res prediction as additional condition (temporal correlation).
+  # Analysis case: the predecessor is the previous timestep on the continuous timeline.
+
+model_args:
+  gridtype: "learnable"
+  # Type of positional grid to use: 'sinusoidal', 'learnable', 'linear'.
+  # Controls how positional information is encoded.
+  N_grid_channels: 100
+  # Number of channels for positional grid embeddings
+  embedding_type: "positional"
+  # Type of timestep embedding: 'positional' for DDPM++, 'fourier' for NCSN++,
+  # 'zero' for none

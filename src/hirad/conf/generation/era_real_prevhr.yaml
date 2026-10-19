@@ -1,0 +1,43 @@
+# Generation with previous-HR temporal conditioning (autoregressive rollout), era_real.
+# Single member + single GPU so the carried previous prediction is well-defined (rollout
+# currently assumes one rank). Warm-started smoke/fine-tuned diffusion checkpoint must have
+# the prev-HR input channels (img_in 144); prev_hr_conditioning tells the loop to supply them.
+num_ensembles: 1
+seed_batch_size: 1
+inference_mode: all
+
+randomize: True
+random_seed: 2578458
+
+# Patching parameters (match training/baseline)
+patching: True
+patch_shape_x: 384
+patch_shape_y: 384
+overlap_pix: 4
+boundary_pix: 2
+
+hr_mean_conditioning: True
+# Previous-HR temporal conditioning: supply the prev-HR channels every step, and carry the
+# model's own previous prediction across temporally-adjacent steps (autoregressive rollout).
+prev_hr_conditioning: True
+rollout: True
+
+# A contiguous hourly day in cv1's held-out year (2022) so consecutive steps form one rollout.
+times_range: ['20221015-0000','20221015-1100',1]
+times: null
+has_lead_time: False
+
+perf:
+  force_fp16: False
+  use_torch_compile: False
+  num_writer_workers: 8
+  enable_timing: True
+
+io:
+  # Diffusion: the prev-HR (smoke/fine-tuned) checkpoint with img_in 144.
+  res_ckpt_path: /capstor/scratch/cscs/pstamenk/outputs/training/diffusion_era_real_prevhr_smoke/checkpoints_patched_diffusion/
+  # Regression: the cv1 mean predictor (unchanged by temporal conditioning).
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/regression/
+  output_path: .
+  output_format: 'torch'
+  grib_template_path: '/capstor/store/cscs/pasc/c38/evalml/resources/inference/templates'
