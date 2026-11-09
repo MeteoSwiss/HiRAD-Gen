@@ -230,9 +230,16 @@ def diffusion_step(
         additional_args["static_channels"] = static_channels
     if date_embedding is not None:
         additional_args["date_embedding"] = date_embedding
-    if prev_hr is not None:
-        additional_args["prev_hr"] = prev_hr
     additional_args["use_apex_gn"] = use_apex_gn
+
+    # Previous-HR history conditioning is either a single shared field (shape (1, C, H, W): the
+    # null token, or a teacher-forced ground-truth field broadcast to every member) or one field
+    # per ensemble member (shape (E_local, C, H, W)) for per-member autoregressive rollout, where
+    # each member conditions on its OWN previous prediction. In the per-member case the batches of
+    # seeds below consume their slice of prev_hr in generation order (the same order the outputs are
+    # concatenated into image_res), so member i stays matched to its own history across steps.
+    per_member_prev_hr = prev_hr is not None and prev_hr.shape[0] != 1
+    member_offset = 0
 
     _t = _sync_t if _timings is not None else (lambda: 0.0)
 
@@ -247,6 +254,13 @@ def diffusion_step(
                 raise ValueError(
                     f"Batch size {batch_size} does not match img_lr batch size {img_lr.shape[0]}"
                 )
+
+            if prev_hr is not None:
+                additional_args["prev_hr"] = (
+                    prev_hr[member_offset:member_offset + batch_size]
+                    if per_member_prev_hr else prev_hr
+                )
+                member_offset += batch_size
 
             # Initialize random generator, and generate latents
             _t0 = _t()

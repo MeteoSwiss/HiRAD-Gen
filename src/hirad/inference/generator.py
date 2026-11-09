@@ -160,7 +160,13 @@ class Generator():
             else:
                 image_out = image_reg[0:1,::] + image_res
 
-            # Gather tensors on rank 0
+            # image_out is this rank's LOCAL ensemble (its own members, shape (E_local, C, H, W)).
+            # It is returned as a third value for autoregressive rollout history: members are split
+            # across ranks with a split that is stable across steps, so each rank can carry its own
+            # members' predictions forward without any gather/broadcast (see generate.py rollout).
+            image_out_local = image_out
+
+            # Gather tensors on rank 0 (full ensemble, for writing output only).
             if self.dist.world_size > 1:
                 if self.dist.rank == 0:
                     gathered_tensors = [
@@ -185,11 +191,11 @@ class Generator():
 
                 if self.dist.rank == 0:
                     if self.inference_mode != "regression":
-                        return torch.cat(gathered_tensors), image_reg[0:1,::]
-                    return torch.cat(gathered_tensors)[0:1,::], None
+                        return torch.cat(gathered_tensors), image_reg[0:1,::], image_out_local
+                    return torch.cat(gathered_tensors)[0:1,::], None, image_out_local
                 else:
-                    return None, None
+                    return None, None, image_out_local
             else:
                 if self.inference_mode != "regression":
-                    return image_out, image_reg[0:1,::]
-                return image_out, None
+                    return image_out, image_reg[0:1,::], image_out_local
+                return image_out, None, image_out_local

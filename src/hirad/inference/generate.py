@@ -324,11 +324,15 @@ def main(cfg: DictConfig) -> None:
                 # dataset (needs provide_prev_target; a diagnostic to separate exposure bias from
                 # a weak/unused conditioning), "zeros" = always null.
                 history_source = cfg.generation.get("history_source", "rollout")
-                if rollout and dist.world_size > 1:
-                    raise NotImplementedError(
-                        "Autoregressive rollout currently assumes a single rank (the carried "
-                        "previous prediction lives on rank 0 only). Run generation on 1 GPU."
-                    )
+                # Periodic rollout reset: when set (in hours), force the null (no-history) token at
+                # the start of each period so the autoregressive history cannot accumulate error
+                # indefinitely. 24 -> reset at each day's first hour (00:00); 12 -> 00/12;
+                # 6 -> 00/06/12/18. None/0 -> continuous rollout (no reset).
+                rollout_reset_hours = cfg.generation.get("rollout_reset_hours", None)
+                # Autoregressive rollout supports multi-rank: the ensemble is split across ranks
+                # (Generator.get_rank_batches) and all ranks step the same time sequence in
+                # lockstep. The carried history (ensemble mean) only exists on rank 0 after the
+                # gather, so it is computed there and broadcast to all ranks each step (below).
                 prev_out = None
                 prev_pos = None
 
@@ -392,6 +396,12 @@ def main(cfg: DictConfig) -> None:
                     prev_hr = None
                     if prev_hr_conditioning:
                         cur_pos = sampler[time_index]
+                        # Reset point? times[cur_pos] is a 'YYYYMMDD-HHMM' string; reset when the
+                        # hour-of-day aligns with the period (e.g. 24 -> every day at 00:00).
+                        reset_now = False
+                        if rollout_reset_hours:
+                            cur_hour = int(times[cur_pos].split('-')[1][:2])
+                            reset_now = (cur_hour % rollout_reset_hours == 0)
                         if history_source == "teacher_forced" and prev_target_raw is not None:
                             # Ground-truth previous target, preprocessed to the model's normalized
                             # output space exactly like training (regrid/trim/flip/normalize_output).
@@ -407,10 +417,10 @@ def main(cfg: DictConfig) -> None:
                                 ph = prev_target_raw.to(dist.device, dtype=input_dtype)
                                 ph = ph.reshape(*ph.shape[:-1], *dataset.image_shape()).flip(-2)
                             prev_hr = dataset.normalize_output(ph)
-                        elif history_source == "rollout" and rollout and prev_out is not None and dataset.previous_index(cur_pos) == prev_pos:
+                        elif history_source == "rollout" and rollout and prev_out is not None and dataset.previous_index(cur_pos) == prev_pos and not reset_now:
                             prev_hr = prev_out
                         else:
-                            # First step of a segment, no-history mode, or zeros source: the null token.
+                            # First step of a segment/reset period, no-history mode, or zeros source: null token.
                             prev_hr = torch.zeros(
                                 (1, img_out_channels, *image_lr.shape[-2:]),
                                 device=dist.device, dtype=input_dtype,
@@ -419,7 +429,7 @@ def main(cfg: DictConfig) -> None:
                             prev_hr = prev_hr.to(memory_format=torch.channels_last)
 
                     t_gen_start = _t()
-                    image_out, image_reg = generator.generate(
+                    image_out, image_reg, image_out_local = generator.generate(
                                                 image_lr,
                                                 static_channels=static_channels,
                                                 date_embedding=date_embedding,
@@ -432,9 +442,13 @@ def main(cfg: DictConfig) -> None:
                     t_gen_end = _t()
 
                     if rollout and prev_hr_conditioning:
-                        # Carry this step's prediction (normalized, model-internal orientation) as
-                        # the next step's history, reduced over the ensemble to a single field.
-                        prev_out = image_out.mean(dim=0, keepdim=True) if image_out is not None else None
+                        # Carry each ensemble member's OWN prediction (normalized, model-internal
+                        # orientation) as that member's history next step, so every member forms its
+                        # own coherent autoregressive trajectory rather than all members sharing the
+                        # (blurry) ensemble mean. image_out_local is this rank's own members only
+                        # (shape (E_local, C, H, W)); the ensemble split across ranks is stable across
+                        # steps, so each rank carries its slice forward with no gather/broadcast.
+                        prev_out = image_out_local
                         prev_pos = sampler[time_index]
 
                     t_postproc_start = _t()
