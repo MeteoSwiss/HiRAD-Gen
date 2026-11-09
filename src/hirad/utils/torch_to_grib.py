@@ -27,6 +27,9 @@ Usage:
                               (default: src/hirad/conf/dataset/anemoi_era_real_inference.yaml)
         --templates PATH     GRIB template directory
                               (default: ~/evalml/resources/inference/templates)
+        --grib-out-dir PATH  write GRIB output under this directory instead of
+                              TORCH_OUT_DIR (e.g. to avoid writing into another
+                              user's output tree); default: TORCH_OUT_DIR
         --skip-existing      skip a run if its GRIB output file already exists
                               (lets a batch be safely re-run/resumed)
 """
@@ -39,7 +42,7 @@ from omegaconf import OmegaConf
 
 from hirad.datasets import get_dataset_and_sampler_inference
 from hirad.distributed import DistributedManager
-from hirad.utils.inference_utils import convert_torch_to_grib, expected_grib_file
+from hirad.utils.inference_utils import convert_torch_to_grib, expected_grib_files
 
 DEFAULT_DATASET_CFG = 'src/hirad/conf/dataset/anemoi_era_real_inference.yaml'
 DEFAULT_TEMPLATES = os.path.expanduser('~/evalml/resources/inference/templates')
@@ -54,6 +57,7 @@ def parse_args():
     parser.add_argument('--base-time', nargs='*', default=['all'], help="Forecast init time(s) to convert, or 'all' (default); ignored if TORCH_OUT_DIR isn't base_time-nested")
     parser.add_argument('--dataset-cfg', default=DEFAULT_DATASET_CFG, help="Dataset config used for channel metadata")
     parser.add_argument('--templates', default=DEFAULT_TEMPLATES, help="GRIB template directory")
+    parser.add_argument('--grib-out-dir', default=None, help="Write GRIB output under this directory instead of TORCH_OUT_DIR (default: TORCH_OUT_DIR)")
     parser.add_argument('--skip-existing', action='store_true', help="Skip conversion if the GRIB output directory already exists (default: overwrite)")
     return parser.parse_args()
 
@@ -138,15 +142,15 @@ def main():
             failures.append(label)
             continue
         if args.skip_existing:
-            file_dest = expected_grib_file(args.torch_out_dir, time_step, base_time)
-            if os.path.exists(file_dest):
-                print(f'  [skip] {label}: already exists -> {file_dest}')
+            file_dests = expected_grib_files(args.torch_out_dir, time_step, base_time, grib_output_path=args.grib_out_dir)
+            if all(os.path.exists(file_dest) for file_dest in file_dests):
+                print(f'  [skip] {label}: already exists -> {file_dests[0]}')
                 skipped_existing += 1
                 continue
         try:
-            grib_savedir = convert_torch_to_grib(args.torch_out_dir, time_step, dataset, args.templates, base_time=base_time)
-            print(f'  [ok]   {label} -> {grib_savedir}')
-            grib_savedirs.append(grib_savedir)
+            grib_pred_savedir, grib_regression_pred_savedir, grib_ensemble_mean_savedir, grib_baseline_savedir = convert_torch_to_grib(args.torch_out_dir, time_step, dataset, args.templates, base_time=base_time, grib_output_path=args.grib_out_dir)
+            print(f'  [ok]   {label} -> {grib_pred_savedir} {grib_regression_pred_savedir} {grib_ensemble_mean_savedir} {grib_baseline_savedir}')
+            grib_savedirs.append(grib_pred_savedir)
         except Exception as e:
             print(f'  [fail] {label}: {e}')
             failures.append(label)

@@ -9,9 +9,12 @@ from hirad.utils.inference_utils import (
     calculate_bounds,
     regression_step,
     diffusion_step,
+    save_results,
     save_results_as_torch,
     forecast_run_key_and_step,
     accumulate_tp_channel,
+    accumulate_tp_channels,
+    validate_tp_not_pre_accumulated,
     pad_image,
     get_grib_template,
     save_image_as_grib,
@@ -431,6 +434,77 @@ class TestSaveResultsAsTorch:
 
 
 ############################################################################
+#                               save_results                               #
+############################################################################
+
+
+class TestSaveResults:
+    """Tests for save_results -- specifically its wiring into save_results_as_grib,
+    where a single missing argument once shifted every later positional argument by
+    one slot (grib_regression_pred_savedir silently dropped -> every argument after
+    it, including `dataset` itself, landed in the wrong parameter)."""
+
+    def _mock_savedirs(self, mock_result_dirs):
+        # Five distinct sentinel paths so a shifted argument is caught by identity,
+        # not accidentally matched by two dirs looking alike.
+        mock_result_dirs.return_value = (
+            "TORCH_DIR", "GRIB_PRED_DIR", "GRIB_REGRESSION_DIR", "GRIB_ENSEMBLE_MEAN_DIR", "GRIB_BASELINE_DIR",
+        )
+
+    @patch("hirad.utils.inference_utils.save_results_as_grib")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_grib_savedirs_passed_in_correct_positions(self, mock_result_dirs, mock_save_grib, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        dataset = MagicMock(name="dataset_sentinel")
+        image_pred = np.full((1, 1), 1.0)
+        image_hr = np.full((1, 1), 2.0)
+        image_lr = np.full((1, 1), 3.0)
+        mean_pred = np.full((1, 1), 4.0)
+
+        save_results(
+            str(tmp_path), "20230115-0300", dataset, image_pred, image_hr, image_lr, mean_pred,
+            base_time="20230115-0000", output_format="grib", grib_template_path="tpl",
+        )
+
+        args = mock_save_grib.call_args[0]
+        assert args[0] == "GRIB_PRED_DIR"
+        assert args[1] == "GRIB_REGRESSION_DIR"
+        assert args[2] == "GRIB_ENSEMBLE_MEAN_DIR"
+        assert args[3] == "GRIB_BASELINE_DIR"
+        assert args[4] == "20230115-0300"
+        np.testing.assert_array_equal(args[5], image_hr)
+        np.testing.assert_array_equal(args[6], image_pred)
+        np.testing.assert_array_equal(args[7], image_lr)
+        np.testing.assert_array_equal(args[8], mean_pred)
+        assert args[9] is dataset
+        assert args[10] == "tpl"
+        assert args[11] == "20230115-0000"
+
+    @patch("hirad.utils.inference_utils.save_results_as_grib")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_empty_template_path_raises_before_calling_grib_writer(self, mock_result_dirs, mock_save_grib, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        with pytest.raises(ValueError, match="grib_template_path"):
+            save_results(
+                str(tmp_path), "20230115-0300", MagicMock(), np.zeros((1, 1)), np.zeros((1, 1)), np.zeros((1, 1)),
+                None, output_format="grib", grib_template_path="",
+            )
+        mock_save_grib.assert_not_called()
+
+    @patch("hirad.utils.inference_utils.save_results_as_torch")
+    @patch("hirad.utils.inference_utils._result_dirs")
+    def test_torch_only_does_not_call_grib_writer(self, mock_result_dirs, mock_save_torch, tmp_path):
+        self._mock_savedirs(mock_result_dirs)
+        with patch("hirad.utils.inference_utils.save_results_as_grib") as mock_save_grib:
+            save_results(
+                str(tmp_path), "20230115-0300", MagicMock(), np.zeros((1, 1)), np.zeros((1, 1)), np.zeros((1, 1)),
+                None, output_format="torch", grib_template_path="",
+            )
+        mock_save_grib.assert_not_called()
+        mock_save_torch.assert_called_once()
+
+
+############################################################################
 #                       forecast_run_key_and_step                          #
 ############################################################################
 
@@ -549,6 +623,156 @@ class TestAccumulateTpChannel:
 
         np.testing.assert_array_equal(pred[0, 1], np.full((2, 2), 1.0))
         np.testing.assert_array_equal(pred[1, 1], np.full((2, 2), 2.0))
+
+
+############################################################################
+#                          accumulate_tp_channels                          #
+############################################################################
+
+
+class TestAccumulateTpChannels:
+    """Tests for accumulate_tp_channels -- the orchestration generate.py uses to decide
+    which of prediction/regression/baseline get a tp running total for a given step."""
+
+    def _make_arrays(self, pred_val, reg_val, base_val):
+        pred = np.zeros((3, 2, 2)); pred[1] = pred_val   # tp at output idx 1
+        reg = np.zeros((3, 2, 2)); reg[1] = reg_val
+        base = np.zeros((4, 2, 2)); base[2] = base_val   # tp at input idx 2
+        return pred, reg, base
+
+    def _dicts(self):
+        return {}, {}, {}
+
+    def test_prediction_always_accumulated_when_tp_present(self):
+        pred, reg, base = self._make_arrays(5.0, 0.0, 0.0)
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, None, base, tp_idx=1, input_tp_idx=None, is_forecast=False,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(pred[1], np.full((2, 2), 5.0))
+        assert "r" in cp
+
+    def test_regression_accumulated_in_its_own_dict_when_present(self):
+        pred, reg, base = self._make_arrays(5.0, 2.0, 0.0)
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, reg, base, tp_idx=1, input_tp_idx=None, is_forecast=False,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(reg[1], np.full((2, 2), 2.0))
+        assert "r" in cpr
+        # Prediction and regression are independent running totals.
+        assert cp["r"][1] is not cpr["r"][1]
+
+    def test_regression_skipped_when_mean_pred_is_none(self):
+        pred, _, base = self._make_arrays(5.0, 0.0, 0.0)
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, None, base, tp_idx=1, input_tp_idx=None, is_forecast=False,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        assert cpr == {}
+
+    def test_baseline_accumulated_for_forecast_data(self):
+        pred, _, base = self._make_arrays(5.0, 0.0, 3.0)
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, None, base, tp_idx=1, input_tp_idx=2, is_forecast=True,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(base[2], np.full((2, 2), 3.0))
+        assert "r" in cpb
+
+    def test_baseline_skipped_for_reanalysis(self):
+        pred, _, base = self._make_arrays(5.0, 0.0, 3.0)
+        base_before = base.copy()
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, None, base, tp_idx=1, input_tp_idx=2, is_forecast=False,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(base, base_before)
+        assert cpb == {}
+
+    def test_baseline_skipped_when_input_has_no_tp(self):
+        pred, _, base = self._make_arrays(5.0, 0.0, 3.0)
+        base_before = base.copy()
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, None, base, tp_idx=1, input_tp_idx=None, is_forecast=True,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(base, base_before)
+        assert cpb == {}
+
+    def test_nothing_accumulated_when_output_has_no_tp_and_reanalysis(self):
+        pred, reg, base = self._make_arrays(5.0, 2.0, 3.0)
+        pred_before, reg_before, base_before = pred.copy(), reg.copy(), base.copy()
+        cp, cpr, cpb = self._dicts()
+        accumulate_tp_channels(
+            pred, reg, base, tp_idx=None, input_tp_idx=2, is_forecast=False,
+            run_key="r", step_num=0,
+            cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+        )
+        np.testing.assert_array_equal(pred, pred_before)
+        np.testing.assert_array_equal(reg, reg_before)
+        np.testing.assert_array_equal(base, base_before)
+        assert cp == {} and cpr == {} and cpb == {}
+
+    def test_all_three_accumulate_correctly_across_sequential_steps(self):
+        cp, cpr, cpb = self._dicts()
+        for step, (p, r, b) in enumerate([(1.0, 10.0, 100.0), (2.0, 20.0, 200.0)]):
+            pred, reg, base = self._make_arrays(p, r, b)
+            accumulate_tp_channels(
+                pred, reg, base, tp_idx=1, input_tp_idx=2, is_forecast=True,
+                run_key="run_a", step_num=step,
+                cumulative_precip=cp, cumulative_precip_reg=cpr, cumulative_precip_baseline=cpb,
+            )
+            if step == 1:
+                np.testing.assert_array_equal(pred[1], np.full((2, 2), 3.0))
+                np.testing.assert_array_equal(reg[1], np.full((2, 2), 30.0))
+                np.testing.assert_array_equal(base[2], np.full((2, 2), 300.0))
+
+
+############################################################################
+#                      validate_tp_not_pre_accumulated                     #
+############################################################################
+
+
+class TestValidateTpNotPreAccumulated:
+    """Tests for validate_tp_not_pre_accumulated."""
+
+    def test_noisy_series_with_a_decrease_does_not_raise(self):
+        history = [1.0, 3.0, 2.0, 5.0, 0.5]
+        validate_tp_not_pre_accumulated(history, run_key="run_a")
+
+    def test_strictly_non_decreasing_series_raises(self):
+        history = [0.1, 0.2, 0.2, 0.5, 0.9]
+        with pytest.raises(RuntimeError, match="never decreased"):
+            validate_tp_not_pre_accumulated(history, run_key="run_a")
+
+    def test_short_run_below_threshold_is_not_flagged(self):
+        # Even though it never decreases, too few steps to judge.
+        history = [0.1, 0.2, 0.3]
+        validate_tp_not_pre_accumulated(history, run_key="run_a", min_steps_to_flag=4)
+
+    def test_custom_threshold_respected(self):
+        history = [0.1, 0.2]
+        with pytest.raises(RuntimeError, match="never decreased"):
+            validate_tp_not_pre_accumulated(history, run_key="run_a", min_steps_to_flag=2)
+
+    def test_single_step_never_raises(self):
+        validate_tp_not_pre_accumulated([0.1], run_key="run_a")
+
+    def test_empty_history_never_raises(self):
+        validate_tp_not_pre_accumulated([], run_key="run_a")
 
 
 ############################################################################

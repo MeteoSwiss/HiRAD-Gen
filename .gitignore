@@ -202,3 +202,4 @@ core
 *.nc
 *.err
 mlflow.db
+climetlab_env/*
