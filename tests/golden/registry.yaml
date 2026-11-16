@@ -1,0 +1,235 @@
+# Production checkpoints and how each one is run (data + generation settings).
+#
+# This is the contract the golden tests freeze: for every setup, the captured behaviour of
+# the current code is stored as reference, and any refactor must reproduce it. It is also
+# the source for backfilling a data spec next to each checkpoint (the original training
+# configs were lost to the scratch purge; provenance is noted per setup).
+#
+# Overrides are Hydra override strings applied on top of the named entry config:
+#   setups.<name>.overrides            -> every stage
+#   setups.<name>.<stage>.overrides    -> that stage only
+# Dates are narrowed to small windows so dataset construction stays fast; the windows only
+# select which samples are used, not how they are processed.
+
+common:
+  grib_template_path: /capstor/store/cscs/pasc/c38/evalml/resources/inference/templates
+  num_ensembles: 2
+  seed_batch_size: 2
+  random_seed: 1234
+  train_steps: 2
+
+era_real_generate_window: &era_real_generate_window
+  - "dataset.start_date='2021-07-13'"
+  - "dataset.end_date='2021-07-14'"
+era_real_train_window: &era_real_train_window
+  - "dataset.start_date='2019-07-13'"
+  - "dataset.end_date='2019-07-14'"
+era_real_times: &era_real_times ['20210713-1200', '20210713-1300', '20210713-1400']
+
+setups:
+  era_real:
+    description: ERA5 N320 1h -> REAL-CH1, first production model (2026-03).
+    provenance: >
+      Box-Cox tp OUTPUT stats taken from conf/dataset/anemoi_era_real*.yaml as they were when the
+      checkpoint was trained (before commit 217987a); the current inference config carries the
+      newer training stats, which do not belong to this checkpoint.
+    confidence: medium-high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion
+    overrides:
+      - dataset.transform_output_means.tp-box_cox_025=-3.8121187083242556
+      - dataset.transform_output_stdevs.tp-box_cox_025=0.3345851858215482
+    generate:
+      config: generate_era_real
+      times: *era_real_times
+      overrides: *era_real_generate_window
+    train:
+      regression: {config: training_era_real_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *era_real_train_window}
+
+  era_real_cv1:
+    description: ERA5 -> REAL-CH1 cross-validation fold 1 (train 2005-2019, validate 2022).
+    provenance: memory note era-real-regression-cv-folds; stats = current anemoi_era_real.yaml.
+    confidence: high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/diffusion
+    generate:
+      config: generate_era_real
+      times: *era_real_times
+      overrides: *era_real_generate_window
+    train:
+      regression: {config: training_era_real_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *era_real_train_window}
+
+  era_real_cv2:
+    description: ERA5 -> REAL-CH1 cross-validation fold 2 (train 2010-2024, validate 2007).
+    provenance: memory note era-real-regression-cv-folds; stats = current anemoi_era_real.yaml.
+    confidence: high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2010-2024/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2010-2024/diffusion
+    generate:
+      config: generate_era_real
+      times: *era_real_times
+      overrides: *era_real_generate_window
+    train:
+      regression: {config: training_era_real_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *era_real_train_window}
+
+  era_real_cv3:
+    description: ERA5 -> REAL-CH1 cross-validation fold 3 (2005-2024 excluding 2010-2014).
+    provenance: surviving .hydra/config.yaml of diffusion_era_real_cv3 (scratch).
+    confidence: high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2009-and-2015-2024/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2009-and-2015-2024/diffusion
+    generate:
+      config: generate_era_real
+      times: *era_real_times
+      overrides: *era_real_generate_window
+    train:
+      regression: {config: training_era_real_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *era_real_train_window}
+
+  era_real_cv4:
+    description: ERA5 -> REAL-CH1 cross-validation fold 4 (2005-2024 excluding 2015-2019).
+    provenance: memory note era-real-regression-cv-folds; stats = current anemoi_era_real.yaml.
+    confidence: high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2014-and-2020-2024/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2014-and-2020-2024/diffusion
+    generate:
+      config: generate_era_real
+      times: *era_real_times
+      overrides: *era_real_generate_window
+    train:
+      # Exercises the exclude-window path (sample index map with a gap).
+      regression:
+        config: training_era_real_regression
+        overrides: &cv4_train_window
+          - "dataset.start_date='2019-12-30'"
+          - "dataset.end_date='2020-01-01'"
+          - "dataset.exclude_start_date='2019-12-30T12:00'"
+          - "dataset.exclude_end_date='2019-12-31'"
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *cv4_train_window}
+
+  era_real_tc:
+    description: >
+      ERA5 -> REAL-CH1 diffusion with previous-HR temporal conditioning (cv1 split, from scratch,
+      prev_hr_dropout_prob 0.25); regression is the cv1 regression.
+    provenance: training log prevhr_patchfix_d025.log (full config dump).
+    confidence: high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_tc/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_tc/diffusion
+    generate:
+      # Autoregressive rollout. 12:00 runs without history (null field); 13:00 and 14:00 roll out
+      # each member's own previous prediction; 16:00 follows a gap (15:00 is not generated), so
+      # the rollout restarts from the null field. 4 members in seed batches of 2, so the
+      # per-member history is split across batches (offset > 0), as in production (8 / 4).
+      config: generate_era_real_prevhr
+      times: ['20210713-1200', '20210713-1300', '20210713-1400', '20210713-1600']
+      num_ensembles: 4
+      seed_batch_size: 2
+      overrides: *era_real_generate_window
+    train:
+      # Warm start from the production tc diffusion (history columns included), regression = the
+      # production regression of this setup (byte-identical to era_real_cv1's, whose regression
+      # training is covered there; hence no train_regression stage here). The 2 steps cover both
+      # history branches: step 1 drops it (prev_hr_dropout_prob 0.25), step 2 keeps it.
+      diffusion: {config: training_era_real_diffusion_patched_prevhr, overrides: *era_real_train_window}
+
+  era_real_6h:
+    description: ERA5 N320 6h -> REAL-CH1 (6h-accumulated tp target).
+    provenance: >
+      conf/dataset/anemoi_era_real*_6h.yaml, unchanged since before the checkpoint date. They differ
+      from the 1h configs only in the input store and the tp Box-Cox stats, applied here as overrides
+      (a defaults entry written as `dataset/<name>` cannot be swapped with `dataset=<option>`).
+    confidence: medium
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_6h/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_6h/diffusion
+    overrides:
+      - dataset.input_anemoi_dataset_path=/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-6h-v1-for-single-v2.zarr
+      - dataset.transform_input_means.tp-box_cox_025=-3.6759370671419296
+      - dataset.transform_input_stdevs.tp-box_cox_025=0.3549699264082265
+      - dataset.transform_output_means.tp-box_cox_025=-3.8122792453976
+      - dataset.transform_output_stdevs.tp-box_cox_025=0.3346287581617763
+    generate:
+      config: generate_era_real
+      times: ['20230824-1200', '20230824-1800']
+      overrides:
+        - "dataset.start_date='2023-08-24'"
+        - "dataset.end_date='2023-08-25'"
+    train:
+      regression: {config: training_era_real_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_real_diffusion_patched, overrides: *era_real_train_window}
+
+  era_cosmo:
+    description: ERA5 N320 -> COSMO-2 (regular grid, non-patched diffusion with sinusoidal grid).
+    provenance: conf/dataset/anemoi_era_cosmo*.yaml unchanged since before the checkpoint date.
+    confidence: medium-high
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/era_cosmo/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/era_cosmo/diffusion
+    overrides:
+      # Stale key not accepted by AnemoiDataset; the configs cannot run without removing it.
+      - ~dataset.corrected_tp_path
+    generate:
+      config: generate_era_cosmo
+      times: ['20200829-1200', '20200829-1300', '20200829-1400']
+      overrides:
+        - "dataset.start_date='2020-08-29'"
+        - "dataset.end_date='2020-08-30'"
+    train:
+      regression: {config: training_era_cosmo_regression, overrides: *era_real_train_window}
+      diffusion: {config: training_era_cosmo_diffusion, overrides: *era_real_train_window}
+
+  ifso1280_real:
+    description: IFS-HRES 0.1 deg forecasts (leads 1-12h, no lead-time conditioning) -> REAL-CH1.
+    provenance: >
+      Current conf/dataset/anemoi_ifso1280_real_*.yaml. OPEN QUESTION: inference normalizes the
+      input with the inference store's own statistics (no input_stats_anemoi_dataset_path),
+      not the training store's.
+    confidence: medium
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real/diffusion
+    generate:
+      # Accumulated tp (EvalML GRIB convention) is exercised here, per-step tp in ifso1280_real_ft.
+      config: generate_ifso1280_real
+      times: ['20250301-0100', '20250301-0200', '20250301-0300']
+      overrides:
+        - "dataset.start_date='2025-03-01T00:00'"
+        - "dataset.end_date='2025-03-01T12:00'"
+        - ++generation.accumulate_tp=True
+    train:
+      # The training store (scratch/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr) was
+      # purged on 2026-10-31 (metadata only, reads return NaN). The training path is exercised on
+      # the inference store instead, in a window the target still covers (it ends 2025-03-31).
+      regression:
+        config: training_ifso1280_real_regression_nolt
+        overrides: &ifs_train_window
+          - dataset.input_anemoi_dataset_path=/capstor/scratch/cscs/mmcgloho/ifs-hres-realch1/ifs_hres_traj_202503_202608_1h_90step.zarr
+          - "dataset.start_date='2025-03-01T00:00'"
+          - "dataset.end_date='2025-03-01T12:00'"
+      diffusion: {config: training_ifso1280_real_diffusion_patched_nolt, overrides: *ifs_train_window}
+
+  ifso1280_real_ft:
+    description: Fine-tuned variant of ifso1280_real.
+    provenance: Same dataset configs as ifso1280_real (assumed; training config lost).
+    confidence: medium-low
+    checkpoints:
+      regression: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real_ft/regression
+      diffusion: /capstor/store/cscs/pasc/c38/model_checkpoints/ifso1280_real_ft/diffusion
+    generate:
+      config: generate_ifso1280_real
+      times: ['20250301-0100', '20250301-0200', '20250301-0300']
+      overrides:
+        - "dataset.start_date='2025-03-01T00:00'"
+        - "dataset.end_date='2025-03-01T12:00'"
+    train:
+      regression: {config: training_ifso1280_real_regression_nolt, overrides: *ifs_train_window}
+      diffusion: {config: training_ifso1280_real_diffusion_patched_nolt, overrides: *ifs_train_window}

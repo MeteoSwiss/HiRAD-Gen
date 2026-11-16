@@ -358,17 +358,18 @@ class TestDiffusionStep:
 class TestSaveResultsAsTorch:
     """Tests for save_results_as_torch."""
 
-    def test_creates_output_directory(self, tmp_path):
+    def test_save_results_creates_per_time_step_directory(self, tmp_path):
         output_dir = tmp_path / "results" / "nested"
         image_pred = torch.randn(2, 4, 8, 8)
         image_hr = torch.randn(1, 4, 8, 8)
         image_lr = torch.randn(1, 3, 8, 8)
         mean_pred = torch.randn(1, 4, 8, 8)
 
-        save_results_as_torch(
-            str(output_dir), "step_0", image_pred, image_hr, image_lr, mean_pred
+        save_results(
+            str(output_dir), "20230115-0300", MagicMock(), image_pred, image_hr, image_lr, mean_pred,
+            output_format="torch",
         )
-        assert output_dir.exists()
+        assert (output_dir / "20230115-0300" / "20230115-0300-predictions").is_file()
 
     def test_saves_all_files_with_mean(self, tmp_path):
         image_pred = torch.randn(2, 4, 8, 8)
@@ -377,7 +378,7 @@ class TestSaveResultsAsTorch:
         mean_pred = torch.randn(1, 4, 8, 8)
 
         save_results_as_torch(
-            str(tmp_path), "step_0", image_pred, image_hr, image_lr, mean_pred
+            str(tmp_path), "step_0", image_hr, image_pred, image_lr, mean_pred
         )
 
         assert os.path.isfile(tmp_path / "step_0-regression-prediction")
@@ -391,7 +392,7 @@ class TestSaveResultsAsTorch:
         image_lr = torch.randn(1, 3, 8, 8)
 
         save_results_as_torch(
-            str(tmp_path), "step_1", image_pred, image_hr, image_lr, None
+            str(tmp_path), "step_1", image_hr, image_pred, image_lr, None
         )
 
         assert not os.path.isfile(tmp_path / "step_1-regression-prediction")
@@ -406,7 +407,7 @@ class TestSaveResultsAsTorch:
         mean_pred = torch.randn(1, 4, 8, 8)
 
         save_results_as_torch(
-            str(tmp_path), "t0", image_pred, image_hr, image_lr, mean_pred
+            str(tmp_path), "t0", image_hr, image_pred, image_lr, mean_pred
         )
 
         loaded_pred = torch.load(tmp_path / "t0-predictions", weights_only=True)
@@ -1102,7 +1103,7 @@ class TestSaveResultsAsGrib:
         dataset.output_channels.return_value = output_channels or [ChannelMetadata(name="2t")]
         dataset.input_channels.return_value = []
         dataset.static_channels.return_value = static_channels or []
-        dataset.get_static_data.return_value = (
+        dataset.get_static_data_raw.return_value = (
             static_data if static_data is not None else np.zeros((1, 4, 4))
         )
         return dataset
@@ -1113,7 +1114,7 @@ class TestSaveResultsAsGrib:
         prediction = np.zeros((1, 4, 4))
 
         save_results_as_grib(
-            str(tmp_path), "20230115-0300", np.zeros((1, 4, 4)), prediction, None, None,
+            str(tmp_path), None, None, None, "20230115-0300", np.zeros((1, 4, 4)), prediction, None, None,
             dataset, "tpl", base_time="20230115-0000",
         )
 
@@ -1127,7 +1128,7 @@ class TestSaveResultsAsGrib:
         prediction = np.zeros((1, 4, 4))
 
         save_results_as_grib(
-            str(tmp_path), "20230115-0600", np.zeros((1, 4, 4)), prediction, None, None,
+            str(tmp_path), None, None, None, "20230115-0600", np.zeros((1, 4, 4)), prediction, None, None,
             dataset, "tpl", base_time=None,
         )
 
@@ -1141,7 +1142,7 @@ class TestSaveResultsAsGrib:
         prediction = np.stack([np.full((1, 4, 4), 1.0), np.full((1, 4, 4), 2.0)])  # (2,1,4,4)
 
         save_results_as_grib(
-            str(tmp_path), "20230115-0300", np.zeros((1, 4, 4)), prediction, None, None,
+            str(tmp_path), None, None, None, "20230115-0300", np.zeros((1, 4, 4)), prediction, None, None,
             dataset, "tpl", base_time="20230115-0000",
         )
 
@@ -1156,7 +1157,7 @@ class TestSaveResultsAsGrib:
         prediction = np.zeros((1, height, 4))
 
         save_results_as_grib(
-            str(tmp_path), "20230115-0300", target, prediction, None, None,
+            str(tmp_path), None, None, None, "20230115-0300", target, prediction, None, None,
             dataset, "tpl", base_time="20230115-0000",
         )
 
@@ -1171,7 +1172,7 @@ class TestSaveResultsAsGrib:
         prediction = np.zeros((2, 4, 4))
 
         save_results_as_grib(
-            str(tmp_path), "20230115-0300", np.zeros((2, 4, 4)), prediction, None, None,
+            str(tmp_path), None, None, None, "20230115-0300", np.zeros((2, 4, 4)), prediction, None, None,
             dataset, "tpl", base_time="20230115-0000",
         )
 
@@ -1179,3 +1180,47 @@ class TestSaveResultsAsGrib:
         assert args[5] == channels
         assert args[6] == static
         np.testing.assert_array_equal(args[8], static_data)
+
+class TestDiffusionStepHistory:
+    """Previous-HR conditioning in diffusion_step: a (1, C, H, W) history is shared by every seed
+    batch; an (E, C, H, W) history (per-member autoregressive rollout) is consumed in slices, so
+    member i of the ensemble always gets its own previous prediction."""
+
+    @staticmethod
+    def _run(prev_hr, rank_batches, batch_size):
+        seen = []
+
+        def sampler_fn(net, latents, img_lr, randn_like=None, _timings=None, **kwargs):
+            seen.append(kwargs["prev_hr"])
+            return torch.zeros_like(latents)
+
+        out = diffusion_step(
+            net=MagicMock(),
+            sampler_fn=sampler_fn,
+            img_shape=(8, 8),
+            img_out_channels=4,
+            rank_batches=rank_batches,
+            img_lr=torch.randn(batch_size, 3, 8, 8),
+            rank=0,
+            device=torch.device("cpu"),
+            prev_hr=prev_hr,
+        )
+        return out, seen
+
+    def test_per_member_history_is_sliced_in_generation_order(self):
+        prev_hr = torch.arange(4.0).view(4, 1, 1, 1).expand(4, 4, 8, 8)
+        out, seen = self._run(prev_hr, [[10, 11], [12, 13]], batch_size=2)
+        assert out.shape == (4, 4, 8, 8)
+        assert [s.shape[0] for s in seen] == [2, 2]
+        assert torch.equal(seen[0], prev_hr[0:2])
+        assert torch.equal(seen[1], prev_hr[2:4])
+
+    def test_per_member_history_single_member_batches(self):
+        prev_hr = torch.arange(3.0).view(3, 1, 1, 1).expand(3, 4, 8, 8)
+        _, seen = self._run(prev_hr, [[1], [2], [3]], batch_size=1)
+        assert [s[0, 0, 0, 0].item() for s in seen] == [0.0, 1.0, 2.0]
+
+    def test_shared_history_goes_to_every_batch(self):
+        prev_hr = torch.zeros(1, 4, 8, 8)
+        _, seen = self._run(prev_hr, [[1, 2], [3, 4]], batch_size=2)
+        assert all(s is prev_hr for s in seen)

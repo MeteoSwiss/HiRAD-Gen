@@ -110,7 +110,10 @@ def main(cfg: DictConfig) -> None:
     else:
         raise ValueError(f"Invalid inference mode {cfg.generation.inference_mode}")
 
-    use_apex_gn = True
+    # GroupNorm implementation; None keeps the one recorded in each checkpoint's model_args.json.
+    # Checkpoints load into either implementation (see match_group_norm_layout).
+    gn_override = cfg.generation.perf.get("use_apex_gn", None)
+    use_apex_gn = True if gn_override is None else bool(gn_override)
     # Load diffusion network, move to device, change precision
     if load_net_res:
         res_ckpt_path = cfg.generation.io.res_ckpt_path
@@ -124,9 +127,9 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in diffusion_model_args:
             diffusion_model_args["amp_mode"] = False
-        use_apex_gn = diffusion_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
-        #use_apex_gn = False
-        #diffusion_model_args["use_apex_gn"] = use_apex_gn
+        if gn_override is not None:
+            diffusion_model_args["use_apex_gn"] = bool(gn_override)
+        use_apex_gn = diffusion_model_args.get("use_apex_gn", False)
 
         net_res = EDMPrecondSuperResolution(**diffusion_model_args)
 
@@ -158,9 +161,9 @@ def main(cfg: DictConfig) -> None:
         # Disable AMP for inference (even if model is trained with AMP)
         if "amp_mode" in regression_model_args:
             regression_model_args["amp_mode"] = False
-        use_apex_gn_reg = regression_model_args.get("use_apex_gn", False)  # TODO: restore once apex available
-        #use_apex_gn_reg = False
-        #regression_model_args["use_apex_gn"] = use_apex_gn_reg
+        if gn_override is not None:
+            regression_model_args["use_apex_gn"] = bool(gn_override)
+        use_apex_gn_reg = regression_model_args.get("use_apex_gn", False)
 
         net_reg = UNet(**regression_model_args)
 

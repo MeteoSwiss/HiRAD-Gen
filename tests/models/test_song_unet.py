@@ -916,39 +916,6 @@ class TestSongUNetPosEmbdInitLeadTime:
         assert model.lt_embd is None
 
 
-class TestSongUNetPosEmbdInitProbChannels:
-    """Test prob_channels initialization."""
-
-    def test_prob_channels_creates_scalar(self):
-        model = SongUNetPosEmbd(
-            img_resolution=IMG_RES,
-            in_channels=PE_IN_CH + 2,
-            out_channels=OUT_CH,
-            N_grid_channels=N_GRID,
-            lead_time_mode=True,
-            lead_time_channels=2,
-            lead_time_steps=3,
-            prob_channels=[0, 1],
-            **PE_SMALL_CFG,
-        )
-        assert hasattr(model, "scalar")
-        assert model.scalar.shape == (1, 2, 1, 1)
-
-    def test_empty_prob_channels_no_scalar(self):
-        model = SongUNetPosEmbd(
-            img_resolution=IMG_RES,
-            in_channels=PE_IN_CH + 2,
-            out_channels=OUT_CH,
-            N_grid_channels=N_GRID,
-            lead_time_mode=True,
-            lead_time_channels=2,
-            lead_time_steps=3,
-            prob_channels=[],
-            **PE_SMALL_CFG,
-        )
-        assert not hasattr(model, "scalar")
-
-
 class TestSongUNetPosEmbdIsModule:
     """Test that SongUNetPosEmbd is a proper nn.Module and subclass of SongUNet."""
 
@@ -1249,7 +1216,6 @@ class TestSongUNetPosEmbdForwardLeadTime:
             lead_time_mode=True,
             lead_time_channels=lt_ch,
             lead_time_steps=5,
-            prob_channels=[],
             **PE_SMALL_CFG,
         )
 
@@ -1259,53 +1225,6 @@ class TestSongUNetPosEmbdForwardLeadTime:
         lead_time = torch.zeros(B, dtype=torch.long)
         out = model(x, noise_labels, class_labels, lead_time_label=lead_time)
         assert out.shape == (B, OUT_CH, IMG_RES, IMG_RES)
-
-    def test_lead_time_with_prob_channels_eval(self, noise_labels, class_labels):
-        """In eval mode, prob_channels should go through softmax."""
-        lt_ch = 2
-        out_ch = 4
-        model = SongUNetPosEmbd(
-            img_resolution=IMG_RES,
-            in_channels=PE_IN_CH + lt_ch,
-            out_channels=out_ch,
-            N_grid_channels=N_GRID,
-            lead_time_mode=True,
-            lead_time_channels=lt_ch,
-            lead_time_steps=5,
-            prob_channels=[2, 3],
-            **PE_SMALL_CFG,
-        )
-        model.eval()
-        x = torch.randn(B, IN_CH, IMG_RES, IMG_RES)
-        lead_time = torch.zeros(B, dtype=torch.long)
-        out = model(x, noise_labels, class_labels, lead_time_label=lead_time)
-        assert out.shape == (B, out_ch, IMG_RES, IMG_RES)
-        # Prob channels should sum to 1 (softmax)
-        prob_sum = out[:, [2, 3]].sum(dim=1)
-        torch.testing.assert_close(
-            prob_sum, torch.ones(B, IMG_RES, IMG_RES), atol=1e-5, rtol=1e-5
-        )
-
-    def test_lead_time_with_prob_channels_train(self, noise_labels, class_labels):
-        """In training mode, prob_channels should output raw logits (no softmax)."""
-        lt_ch = 2
-        out_ch = 4
-        model = SongUNetPosEmbd(
-            img_resolution=IMG_RES,
-            in_channels=PE_IN_CH + lt_ch,
-            out_channels=out_ch,
-            N_grid_channels=N_GRID,
-            lead_time_mode=True,
-            lead_time_channels=lt_ch,
-            lead_time_steps=5,
-            prob_channels=[2, 3],
-            **PE_SMALL_CFG,
-        )
-        model.train()
-        x = torch.randn(B, IN_CH, IMG_RES, IMG_RES)
-        lead_time = torch.zeros(B, dtype=torch.long)
-        out = model(x, noise_labels, class_labels, lead_time_label=lead_time)
-        assert out.shape == (B, out_ch, IMG_RES, IMG_RES)
 
     def test_lead_time_with_global_index(self, noise_labels, class_labels):
         """Test that global_index can be used with lead_time_mode."""
@@ -1318,7 +1237,6 @@ class TestSongUNetPosEmbdForwardLeadTime:
             lead_time_mode=True,
             lead_time_channels=lt_ch,
             lead_time_steps=5,
-            prob_channels=[],
             **PE_SMALL_CFG,
         )
         P = 2
@@ -1412,7 +1330,6 @@ class TestPositionalEmbeddingIndexing:
             lead_time_mode=True,
             lead_time_channels=2,
             lead_time_steps=5,
-            prob_channels=[],
             **PE_SMALL_CFG,
         )
         P = 2
@@ -1454,7 +1371,6 @@ class TestPositionalEmbeddingIndexing:
             lead_time_mode=True,
             lead_time_channels=2,
             lead_time_steps=5,
-            prob_channels=[],
             **PE_SMALL_CFG,
         )
         P = 2

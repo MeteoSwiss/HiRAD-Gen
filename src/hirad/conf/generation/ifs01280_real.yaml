@@ -39,6 +39,9 @@ times: null
 has_lead_time: False
 
 perf:
+  use_apex_gn: null
+    # GroupNorm implementation. null: as recorded in the checkpoint's model_args.json (apex for
+    # the production checkpoints); False: PyTorch (bitwise reproducible run to run, ~30% slower).
   force_fp16: False
     # Whether to force fp16 precision for the model. If false, it'll use the precision
     # specified upon training.

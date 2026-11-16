@@ -760,3 +760,46 @@ class TestResidualLossCombined:
         assert y_lr_arg.shape == (B, C_LR+C_HR+static_channels.shape[1]+date_embedding.shape[1], 64, 64)
         assert result.shape == img_clean.shape
         assert (result >= 0).all()
+
+
+class TestResidualLossHistory:
+    """Previous-HR (temporal) conditioning: the history the diffusion net sees in training is the
+    previous target, zeroed where there is no predecessor (has_prev == 0) and dropped with
+    probability prev_hr_dropout_prob (classifier-free style)."""
+
+    @staticmethod
+    def _history(p, has_prev, n=4, seed=0):
+        loss = ResidualLoss(regression_net=_make_dummy_net(), prev_hr_conditioning=True,
+                            prev_hr_dropout_prob=p)
+        prev_hr = torch.arange(1, n + 1, dtype=torch.float64).view(n, 1, 1, 1).expand(n, C_HR, 2, 2)
+        y = torch.zeros(n, C_HR, 2, 2)
+        torch.manual_seed(seed)
+        return prev_hr, loss._build_history(prev_hr, has_prev, y)
+
+    def test_no_predecessor_gives_null_history(self):
+        prev_hr, hist = self._history(0.0, torch.tensor([1, 0, 1, 0]))
+        assert hist.dtype == torch.float32  # cast to the target's dtype
+        assert torch.equal(hist[[0, 2]], prev_hr[[0, 2]].float())
+        assert not hist[[1, 3]].any()
+
+    def test_dropout_one_drops_everything(self):
+        _, hist = self._history(1.0, torch.ones(4, dtype=torch.long))
+        assert not hist.any()
+
+    def test_dropout_mask_is_drawn_per_sample_from_the_global_generator(self):
+        n, p = 64, 0.25
+        prev_hr, hist = self._history(p, None, n=n, seed=3)
+        torch.manual_seed(3)
+        keep = torch.rand(n) >= p
+        assert 0 < keep.sum() < n  # both branches exercised
+        assert torch.equal(hist[keep], prev_hr[keep].float())
+        assert not hist[~keep].any()
+
+    def test_has_prev_and_dropout_combine(self):
+        n, p = 64, 0.25
+        has_prev = torch.arange(n) % 2
+        prev_hr, hist = self._history(p, has_prev, n=n, seed=3)
+        torch.manual_seed(3)
+        keep = (torch.rand(n) >= p) & has_prev.bool()
+        assert torch.equal(hist[keep], prev_hr[keep].float())
+        assert not hist[~keep].any()

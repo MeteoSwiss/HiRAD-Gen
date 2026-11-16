@@ -156,9 +156,13 @@ def _common_patches():
     mock_tm = MagicMock()
     mock_tm.create_model.return_value = (mock_model, {"img_resolution": [H, W]})
     mock_tm.get_static_data.return_value = None
+    # (img_clean, img_lr, date_embedding, lead_time_label, prev_hr, has_prev)
     mock_tm.load_and_preprocess_batch.return_value = (
         torch.randn(B, C_OUT, H, W),
         torch.randn(B, C_IN, H, W),
+        None,
+        None,
+        None,
         None,
     )
     mock_tm.run_validation.return_value = 0.5
@@ -409,6 +413,7 @@ class TestLossFunctionSelection:
         _run_main(cfg, patches)
         patches[f"{_MOD}.ResidualLoss"].assert_called_once_with(
             regression_net=None, hr_mean_conditioning=True,
+            prev_hr_conditioning=False, prev_hr_dropout_prob=0.0,
         )
 
     def test_regression_uses_regression_loss(self):

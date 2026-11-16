@@ -15,4 +15,7 @@ times:
   - 20200722-1900
 
 perf:
+  use_apex_gn: null
+    # GroupNorm implementation. null: as recorded in the checkpoint's model_args.json (apex for
+    # the production checkpoints); False: PyTorch (bitwise reproducible run to run, ~30% slower).
   num_writer_workers: 10

@@ -8,6 +8,8 @@ import torch
 from hirad.utils.checkpoint import (
     _get_checkpoint_filename,
     load_checkpoint,
+    load_model_weights_partial,
+    match_group_norm_layout,
     save_checkpoint,
 )
 
@@ -334,3 +336,133 @@ class TestSaveLoadRoundTrip:
         assert restored_meta == meta
         assert opt2.state_dict()["param_groups"] == opt.state_dict()["param_groups"]
         assert sched2.state_dict()["last_epoch"] == sched.state_dict()["last_epoch"]
+
+
+############################################################################
+#                     GroupNorm layout (apex <-> torch)                     #
+############################################################################
+
+
+class _NormModel(torch.nn.Module):
+    """Parameter names of hirad.models.layers.GroupNorm: ``norm.weight/bias`` always, plus the
+    wrapped apex module's ``norm.gn.weight/bias`` (the ones apex actually uses) when apex=True.
+    Built without apex so the test runs anywhere."""
+
+    def __init__(self, apex: bool):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(2, 4, 1)
+        self.norm = torch.nn.Module()
+        self.norm.weight = torch.nn.Parameter(torch.ones(4))
+        self.norm.bias = torch.nn.Parameter(torch.zeros(4))
+        if apex:
+            self.norm.gn = torch.nn.Module()
+            self.norm.gn.weight = torch.nn.Parameter(torch.ones(4))
+            self.norm.gn.bias = torch.nn.Parameter(torch.zeros(4))
+
+
+def _trained_apex_state():
+    """An apex checkpoint: trained values under norm.gn.*, untouched initial values under norm.*."""
+    state = _NormModel(apex=True).state_dict()
+    state["norm.gn.weight"] = torch.tensor([2.0, 3.0, 4.0, 5.0])
+    state["norm.gn.bias"] = torch.tensor([0.1, 0.2, 0.3, 0.4])
+    return state
+
+
+class TestMatchGroupNormLayout:
+    def test_hirad_group_norm_uses_weight_and_bias_names(self):
+        from hirad.models.layers import GroupNorm
+
+        assert set(GroupNorm(num_channels=8, use_apex_gn=False).state_dict()) == {"weight", "bias"}
+
+    def test_apex_checkpoint_into_torch_model_uses_trained_values(self):
+        state = _trained_apex_state()
+        converted = match_group_norm_layout(state, _NormModel(apex=False))
+        assert set(converted) == {"conv.weight", "conv.bias", "norm.weight", "norm.bias"}
+        assert torch.equal(converted["norm.weight"], state["norm.gn.weight"])
+        assert torch.equal(converted["norm.bias"], state["norm.gn.bias"])
+        assert converted["conv.weight"] is state["conv.weight"]
+
+    def test_torch_checkpoint_into_apex_model_fills_apex_parameters(self):
+        state = _NormModel(apex=False).state_dict()
+        state["norm.weight"] = torch.tensor([2.0, 3.0, 4.0, 5.0])
+        converted = match_group_norm_layout(state, _NormModel(apex=True))
+        assert set(converted) == set(_NormModel(apex=True).state_dict())
+        assert torch.equal(converted["norm.gn.weight"], state["norm.weight"])
+        assert torch.equal(converted["norm.gn.bias"], state["norm.bias"])
+
+    @pytest.mark.parametrize("apex", [True, False])
+    def test_matching_layout_is_unchanged(self, apex):
+        state = _trained_apex_state() if apex else _NormModel(apex=False).state_dict()
+        converted = match_group_norm_layout(state, _NormModel(apex=apex))
+        assert converted.keys() == state.keys()
+        assert all(converted[k] is state[k] for k in state)
+
+    def test_load_checkpoint_apex_checkpoint_into_torch_model(self, tmp_path):
+        apex_model = _NormModel(apex=True)
+        apex_model.load_state_dict(_trained_apex_state())
+        save_checkpoint(str(tmp_path), model=apex_model, epoch=0)
+        model = _NormModel(apex=False)
+        load_checkpoint(str(tmp_path), model=model, epoch=0)
+        assert torch.equal(model.norm.weight.data, apex_model.norm.gn.weight.data)
+        assert torch.equal(model.conv.weight.data, apex_model.conv.weight.data)
+
+    def test_finetune_init_apex_checkpoint_into_torch_model_uses_trained_values(self, tmp_path):
+        """Without the conversion the warm start silently copied the unused initial norm.weight."""
+        apex_model = _NormModel(apex=True)
+        apex_model.load_state_dict(_trained_apex_state())
+        save_checkpoint(str(tmp_path), model=apex_model, epoch=0)
+        model = _NormModel(apex=False)
+        load_model_weights_partial(str(tmp_path), model)
+        assert torch.equal(model.norm.weight.data, apex_model.norm.gn.weight.data)
+        assert torch.equal(model.norm.bias.data, apex_model.norm.gn.bias.data)
+
+
+############################################################################
+#             Warm start into a previous-HR (history) model                 #
+############################################################################
+
+
+class _FirstConv(torch.nn.Module):
+    """Stands in for the U-Net's first conv; the class name selects the checkpoint file, so the
+    pretrained and the grown model must be the same class."""
+
+    def __init__(self, in_channels: int):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(in_channels, 5, 3)
+
+
+class TestWarmStartInputGrowth:
+    def _pretrained(self, tmp_path, in_channels):
+        base = _FirstConv(in_channels)
+        save_checkpoint(str(tmp_path), model=base, epoch=0)
+        return base.conv.weight.detach().clone(), base.conv.bias.detach().clone()
+
+    def test_history_block_is_inserted_at_the_recorded_offset(self, tmp_path):
+        """[conditioning (4) | embeddings (2)] -> [conditioning (4) | history (3) | embeddings (2)]:
+        the embeddings' weights move past the zero-initialised history block."""
+        w0, b0 = self._pretrained(tmp_path, 6)
+        model = _FirstConv(9)
+        model.prev_hr_channels, model.prev_hr_insert_offset = 3, 4
+        load_model_weights_partial(str(tmp_path), model)
+        w = model.conv.weight.detach()
+        assert torch.equal(w[:, :4], w0[:, :4])
+        assert not w[:, 4:7].any()
+        assert torch.equal(w[:, 7:], w0[:, 4:])
+        assert torch.equal(model.conv.bias.detach(), b0)
+
+    def test_without_history_new_channels_are_appended(self, tmp_path):
+        """Lead-time conditioning grows the input at the end: zero-init tail."""
+        w0, _ = self._pretrained(tmp_path, 6)
+        model = _FirstConv(8)
+        load_model_weights_partial(str(tmp_path), model)
+        w = model.conv.weight.detach()
+        assert torch.equal(w[:, :6], w0)
+        assert not w[:, 6:].any()
+
+    def test_history_model_from_history_checkpoint_is_a_plain_copy(self, tmp_path):
+        """The golden tc training stage's case: the checkpoint already has the history columns."""
+        w0, _ = self._pretrained(tmp_path, 9)
+        model = _FirstConv(9)
+        model.prev_hr_channels, model.prev_hr_insert_offset = 3, 4
+        load_model_weights_partial(str(tmp_path), model)
+        assert torch.equal(model.conv.weight.detach(), w0)

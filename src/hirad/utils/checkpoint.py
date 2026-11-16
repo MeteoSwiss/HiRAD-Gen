@@ -32,6 +32,48 @@ scaler = NewType("scaler", GradScaler)
 
 checkpoint_logging = PythonLogger("checkpoint")
 
+_APEX_GN_SUFFIXES = (".gn.weight", ".gn.bias")
+
+
+def match_group_norm_layout(
+    state_dict: Dict[str, torch.Tensor], model: torch.nn.Module
+) -> Dict[str, torch.Tensor]:
+    """Return ``state_dict`` with its GroupNorm parameters stored under the names ``model`` uses.
+
+    ``hirad.models.layers.GroupNorm`` keeps its affine parameters in ``<norm>.weight/bias``.
+    With ``use_apex_gn=True`` it wraps an apex GroupNorm, and the parameters actually used (and
+    trained) are the wrapped module's ``<norm>.gn.weight/bias``; ``<norm>.weight/bias`` are
+    then unused and keep their initial values. Moving the trained parameters to the other name
+    lets a checkpoint trained with one implementation run with the other. The state dict is
+    returned unchanged when its layout already matches the model.
+    """
+    model_keys = set(model.state_dict().keys())
+    converted = dict(state_dict)
+    n_to_torch = n_to_apex = 0
+    for key in state_dict:
+        for suffix in _APEX_GN_SUFFIXES:
+            if not key.endswith(suffix):
+                continue
+            plain = key[: -len(suffix)] + suffix.removeprefix(".gn")
+            if key not in model_keys and plain in model_keys:
+                converted[plain] = converted.pop(key)
+                n_to_torch += 1
+    for key in model_keys:
+        for suffix in _APEX_GN_SUFFIXES:
+            if not key.endswith(suffix):
+                continue
+            plain = key[: -len(suffix)] + suffix.removeprefix(".gn")
+            if key not in state_dict and plain in state_dict:
+                converted[key] = state_dict[plain]
+                n_to_apex += 1
+    if n_to_torch or n_to_apex:
+        direction = "apex -> torch" if n_to_torch else "torch -> apex"
+        checkpoint_logging.info(
+            f"GroupNorm parameters moved to the model's layout ({direction}, "
+            f"{n_to_torch + n_to_apex} tensors)"
+        )
+    return converted
+
 
 def _get_checkpoint_filename(
     path: str,
@@ -258,7 +300,7 @@ def load_model_weights_partial(
     if not Path(file_name).exists():
         raise FileNotFoundError(f"No pretrained weights found at {file_name}")
 
-    pretrained = torch.load(file_name, map_location=device)
+    pretrained = match_group_norm_layout(torch.load(file_name, map_location=device), model)
     model_sd = model.state_dict()
     new_sd = {}
     copied, adapted, missing = [], [], []
@@ -378,7 +420,9 @@ def load_checkpoint(
             )
         else:
             # Load state dictionary
-            model.load_state_dict(torch.load(file_name, map_location=device))
+            model.load_state_dict(
+                match_group_norm_layout(torch.load(file_name, map_location=device), model)
+            )
 
             checkpoint_logging.success(
                 f"Loaded model state dictionary {file_name} to device {device}"

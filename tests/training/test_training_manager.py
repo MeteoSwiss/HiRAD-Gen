@@ -57,6 +57,8 @@ def _make_mock_dataset(
     ds.make_time_grids.return_value = torch.zeros(B, 8)
     ds.regrid_indices_real = None
     ds.regrid_weights_real = None
+    ds.provides_lead_time = False
+    ds.provides_prev_target = False
     return ds
 
 
@@ -74,6 +76,7 @@ def _make_manager_corrdiff(
     songunet_checkpoint_level=0,
     use_patching=False,
     hr_mean_conditioning=False,
+    prev_hr_conditioning=False,
     profile_mode=False,
     logging_method=None,
 ):
@@ -97,6 +100,7 @@ def _make_manager_corrdiff(
         songunet_checkpoint_level=songunet_checkpoint_level,
         use_patching=use_patching,
         hr_mean_conditioning=hr_mean_conditioning,
+        prev_hr_conditioning=prev_hr_conditioning,
         profile_mode=profile_mode,
         logging_method=logging_method,
     )
@@ -276,14 +280,44 @@ class TestLoadAndPreprocessBatch:
             batch.append(date_str)
         return iter([batch])
 
-    def test_returns_three_elements(self):
+    def test_returns_six_elements_without_optional_fields(self):
         ds = _make_mock_dataset()
         mgr = _make_manager_corrdiff(dataset=ds)
         it = self._make_iterator(
             torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W)
         )
         result = mgr.load_and_preprocess_batch(it)
-        assert len(result) == 3  # img_clean, img_lr, date_embedding
+        # img_clean, img_lr, date_embedding, lead_time_label, prev_hr, has_prev
+        assert len(result) == 6
+        assert result[3] is None and result[4] is None and result[5] is None
+
+    def test_lead_time_label_popped_before_date(self):
+        ds = _make_mock_dataset()
+        ds.provides_lead_time = True
+        mgr = _make_manager_corrdiff(dataset=ds, n_month_hour_channels=4)
+        lead = torch.tensor([3, 7])
+        it = iter([[torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W), ["20240101-1800"] * B, lead]])
+        _, _, date_embedding, lead_time_label, prev_hr, has_prev = mgr.load_and_preprocess_batch(it)
+        assert torch.equal(lead_time_label, lead)
+        assert prev_hr is None and has_prev is None
+        assert ds.make_time_grids.call_args.args[0] == ["20240101-1800"] * B
+
+    def test_prev_target_is_last_and_preprocessed_like_target(self):
+        ds = _make_mock_dataset()
+        ds.provides_lead_time = True
+        ds.provides_prev_target = True
+        mgr = _make_manager_corrdiff(dataset=ds, n_month_hour_channels=4)
+        prev_target = torch.randn(B, C_OUT, H * W)
+        has_prev = torch.tensor([1, 0])
+        lead = torch.tensor([3, 7])
+        it = iter([[torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W), ["20240101-1800"] * B,
+                    lead, prev_target, has_prev]])
+        _, _, _, lead_time_label, prev_hr, has_prev_out = mgr.load_and_preprocess_batch(it)
+        assert torch.equal(lead_time_label, lead)
+        assert torch.equal(has_prev_out, has_prev)
+        assert prev_hr.shape == (B, C_OUT, H, W)
+        assert torch.allclose(prev_hr, prev_target.reshape(B, C_OUT, H, W).flip(-2))
+        assert ds.normalize_output.call_count == 2
 
     def test_date_embedding_is_none_when_no_month_hour(self):
         ds = _make_mock_dataset()
@@ -291,7 +325,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(
             torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W)
         )
-        _, _, date_embedding = mgr.load_and_preprocess_batch(it)
+        _, _, date_embedding, *_ = mgr.load_and_preprocess_batch(it)
         assert date_embedding is None
 
     def test_date_embedding_returned_when_month_hour(self):
@@ -302,7 +336,7 @@ class TestLoadAndPreprocessBatch:
             torch.randn(B, C_IN, H * W),
             date_str="20240101-1800",
         )
-        _, _, date_embedding = mgr.load_and_preprocess_batch(it)
+        _, _, date_embedding, *_ = mgr.load_and_preprocess_batch(it)
         assert date_embedding is not None
 
     def test_imgs_flipped_and_reshaped(self):
@@ -311,7 +345,7 @@ class TestLoadAndPreprocessBatch:
         img_clean = torch.randn(B, C_OUT, H * W)
         img_lr = torch.randn(B, C_IN, H * W)
         it = self._make_iterator(img_clean, img_lr)
-        img_clean_out, img_lr_out, _ = mgr.load_and_preprocess_batch(it)
+        img_clean_out, img_lr_out, *_ = mgr.load_and_preprocess_batch(it)
         # Output should be flipped along height and reshaped to (B, C, H, W)
         assert img_clean_out.shape == (B, C_OUT, H, W)
         assert img_lr_out.shape == (B, C_IN, H, W)
@@ -334,7 +368,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(img_clean, img_lr)
         mock_regrid = MagicMock(side_effect=lambda x,y,z: x.reshape(*x.shape[:-1], *mgr.img_shape))
         with patch("hirad.training.training_manager.regrid_icon_to_rotlatlon", mock_regrid):
-            img_clean_out, _, _ = mgr.load_and_preprocess_batch(it)
+            img_clean_out, *_ = mgr.load_and_preprocess_batch(it)
             # Output should be flipped along height and reshaped to (B, C, H, W)
             assert img_clean_out.shape == (B, C_OUT, H, W)
             expected_first_row_clean = img_clean[:, :, -W:]
@@ -351,7 +385,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(img_clean, img_lr)
         mock_regrid = MagicMock(side_effect=lambda x,y,z: x.reshape(*x.shape[:-1], *(H+2*trim, W+2*trim)))
         with patch("hirad.training.training_manager.regrid_icon_to_rotlatlon", mock_regrid):
-            img_clean_out, _, _ = mgr.load_and_preprocess_batch(it)
+            img_clean_out, *_ = mgr.load_and_preprocess_batch(it)
             # Output should be trimmed by 'trim' pixels on each side, flipped, and reshaped to (B, C, H, W)
             assert img_clean_out.shape == (B, C_OUT, H, W)
             # expected_first_row_clean = img_clean[:, :, -(W + 2 * trim):- (W + 2 * trim) + W]
@@ -406,7 +440,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(
             torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W)
         )
-        img_clean, img_lr, _ = mgr.load_and_preprocess_batch(it)
+        img_clean, img_lr, *_ = mgr.load_and_preprocess_batch(it)
         assert img_clean.is_contiguous(memory_format=torch.channels_last)
         assert img_lr.is_contiguous(memory_format=torch.channels_last)
 
@@ -416,7 +450,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(
             torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W)
         )
-        img_clean, img_lr, _ = mgr.load_and_preprocess_batch(it)
+        img_clean, img_lr, *_ = mgr.load_and_preprocess_batch(it)
         assert img_clean.is_contiguous()
         assert img_lr.is_contiguous()
 
@@ -426,7 +460,7 @@ class TestLoadAndPreprocessBatch:
         it = self._make_iterator(
             torch.randn(B, C_OUT, H * W), torch.randn(B, C_IN, H * W)
         )
-        img_clean, img_lr, _ = mgr.load_and_preprocess_batch(it)
+        img_clean, img_lr, *_ = mgr.load_and_preprocess_batch(it)
         assert img_clean.dtype == torch.float32
         assert img_lr.dtype == torch.float32
 
@@ -471,27 +505,33 @@ class TestCreateModel:
         )
         MockEDM.assert_called_once()
 
-    @patch("hirad.training.training_manager.EDMPrecondSuperResolution")
-    def test_lt_aware_patched_diffusion_returns_edm(self, MockEDM):
-        MockEDM.return_value = MagicMock(spec=nn.Module)
-        ds = _make_mock_dataset()
-        mgr = _make_manager_corrdiff(dataset=ds)
-        model, args = mgr.create_model(
-            "lt_aware_patched_diffusion",
-            {"N_grid_channels": 2, "lead_time_channels": 1},
+    @patch("hirad.training.training_manager.UNet")
+    def test_lead_time_mode_adds_lead_time_channels(self, MockUNet):
+        MockUNet.return_value = MagicMock(spec=nn.Module)
+        mgr = _make_manager_corrdiff(dataset=_make_mock_dataset())
+        _, args = mgr.create_model(
+            "regression", {"N_grid_channels": 4, "lead_time_mode": True, "lead_time_channels": 3}
         )
-        MockEDM.assert_called_once()
+        # input + static + positional grid + lead-time embedding
+        assert args["img_in_channels"] == C_IN + C_STATIC + 4 + 3
 
     @patch("hirad.training.training_manager.UNet")
-    def test_lt_aware_ce_regression_returns_unet(self, MockUNet):
-        MockUNet.return_value = MagicMock(spec=nn.Module)
-        ds = _make_mock_dataset()
-        mgr = _make_manager_corrdiff(dataset=ds)
-        model, args = mgr.create_model(
-            "lt_aware_ce_regression",
-            {"N_grid_channels": 2, "lead_time_channels": 1},
-            )
-        MockUNet.assert_called_once()
+    def test_lead_time_mode_requires_lead_time_channels(self, MockUNet):
+        mgr = _make_manager_corrdiff(dataset=_make_mock_dataset())
+        with pytest.raises(ValueError, match="lead_time_channels"):
+            mgr.create_model("regression", {"N_grid_channels": 4, "lead_time_mode": True})
+
+    @patch("hirad.training.training_manager.EDMPrecondSuperResolution")
+    def test_prev_hr_conditioning_adds_output_channels_and_records_offset(self, MockEDM):
+        MockEDM.return_value = MagicMock(spec=nn.Module)
+        mgr = _make_manager_corrdiff(dataset=_make_mock_dataset(), hr_mean_conditioning=True,
+                                     prev_hr_conditioning=True, use_patching=True, n_month_hour_channels=8)
+        model, args = mgr.create_model("patched_diffusion", {"N_grid_channels": 4})
+        # y_mean + input + static + history | interpolated input + static | date | grid
+        assert args["img_in_channels"] == C_OUT + C_IN + C_STATIC + C_OUT + C_IN + C_STATIC + 8 + 4
+        assert model.prev_hr_channels == C_OUT
+        # History follows [noisy, y_mean, input, static] in the first-conv input.
+        assert model.prev_hr_insert_offset == C_OUT + C_OUT + C_IN + C_STATIC
 
     @patch("hirad.training.training_manager.EDMPrecondSuperResolution")
     def test_returns_model_and_args(self, MockEDM):
