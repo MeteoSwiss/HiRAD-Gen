@@ -21,23 +21,16 @@ import torch
 from hirad.utils.function_utils import InfiniteSampler
 from hirad.distributed import DistributedManager
 
-from .era5_cosmo import ERA5_COSMO
-from .era5_real import ERA5_REAL
 from .anemoi_dataset import ANEMOI_ERA5_COSMO, ANEMOI_ERA5_REAL
 from .anemoi_forecast_dataset import ANEMOI_IFS_REAL
-from .anemoi_dataset_copernicus_tp import ANEMOI_ERA5COPERNICUSTP_COSMO, ANEMOI_ERA5COPERNICUSTP_REAL
 from .base import DownscalingDataset
 
 
 # this maps all known dataset types to the corresponding init function
 known_datasets = {
-    "era5_cosmo": ERA5_COSMO,
-    "era5_real": ERA5_REAL,
     "anemoi_era5_cosmo": ANEMOI_ERA5_COSMO,
     "anemoi_era5_real": ANEMOI_ERA5_REAL,
     "anemoi_ifs_real": ANEMOI_IFS_REAL,
-    "anemoi_era5_copernicus_tp_real": ANEMOI_ERA5COPERNICUSTP_REAL,
-    "anemoi_era5_copernicus_tp_cosmo": ANEMOI_ERA5COPERNICUSTP_COSMO,
 }
 
 
@@ -109,7 +102,11 @@ def init_dataset_from_config(
 ) -> Tuple[DownscalingDataset, Iterable]:
 
     dataset_cfg = copy.deepcopy(dataset_cfg)
-    dataset_type = dataset_cfg.get("type", "era5_cosmo")
+    dataset_type = dataset_cfg.get("type")
+    if dataset_type not in known_datasets:
+        raise ValueError(
+            f"Unknown dataset type {dataset_type!r}; set dataset.type to one of {sorted(known_datasets)}"
+        )
     dataset_init_func = known_datasets[dataset_type]
 
     dataset_obj = dataset_init_func(**dataset_cfg)

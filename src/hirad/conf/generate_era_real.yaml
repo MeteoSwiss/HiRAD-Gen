@@ -13,7 +13,6 @@ defaults:
 
   # Sampler
   - sampler/stochastic
-  #- sampler/deterministic
 
   # Generation
   - generation/era_real

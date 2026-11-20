@@ -388,7 +388,7 @@ python src/hirad/inference/generate.py --config-name=<generate_config>.yaml
 ```
 
 The top-level generate config composes a dataset (usually an `*_inference` variant with
-`target_missing_as_zeros: true`), a sampler (`sampler/stochastic` or `sampler/deterministic`),
+`target_missing_as_zeros: true`), a sampler (`sampler/stochastic`),
 and a `generation/` group. The important `generation/` knobs:
 
 ```yaml
@@ -461,18 +461,26 @@ All behavior is composed from Hydra configs under `src/hirad/conf/`. Pick behavi
 choosing/composing configs rather than hardcoding.
 
 - **Top-level entry configs** (passed as `--config-name`): `training_*`, `generate_*`. Each sets `hydra.run.dir` and a `defaults:` list composing the groups below.
+  A variant of an existing setup extends its entry config instead of copying group configs: list
+  the parent in `defaults:` before `_self_` and set only what differs. Example:
+  `generate_era_real` uses the cross-validation fold 1 checkpoints; `generate_era_real_old_checkpoint`
+  extends it with the older `model_checkpoints/era_real` checkpoints and their tp output stats.
+  `generate_era_real_6h` (era_real_6h models, 6-hourly input) extends `generate_era_real`, and
+  `generate_ifsn320_real` / `generate_ifsn320_real_6h` (the same models on IFS N320 forecasts)
+  extend `generate_era_real` / `generate_era_real_6h`.
 - **Groups:**
   - `dataset/` — input/target stores, channels, transforms, dates (see [Data](#data)).
   - `model/` — network architecture and conditioning switches.
   - `model_size/` — width/depth presets.
   - `training/` — batch size, optimizer, scheduler, patching, model optimizations, I/O.
-  - `sampler/` — `stochastic` vs `deterministic` diffusion sampling.
+  - `sampler/` — diffusion sampler settings (`stochastic`).
   - `generation/` — inference knobs (ensembles, patching, times, I/O).
   - `logging/` — metric logging (see below).
 
 Naming conventions in the config names: `era`/`ifsn320`/`ifso1280`/`ifshres` = input source,
 `real`/`cosmo` = target, `regression`/`diffusion` = stage, `patched` = patch-based,
-`prevhr` = temporal conditioning, `nolt` = no lead-time conditioning.
+`prevhr` = temporal conditioning, `nolt` = no lead-time conditioning, `6h` = 6-hourly input and
+tp accumulation (default 1h).
 
 ### MLflow logging
 
@@ -587,7 +595,8 @@ regridding into a single pluggable component is planned but not done.) Register 
 
 - **Subclass `DownscalingDataset` directly** (in
   [`src/hirad/datasets/base.py`](src/hirad/datasets/base.py)) for a non-anemoi source.
-  `era5_real.py` / `era5_cosmo.py` are examples. You must implement the abstract interface:
+  [`anemoi_dataset.py`](src/hirad/datasets/anemoi_dataset.py) shows the full interface in use.
+  You must implement the abstract interface:
 
   ```python
   class DownscalingDataset(torch.utils.data.Dataset, ABC):
@@ -601,7 +610,9 @@ regridding into a single pluggable component is planned but not done.) Register 
 
   and optionally override the hooks with sensible defaults: `normalize_input` / `denormalize_input`
   / `normalize_output` / `denormalize_output` (physical ↔ normalized), `previous_index`
-  (temporal conditioning; return `None` if unsupported), and `info`.
+  (temporal conditioning; return `None` if unsupported), and `info`. The training and generation
+  loops also call `stats_to_torch(device, dtype)` and use `interpolator` (input grid → target
+  grid), which are not part of the abstract base yet; see `AnemoiDataset`.
 
   **`__getitem__` contract.** Return a tuple `(target, input, date_str)` of tensors in **physical
   units**, each on its own native grid and in the native orientation of its store. **You do not
@@ -728,8 +739,9 @@ that assembles dataset → model → loss for a run.
 **Everything runs through SLURM.** Do not run on the login node — Jobs run inside a prebuilt container; no extra installation is needed.
 
 - **Container.** The environment is defined by `ci/edf/modulus_env.toml` and passed to `srun`
-  via `--environment=./ci/edf/modulus_env.toml`. The squashed image lives on Alps at
-  `/capstor/scratch/cscs/pstamenk/corr_diff.sqsh`.
+  via `--environment=./ci/edf/modulus_env.toml`, which points at the squashed image on Alps
+  (`image =` in that file). The image is built from `ci/docker/Dockerfile.corrdiff`; CI builds
+  its own test image from `ci/docker/Dockerfile.ci`.
 - **Entrypoints inside `srun`.** Scripts either `pip install -e .` or set
   `PYTHONPATH=$PWD/src` before calling the Python entrypoint. (For SLURM-array jobs where tasks
   would race on a shared install, prefer `PYTHONPATH`.)
@@ -742,13 +754,17 @@ that assembles dataset → model → loss for a run.
 
 Ready-made runners (start from these rather than reinventing):
 
-| Task | Script | Entrypoint |
-|------|--------|------------|
-| Regression training | `src/hirad/train_regression.sh` | `training/train.py` |
-| Diffusion training | `src/hirad/train_diffusion.sh` | `training/train.py` |
-| Generation / inference | `src/hirad/generate.sh` | `inference/generate.py` |
-| Snapshots | `src/hirad/snapshots.sh` | `eval/snapshots.py` |
-| Evaluation | `eval_precip.sh`, `eval_temp.sh`, `eval_wind.sh` | `diurnal_cycle_wind.py`, … |
+| Task | Script | Entrypoint | Run with |
+|------|--------|------------|----------|
+| Regression training | `src/hirad/train_regression.sh` | `training/train.py` | `sbatch src/hirad/train_regression.sh` |
+| Diffusion training | `src/hirad/train_diffusion.sh` | `training/train.py` | `REGRESSION_CKPT=<regression checkpoint dir, same split> sbatch src/hirad/train_diffusion.sh` |
+| Generation / inference | `src/hirad/generate.sh` (`generate_test.sh`: debug partition) | `inference/generate.py` | `[CONFIG=generate_era_real] sbatch src/hirad/generate.sh` |
+| Snapshots | `src/hirad/snapshots.sh` | `eval/snapshots.py` | `[CONFIG_NAME=src/hirad/conf/eval_cosmo.yaml] sbatch src/hirad/snapshots.sh [--inference-output-dir DIR] [YYYYMMDD-HHMM ...]` |
+| Evaluation | `eval_precip.sh`, `eval_temp.sh`, `eval_wind.sh` | `diurnal_cycle_wind.py`, … | `[CONFIG_NAME=...] bash src/hirad/eval_precip.sh [--inference-output-dir DIR]` (submits one job per plot script) |
+
+`CONFIG` defaults to `generate_ifso1280_real`, `CONFIG_NAME` to `src/hirad/conf/eval_real.yaml`;
+`--inference-output-dir` overrides `inference_output_dir` of the eval config (any eval script
+accepts it directly too).
 
 Each runner has a header block to edit before submitting:
 
@@ -767,7 +783,8 @@ srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.to
 ```
 
 Submit with `sbatch src/hirad/<script>.sh`. For monthly batch generation there is a helper,
-`src/hirad/submit_monthly.sh START_MONTH END_MONTH`, which drives `generate.sh` as a SLURM array.
+`[CONFIG=...] src/hirad/submit_monthly.sh START_MONTH END_MONTH`, which drives `generate.sh` as a
+SLURM array (output in `outputs/generation/<config without generate_>_<year>`).
 
 ## MeteoSwiss-internal tools
 

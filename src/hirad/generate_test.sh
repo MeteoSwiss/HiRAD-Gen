@@ -1,6 +1,8 @@
 #!/bin/bash
+# Short test generation on the debug partition (2 GPUs). CONFIG selects the generate entry config
+# (default generate_ifso1280_real), e.g. CONFIG=generate_era_real sbatch src/hirad/generate_test.sh
 
-#SBATCH --job-name="corrdiff-test-genreate"
+#SBATCH --job-name="corrdiff-test-generate"
 
 ### HARDWARE ###
 #SBATCH --partition=debug
@@ -16,7 +18,10 @@
 #SBATCH --output=./logs/generation_test.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A a0269
+
+CONFIG=${CONFIG:-generate_ifso1280_real}
+CONFIG=${CONFIG%.yaml}
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -30,19 +35,9 @@ export MASTER_ADDR
 export MASTER_PORT=29500
 echo "Master port: $MASTER_PORT"
 
-# Get number of physical cores using Python
-# PHYSICAL_CORES=$(python -c "import psutil; print(psutil.cpu_count(logical=False))")
-# # Use SLURM_NTASKS (number of processes to be launched by torchrun)
-# LOCAL_PROCS=${SLURM_NTASKS_PER_NODE:-1}
-# # Compute threads per process
-# OMP_THREADS=$(( PHYSICAL_CORES / LOCAL_PROCS ))
-# export OMP_NUM_THREADS=$OMP_THREADS
 export OMP_NUM_THREADS=72
-# echo "Physical cores: $PHYSICAL_CORES"
-# echo "Local processes: $LOCAL_PROCS"
-# echo "Setting OMP_NUM_THREADS=$OMP_NUM_THREADS"
 
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
-    python src/hirad/inference/generate.py --config-name=generate_ifso1280_real.yaml
+    python src/hirad/inference/generate.py --config-name=${CONFIG}.yaml
 "

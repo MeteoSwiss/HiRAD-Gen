@@ -12,24 +12,13 @@ from hirad.datasets import AnemoiDataset, known_datasets
 # The YAML configs are not installed as package data, so read them from the checkout.
 CONF_DIR = Path(__file__).resolve().parents[2] / "src" / "hirad" / "conf"
 ENTRY_CONFIGS = sorted(
-    p.stem for p in CONF_DIR.glob("*.yaml") if p.stem.startswith(("training_", "generate_", "compute_eval"))
+    p.stem for p in CONF_DIR.glob("*.yaml") if p.stem.startswith(("training_", "generate_"))
 )
 # Keys consumed by init_train_valid_datasets_from_config before the dataset is constructed.
 SPLIT_KEYS = {"validation", "validation_start_date", "validation_end_date"}
 
 # Broken today; strict xfail so that fixing or deleting one forces this list to be updated.
 KNOWN_BROKEN = {
-    "compute_eval": "legacy era5_cosmo dataset is not compatible with the training/inference loop",
-    "generate_era_cosmo": "dataset key corrected_tp_path is not accepted by AnemoiDataset",
-    "generate_era_cosmo_test": "legacy era5_cosmo dataset is not compatible with the training/inference loop",
-    "generate_ifsn320_real": "dataset type anemoi_ifsn320_real is not registered",
-    "training_era_cosmo_diffusion": "dataset key corrected_tp_path is not accepted by AnemoiDataset",
-    "training_era_cosmo_diffusion_patched": "dataset key corrected_tp_path is not accepted by AnemoiDataset",
-    "training_era_cosmo_diffusion_test": "legacy era5_cosmo dataset is not compatible with the training/inference loop",
-    "training_era_cosmo_regression": "dataset key corrected_tp_path is not accepted by AnemoiDataset",
-    "training_era_cosmo_regression_test": "legacy era5_cosmo dataset is not compatible with the training/inference loop",
-    "training_ifso1280_real_diffusion_patched": "model lead_time_mode=True but dataset provide_lead_time=False",
-    "training_ifso1280_real_regression": "model lead_time_mode=True but dataset provide_lead_time=False",
 }
 
 

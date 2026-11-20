@@ -7,6 +7,8 @@
 # Examples:
 #   ./submit_monthly.sh 2021-01 2024-12       # 4 years
 #   ./submit_monthly.sh 2022-06 2022-08       # JJA 2022
+#   CONFIG=generate_era_real ./submit_monthly.sh 2021-01 2024-12   # other generate config
+#                                             # (default: generate.sh's, generate_ifso1280_real)
 
 set -euo pipefail
 
@@ -39,7 +41,7 @@ exec sbatch \
     --array="0-$((TASKS - 1))" \
     --export=ALL,START_MONTH="${START_MONTH}",END_MONTH="${END_MONTH}" \
     --time=6:00:00 \
-    --account=c38 \
+    --account=a0269 \
     --output=./logs/generation_monthly_%A_%a.log \
     "$@" \
     "${SCRIPT_DIR}/generate.sh"

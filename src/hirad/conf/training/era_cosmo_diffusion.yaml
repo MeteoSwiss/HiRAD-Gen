@@ -31,8 +31,7 @@ perf:
     profile_mode: False
 # I/O
 io:
-    # regression_checkpoint_path:  /capstor/scratch/cscs/pstamenk/outputs/training/regression_era5_cosmo/checkpoints_regression
-    regression_checkpoint_path: /path/to/regression/checkpoint
+    regression_checkpoint_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_cosmo/regression/
     # Where to load the regression checkpoint
     print_progress_freq: 2000
     # How often to print progress

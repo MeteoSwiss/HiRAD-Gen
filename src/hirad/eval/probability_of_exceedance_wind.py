@@ -19,32 +19,6 @@ def compute_wind_speed(u, v):
     return np.hypot(u, v)
 
 
-def compute_exceedance_probs(values, thresholds, use_abs=False):
-    """Compute exceedance probabilities."""
-    if use_abs:
-        return np.array([np.mean(np.abs(values) > t) for t in thresholds])
-    else:
-        return np.array([np.mean(values > t) for t in thresholds])
-
-
-def update_exceedance_counts(counts, total, values, thresholds, use_abs=False):
-    """Update exceedance counts incrementally via searchsorted (O(n log k))."""
-    data = np.abs(values) if use_abs else values
-    # idx[i] = number of thresholds strictly less than data[i] (side='left')
-    # data[i] > thresholds[j]  iff  idx[i] > j
-    idx = np.searchsorted(thresholds, data, side='left')
-    bin_counts = np.bincount(idx, minlength=len(thresholds) + 1)
-    counts += len(data) - np.cumsum(bin_counts)[: len(thresholds)]
-    total += len(data)
-    return counts, total
-
-
-def compute_percentiles(values, percentile_dict, use_abs=False):
-    """Compute percentiles."""
-    data = np.abs(values) if use_abs else values
-    return {key: float(np.quantile(data, p)) for key, p in percentile_dict.items()}
-
-
 def save_exceedance_plot(exceedance_data_dict, thresholds, labels, colors, title, ylabel, out_path, percentiles_data=None):
     """Save probability of exceedance plot."""
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

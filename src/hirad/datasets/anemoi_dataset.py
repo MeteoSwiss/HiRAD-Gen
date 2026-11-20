@@ -503,10 +503,6 @@ class AnemoiDataset(DownscalingDataset):
             return 704,1088
         return self._output_dataset.field_shape
     
-    def input_shape(self) -> Tuple[int, int]:
-        """Get the (height, width) of the input data."""
-        return self._input_dataset.field_shape
-
     def normalization_stats(self):
         """Get the mean and std stats for normalizing the input and output data."""
         return {"input_mean": self.input_mean,

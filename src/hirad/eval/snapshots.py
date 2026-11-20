@@ -131,7 +131,7 @@ def save_field(name, data, meta, output_files, channel, t, member=None, kind=Non
 def main(cfg: dict) -> None:
     # Initialize logger
     logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("plot_maps")
+    logger = logging.getLogger("snapshots")
 
     grid_cfg = grid_cfg_from_cfg(cfg)
 

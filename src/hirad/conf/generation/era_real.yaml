@@ -52,9 +52,11 @@ perf:
     # which improves throughput for production runs.
 
 io:
-  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion/
+  # Cross-validation fold 1 (trained 2005-2019). The older model_checkpoints/era_real model:
+  # generate_era_real_old_checkpoint.
+  res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/diffusion/
   # Checkpoint filename for the residual predictor model
-  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression/
+  reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_cv/2005-2019/regression/
   # Checkpoint filename for the mean predictor model
   output_path: .
   output_format: 'both'

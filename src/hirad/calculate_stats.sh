@@ -18,7 +18,7 @@
 #SBATCH --error=/capstor/scratch/cscs/pstamenk/logs/calculate_stats.err
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A a0269
 
 # Get master node.
 MASTER_ADDR="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"

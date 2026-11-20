@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -17,26 +16,6 @@ from hirad.utils.checkpoint import (
 # ---------------------------------------------------------------------------
 #  Helpers / fixtures
 # ---------------------------------------------------------------------------
-
-
-def _make_mock_manager(model_parallel_rank: int = 0, group_names=()):
-    """Return a mock DistributedManager with the given parallel rank."""
-    mgr = MagicMock()
-    mgr.group_names = group_names
-    mgr.group_rank.return_value = model_parallel_rank
-    return mgr
-
-
-@pytest.fixture(autouse=True)
-def _patch_distributed():
-    """Patch DistributedManager for every test so we never touch real dist."""
-    mgr = _make_mock_manager(model_parallel_rank=0, group_names=())
-    with patch(
-        "hirad.utils.checkpoint.DistributedManager"
-    ) as MockDM:
-        MockDM.is_initialized.return_value = True
-        MockDM.return_value = mgr
-        yield MockDM
 
 
 class _SimpleModel(torch.nn.Module):
@@ -106,17 +85,6 @@ class TestGetCheckpointFilenameNoIndex:
             (tmp_path / f"checkpoint.0.{i}.pt").touch()
         result = _get_checkpoint_filename(str(tmp_path), saving=False)
         expected = str(tmp_path.resolve() / "checkpoint.0.10.pt")
-        assert result == expected
-
-
-class TestGetCheckpointFilenameModelParallel:
-    """Ensure model-parallel rank is embedded correctly."""
-
-    def test_model_parallel_rank_in_filename(self, tmp_path, _patch_distributed):
-        mgr = _make_mock_manager(model_parallel_rank=3, group_names=("model_parallel",))
-        _patch_distributed.return_value = mgr
-        result = _get_checkpoint_filename(str(tmp_path), index=0)
-        expected = str(tmp_path.resolve() / "checkpoint.3.0.pt")
         assert result == expected
 
 

@@ -23,7 +23,6 @@ import torch
 from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import _LRScheduler
 
-from hirad.distributed import DistributedManager
 from .console import PythonLogger
 
 optimizer = NewType("optimizer", torch.optim.Optimizer)
@@ -110,21 +109,10 @@ def _get_checkpoint_filename(
     str
         Checkpoint file name
     """
-    # Get model parallel rank so all processes in the first model parallel group
-    # can save their checkpoint. In the case without model parallelism,
-    # model_parallel_rank should be the same as the process rank itself and
-    # only rank 0 saves
-    if not DistributedManager.is_initialized():
-        checkpoint_logging.warning(
-            "`DistributedManager` not initialized already. Initializing now, but this might lead to unexpected errors"
-        )
-        DistributedManager.initialize()
-    manager = DistributedManager()
-    model_parallel_rank = (
-        manager.group_rank("model_parallel")
-        if "model_parallel" in manager.group_names
-        else 0
-    )
+    # Checkpoint names carry a model-parallel rank after the base name
+    # (<base_name>.0.<index>.<ext>). Models are never split across GPUs, so it is always 0;
+    # it stays in the name so existing checkpoints keep loading.
+    model_parallel_rank = 0
 
     # Input file name
     checkpoint_filename = str(

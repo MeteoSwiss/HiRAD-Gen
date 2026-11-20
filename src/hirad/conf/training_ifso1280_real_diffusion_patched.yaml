@@ -8,8 +8,6 @@ hydra:
 
 # Get defaults
 defaults:
-  - _self_
-
   # Dataset (IFS-HRES forecast input -> RealCH1 target, lead-time labels)
   - dataset/anemoi_ifso1280_real_train
 
@@ -23,3 +21,10 @@ defaults:
 
   # Logging
   - logging/ifso1280_real_diffusion
+
+  - _self_
+
+# The lead-time model needs the lead-time label from the dataset (the shared training dataset
+# config has it off for the production _nolt models).
+dataset:
+  provide_lead_time: True

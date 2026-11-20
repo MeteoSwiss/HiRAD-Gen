@@ -1,4 +1,7 @@
 #!/bin/bash
+# Train the era_real diffusion stage. The regression checkpoint must come from the same data split,
+# so it is given explicitly (the config only has a placeholder):
+#   REGRESSION_CKPT=/path/to/checkpoints_regression sbatch src/hirad/train_diffusion.sh
 
 #SBATCH --job-name="corrdiff-second-stage"
 
@@ -17,7 +20,12 @@
 #SBATCH --error=./logs/train_diffusion.err
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A a0269
+
+if [[ -z "${REGRESSION_CKPT:-}" ]]; then
+    echo "ERROR: set REGRESSION_CKPT to the regression checkpoint directory (same data split)." >&2
+    exit 1
+fi
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -31,8 +39,8 @@ export MASTER_PORT=29500
 
 export OMP_NUM_THREADS=1
 
-# python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e .
-    python src/hirad/training/train.py --config-name=training_era_real_diffusion_patched.yaml
+    python src/hirad/training/train.py --config-name=training_era_real_diffusion_patched.yaml \
+        training.io.regression_checkpoint_path=${REGRESSION_CKPT}
 "

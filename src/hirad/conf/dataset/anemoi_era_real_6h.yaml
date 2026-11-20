@@ -6,7 +6,6 @@ type: anemoi_era5_real
 # input_anemoi_dataset_path: '/capstor/store/cscs/swissai/weatherbench/aifs-ea-an-oper-0001-mars-n320-1979-2023-1h-v1-with-ERA51.zarr'
 # input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-1h-v2-with-era51.zarr'
 input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-6h-v1-for-single-v2.zarr'
-# corrected_tp_path: '/capstor/scratch/cscs/mmcgloho/basic-numpy/copernicus-era-1h/copernicus-interpolated/'
 target_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/mch-realch1-fdb-1km-2005-2025-1h-pl13-v1.0.zarr'
 # The 6h target precip variable (TOT_PREC_6H) is selected automatically because the input
 # frequency is detected as 6h. Set input_frequency to resample a finer input instead.

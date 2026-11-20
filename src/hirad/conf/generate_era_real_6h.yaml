@@ -1,0 +1,24 @@
+# era_real_6h checkpoints on 6-hourly ERA5 input (6h-accumulated tp): generate_era_real with the
+# 6h input store, tp stats and checkpoints. The TOT_PREC_6H target is selected from the input
+# frequency.
+hydra:
+  job:
+    name: generation_era_real_6h_results
+
+defaults:
+  - generate_era_real
+  - _self_
+
+dataset:
+  input_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-6h-v1-for-single-v2.zarr'
+  # tp Box-Cox stats the era_real_6h checkpoints were trained with.
+  transform_input_means: {'tp-box_cox_025': -3.6759370671419296}
+  transform_input_stdevs: {'tp-box_cox_025': 0.3549699264082265}
+  transform_output_means: {'tp-box_cox_025': -3.8122792453976}
+  transform_output_stdevs: {'tp-box_cox_025': 0.3346287581617763}
+
+generation:
+  times_range: ['20211015-0000','20211015-1800',6]
+  io:
+    res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_6h/diffusion/
+    reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_6h/regression/

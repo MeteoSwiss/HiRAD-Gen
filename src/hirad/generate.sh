@@ -1,11 +1,15 @@
 #!/bin/bash
 # Generate predictions.
 #
+# CONFIG selects the generate entry config (default generate_ifso1280_real), e.g.
+#   CONFIG=generate_era_real sbatch src/hirad/generate.sh
+#
 # Default mode (no SLURM array): single run using config defaults.
 # Monthly array mode (SLURM_ARRAY_TASK_ID and START_MONTH set):
 #   each array task generates one month, starting from START_MONTH
-#   (array index 0 -> START_MONTH, index 1 -> next month, ...).
-#   Submit via ./src/hirad/submit_monthly.sh START_MONTH END_MONTH.
+#   (array index 0 -> START_MONTH, index 1 -> next month, ...), into
+#   ./outputs/generation/<config without "generate_">_<year>.
+#   Submit via [CONFIG=...] ./src/hirad/submit_monthly.sh START_MONTH END_MONTH.
 
 #SBATCH --job-name="generate"
 
@@ -23,9 +27,12 @@
 #SBATCH --output=./logs/generation_%A_%a.log
 
 ### ENVIRONMENT ####
-#SBATCH -A c38
+#SBATCH -A a0269
 
 set -euo pipefail
+
+CONFIG=${CONFIG:-generate_ifso1280_real}
+CONFIG=${CONFIG%.yaml}
 
 # Optional Hydra overrides for monthly array mode.
 EXTRA_ARGS=()
@@ -35,7 +42,7 @@ if [[ -n "${SLURM_ARRAY_TASK_ID:-}" && -n "${START_MONTH:-}" ]]; then
     echo "Generating ${START:0:4}_${START:4:2}: ${START} -> ${END}"
     EXTRA_ARGS+=(
         "generation.times_range=[${START},${END},1]"
-        "hydra.run.dir=./outputs/generation/era_real_${START:0:4}"
+        "hydra.run.dir=./outputs/generation/${CONFIG#generate_}_${START:0:4}"
     )
 fi
 
@@ -56,5 +63,5 @@ export OMP_NUM_THREADS=1
 EXTRA_ARGS_STR="${EXTRA_ARGS[*]@Q}"
 srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -c "
     export PYTHONPATH=\${PWD}/src:\${PYTHONPATH:-}
-    python src/hirad/inference/generate.py --config-name=generate_ifso1280_real.yaml ${EXTRA_ARGS_STR}
+    python src/hirad/inference/generate.py --config-name=${CONFIG}.yaml ${EXTRA_ARGS_STR}
 "

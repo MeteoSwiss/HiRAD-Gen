@@ -2,8 +2,19 @@
 
 set -euo pipefail
 
+# Submits one job per evaluation script. Usage:
+#   [CONFIG_NAME=src/hirad/conf/eval_cosmo.yaml] bash src/hirad/eval_temp.sh [--inference-output-dir DIR]
+# CONFIG_NAME defaults to eval_real.yaml; DIR overrides inference_output_dir in it.
+
 ### CONFIG ###
-CONFIG_NAME="src/hirad/conf/eval_real.yaml"
+CONFIG_NAME=${CONFIG_NAME:-src/hirad/conf/eval_real.yaml}
+OUTPUT_DIR_ARG=""
+if [[ $# -eq 2 && $1 == --inference-output-dir ]]; then
+    OUTPUT_DIR_ARG=" --inference-output-dir=$2"
+elif [[ $# -ne 0 ]]; then
+    echo "Usage: [CONFIG_NAME=...] $0 [--inference-output-dir DIR]" >&2
+    exit 1
+fi
 
 CMDS=(
     # Diurnal cycle of 2m temperature
@@ -26,9 +37,9 @@ for cmd in "${CMDS[@]}"; do
         --time=12:00:00 \
         --no-requeue \
         --exclusive \
-        -A c38 \
+        -A a0269 \
         --output="./logs/plots_temp_${name}_%j.log" \
         --parsable \
-        --wrap="srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -lc 'pip install -e . && ${cmd} --config-name=${CONFIG_NAME}'")
+        --wrap="srun --mpi=pmix --network=disable_rdzv_get --environment=./ci/edf/modulus_env.toml bash -lc 'pip install -e . && ${cmd} --config-name=${CONFIG_NAME}${OUTPUT_DIR_ARG}'")
     echo "Submitted ${name}: ${job_id}"
 done

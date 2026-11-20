@@ -16,36 +16,11 @@
 
 import atexit
 import os
-import queue
-import warnings
-from typing import Optional, Tuple
 from warnings import warn
 
 import numpy as np
 import torch
 import torch.distributed as dist
-
-from .config import ProcessGroupConfig, ProcessGroupNode
-
-warnings.simplefilter("default", DeprecationWarning)
-
-
-class UndefinedGroupError(Exception):
-    """Exception for querying an undefined process group using the PhysicsNeMo DistributedManager"""
-
-    def __init__(self, name: str):
-        """
-
-        Parameters
-        ----------
-        name : str
-            Name of the process group being queried.
-
-        """
-        message = (
-            f"Cannot query process group '{name}' before it is explicitly created."
-        )
-        super().__init__(message)
 
 
 class UninitializedDistributedManagerWarning(Warning):
@@ -109,18 +84,8 @@ class DistributedManager(object):
             obj._find_unused_parameters = False
         if not hasattr(obj, "_initialization_method"):
             obj._initialization_method = "None"
-        if not hasattr(obj, "_groups"):
-            obj._groups = {}
-        if not hasattr(obj, "_group_ranks"):
-            obj._group_ranks = {}
-        if not hasattr(obj, "_group_names"):
-            obj._group_names = {}
         if not hasattr(obj, "_is_initialized"):
             obj._is_initialized = False
-        if not hasattr(obj, "_global_mesh"):
-            obj._global_mesh = None  # Lazy initialized right when it's first needed
-        if not hasattr(obj, "_mesh_dims"):
-            obj._mesh_dims = {}  # Dictionary mapping axis names to sizes
 
         return obj
 
@@ -158,99 +123,6 @@ class DistributedManager(object):
     def cuda(self):
         """If cuda is available"""
         return self._cuda
-
-    @property
-    def mesh_dims(self):
-        """Mesh Dimensions as dictionary (axis name : size)"""
-        return self._mesh_dims
-
-    @property
-    def group_names(self):
-        """
-        Returns a list of all named process groups created
-        """
-        return self._groups.keys()
-
-    @property
-    def global_mesh(self):
-        """
-        Returns the global mesh.  If it's not initialized, it will be created when this is called.
-        """
-        if self._global_mesh is None:
-            # Fully flat mesh (1D) by default:
-            self.initialize_mesh(mesh_shape=(-1,), mesh_dim_names=("world",))
-
-        return self._global_mesh
-
-    def mesh_names(self):
-        """
-        Return mesh axis names
-        """
-        return self._mesh_dims.keys()
-
-    def mesh_sizes(self):
-        """
-        Return mesh axis sizes
-        """
-        return self._mesh_dims.values()
-
-    def group(self, name=None):
-        """
-        Returns a process group with the given name
-        If name is None, group is also None indicating the default process group
-        If named group does not exist, UndefinedGroupError exception is raised
-        """
-        if name in self._groups.keys():
-            return self._groups[name]
-        elif name is None:
-            return None
-        else:
-            raise UndefinedGroupError(name)
-
-    def mesh(self, name=None):
-        """
-        Return a device_mesh with the given name.
-        Does not initialize.  If the mesh is not created
-        already, will raise and error
-
-        Parameters
-        ----------
-        name : str, optional
-            Name of desired mesh, by default None
-        """
-
-        if name in self._global_mesh.axis_names:
-            return self._global_mesh[name]
-        elif name is None:
-            return self._global_mesh
-        else:
-            raise UndefinedGroupError(f"Mesh axis {name} not defined")
-
-    def group_size(self, name=None):
-        """
-        Returns the size of named process group
-        """
-        if name is None:
-            return self._world_size
-        group = self.group(name)
-        return dist.get_world_size(group=group)
-
-    def group_rank(self, name=None):
-        """
-        Returns the rank in named process group
-        """
-        if name is None:
-            return self._rank
-        group = self.group(name)
-        return dist.get_rank(group=group)
-
-    def group_name(self, group=None):
-        """
-        Returns the name of process group
-        """
-        if group is None:
-            return None
-        return self._group_names[group]
 
     @property
     def broadcast_buffers(self):
@@ -377,7 +249,7 @@ class DistributedManager(object):
 
         Initialization by default is done using the first valid method in the order
         listed above. Initialization method can also be explicitly controlled using the
-        `PHYSICSNEMO_DISTRIBUTED_INITIALIZATION_METHOD` environment variable and setting it
+        `DISTRIBUTED_INITIALIZATION_METHOD` environment variable and setting it
         to one of the options above.
         """
         if DistributedManager.is_initialized():
@@ -426,91 +298,6 @@ class DistributedManager(object):
 
         # Set per rank numpy random seed for data sampling
         np.random.seed(seed=DistributedManager().rank)
-
-    def initialize_mesh(
-        self, mesh_shape: Tuple[int, ...], mesh_dim_names: Tuple[str, ...]
-    ) -> dist.DeviceMesh:
-        """
-        Initialize a global device mesh over the entire distributed job.
-
-        Creates a multi-dimensional mesh of processes that can be used for distributed
-        operations. The mesh shape must multiply to equal the total world size, with
-        one dimension optionally being flexible (-1).
-
-        Parameters
-        ----------
-        mesh_shape : Tuple[int, ...]
-            Tuple of ints describing the size of each mesh dimension. Product must equal
-            world_size. One dimension can be -1 to be automatically calculated.
-
-        mesh_dim_names : Tuple[str, ...]
-            Names for each mesh dimension. Must match length of mesh_shape.
-
-        Returns
-        -------
-        torch.distributed.DeviceMesh
-            The initialized device mesh
-
-        Raises
-        ------
-        RuntimeError
-            If mesh dimensions are invalid or don't match world size
-        AssertionError
-            If distributed environment is not available
-        """
-
-        manager = DistributedManager()
-        if not manager.distributed:
-            raise AssertionError(
-                "torch.distributed is unavailable. "
-                "Check pytorch build to ensure the distributed package is available. "
-                "If building PyTorch from source, set `USE_DISTRIBUTED=1` "
-                "to enable the distributed package"
-            )
-
-        # Assert basic properties:
-        if len(mesh_shape) == 0:
-            raise RuntimeError(
-                "Device Mesh requires at least one mesh dimension in `mesh_shape`"
-            )
-        if len(mesh_shape) != len(mesh_dim_names):
-            raise RuntimeError(
-                "mesh_shape and mesh_dim_names must have the same length, but found "
-                f"{len(mesh_shape)} and {len(mesh_dim_names)} respectively."
-            )
-        if len(set(mesh_dim_names)) != len(mesh_dim_names):
-            raise RuntimeError("Mesh dimension names must be unique")
-
-        # Check against the total mesh shape vs. world size:
-        total_mesh_shape = np.prod(mesh_shape)
-
-        # Allow one shape to be -1
-        if -1 in mesh_shape:
-            residual_shape = int(self.world_size / (-1 * total_mesh_shape))
-
-            # Replace -1 with the computed size:
-            mesh_shape = [residual_shape if m == -1 else m for m in mesh_shape]
-            # Recompute total shape:
-            total_mesh_shape = np.prod(mesh_shape)
-
-        if total_mesh_shape != self.world_size:
-            raise RuntimeError(
-                "Device Mesh num elements must equal world size of "
-                f"{total_mesh_shape} but was configured by user with "
-                f"global size of {self.world_size}."
-            )
-
-        # Actually create the mesh:
-        self._global_mesh = dist.init_device_mesh(
-            "cuda" if self.cuda else "cpu",
-            mesh_shape,
-            mesh_dim_names=mesh_dim_names,
-        )
-
-        # Finally, upon success, cache the mesh dimensions:
-        self._mesh_dims = {key: val for key, val in zip(mesh_dim_names, mesh_shape)}
-
-        return self._global_mesh
 
     @staticmethod
     def setup(
@@ -571,195 +358,6 @@ class DistributedManager(object):
             torch.cuda.empty_cache()
 
         manager._initialization_method = method
-
-    @staticmethod
-    def create_process_subgroup(
-        name: str, size: int, group_name: Optional[str] = None, verbose: bool = False
-    ):  # pragma: no cover
-        """
-        Create a process subgroup of a parent process group. This must be a collective
-        call by all processes participating in this application.
-
-        Parameters
-        ----------
-        name : str
-            Name of the process subgroup to be created.
-
-        size : int
-            Size of the process subgroup to be created. This must be an integer factor of
-            the parent group's size.
-
-        group_name : Optional[str]
-            Name of the parent process group, optional. If None, the default process group
-            will be used. Default None.
-
-        verbose : bool
-            Print out ranks of each created process group, default False.
-
-        """
-        manager = DistributedManager()
-        if not manager.distributed:
-            raise AssertionError(
-                "torch.distributed is unavailable. "
-                "Check pytorch build to ensure the distributed package is available. "
-                "If building PyTorch from source, set `USE_DISTRIBUTED=1` "
-                "to enable the distributed package"
-            )
-
-        if name in manager._groups:
-            raise AssertionError(f"Group with name {name} already exists")
-
-        # Get parent group's params
-        group = manager._groups[group_name] if group_name else None
-        group_size = dist.get_world_size(group=group)
-        num_groups = manager.world_size // group_size
-
-        # Get number of sub-groups per parent group
-        if group_size % size != 0:
-            raise AssertionError(
-                f"Cannot divide group size {group_size} evenly into subgroups of"
-                f" size {size}"
-            )
-        num_subgroups = group_size // size
-
-        # Create all the sub-groups
-        # Note: all ranks in the job need to create all sub-groups in
-        # the same order even if a rank is not part of a sub-group
-        manager._group_ranks[name] = []
-        for g in range(num_groups):
-            for i in range(num_subgroups):
-                # Get global ranks that are part of this sub-group
-                start = i * size
-                end = start + size
-                if group_name:
-                    ranks = manager._group_ranks[group_name][g][start:end]
-                else:
-                    ranks = list(range(start, end))
-                # Create sub-group and keep track of ranks
-                tmp_group = dist.new_group(ranks=ranks)
-                manager._group_ranks[name].append(ranks)
-                if manager.rank in ranks:
-                    # Set group in manager only if this rank is part of the group
-                    manager._groups[name] = tmp_group
-                    manager._group_names[tmp_group] = name
-
-        if verbose and manager.rank == 0:
-            print(f"Process group '{name}':")
-            for grp in manager._group_ranks[name]:
-                print("    ", grp)
-
-    @staticmethod
-    def create_orthogonal_process_group(
-        orthogonal_group_name: str, group_name: str, verbose: bool = False
-    ):  # pragma: no cover
-        """
-        Create a process group that is orthogonal to the specified process group.
-
-        Parameters
-        ----------
-        orthogonal_group_name : str
-            Name of the orthogonal process group to be created.
-
-        group_name : str
-            Name of the existing process group.
-
-        verbose : bool
-            Print out ranks of each created process group, default False.
-
-        """
-        manager = DistributedManager()
-        if not manager.distributed:
-            raise AssertionError(
-                "torch.distributed is unavailable. "
-                "Check pytorch build to ensure the distributed package is available. "
-                "If building PyTorch from source, set `USE_DISTRIBUTED=1` "
-                "to enable the distributed package"
-            )
-
-        if group_name not in manager._groups:
-            raise ValueError(f"Group with name {group_name} does not exist")
-        if orthogonal_group_name in manager._groups:
-            raise ValueError(f"Group with name {orthogonal_group_name} already exists")
-
-        group_ranks = manager._group_ranks[group_name]
-        orthogonal_ranks = [list(i) for i in zip(*group_ranks)]
-
-        for ranks in orthogonal_ranks:
-            tmp_group = dist.new_group(ranks=ranks)
-            if manager.rank in ranks:
-                # Set group in manager only if this rank is part of the group
-                manager._groups[orthogonal_group_name] = tmp_group
-                manager._group_names[tmp_group] = orthogonal_group_name
-
-        manager._group_ranks[orthogonal_group_name] = orthogonal_ranks
-
-        if verbose and manager.rank == 0:
-            print(f"Process group '{orthogonal_group_name}':")
-            for grp in manager._group_ranks[orthogonal_group_name]:
-                print("    ", grp)
-
-    @staticmethod
-    def create_group_from_node(
-        node: ProcessGroupNode,
-        parent: Optional[str] = None,
-        verbose: bool = False,
-    ):  # pragma: no cover
-        if node.size is None:
-            raise AssertionError(
-                "Cannot create groups from a ProcessGroupNode that is not fully"
-                " populated. Ensure that config.set_leaf_group_sizes is called first"
-                " with `update_parent_sizes = True`"
-            )
-
-        DistributedManager.create_process_subgroup(
-            node.name, node.size, group_name=parent, verbose=verbose
-        )
-        # Create orthogonal process group
-        orthogonal_group = f"__orthogonal_to_{node.name}"
-        DistributedManager.create_orthogonal_process_group(
-            orthogonal_group, node.name, verbose=verbose
-        )
-        return orthogonal_group
-
-    @staticmethod
-    def create_groups_from_config(
-        config: ProcessGroupConfig, verbose: bool = False
-    ):  # pragma: no cover
-
-        warnings.warn(
-            "DistributedManager.create_groups_from_config is no longer the most simple "
-            "way to organize process groups.  Please switch to DeviceMesh, "
-            "and DistributedManager.initialize_mesh",
-            category=DeprecationWarning,
-            stacklevel=2,
-        )
-
-        # Traverse process group tree in breadth first order
-        # to create nested process groups
-        q = queue.Queue()
-        q.put(config.root_id)
-        DistributedManager.create_group_from_node(config.root)
-
-        while not q.empty():
-            node_id = q.get()
-            if verbose:
-                print(f"Node ID: {node_id}")
-
-            children = config.tree.children(node_id)
-            if verbose:
-                print(f"  Children: {children}")
-
-            parent_group = node_id
-            for child in children:
-                # Create child group and replace parent group by orthogonal group so
-                # that each child forms an independent block of processes
-                parent_group = DistributedManager.create_group_from_node(
-                    child.data,
-                    parent=parent_group,
-                )
-
-                # Add child ids to the queue
-                q.put(child.identifier)
 
     @atexit.register
     @staticmethod

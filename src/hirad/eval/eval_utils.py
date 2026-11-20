@@ -305,23 +305,32 @@ def signed_circular_difference(prediction: np.ndarray, target: np.ndarray, perio
     return ((prediction - target + half_period) % period) - half_period
 
 
-def parse_eval_cli(allow_times: bool = False) -> dict:
+def parse_eval_cli(allow_times: bool = False, argv: Optional[list] = None) -> dict:
     """Parse standard eval CLI args (``--config-name``) and return the loaded YAML config.
 
+    ``--inference-output-dir DIR`` overrides ``inference_output_dir`` in the config.
     When ``allow_times=True``, also accepts ``--times YYYYMMDD-HHMM ...`` to override
     ``times`` / ``times_range`` / ``times_ranges`` in the config.
+    ``argv`` defaults to the command line (``sys.argv[1:]``).
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-name", help="Path to YAML config file for evaluation.")
+    parser.add_argument(
+        "--inference-output-dir",
+        help="Generation output directory to evaluate; overrides inference_output_dir in the config.",
+    )
     if allow_times:
         parser.add_argument(
             "--times", nargs="+",
             help="One or more timesteps (YYYYMMDD-HHMM) overriding times/times_range/times_ranges.",
         )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     with open(args.config_name, "r") as f:
         cfg = yaml.safe_load(f)
+
+    if args.inference_output_dir:
+        cfg["inference_output_dir"] = args.inference_output_dir
 
     if allow_times and getattr(args, "times", None):
         for k in ("times", "times_range", "times_ranges"):

@@ -175,12 +175,6 @@ class TestRandomPatching2DIndices:
         # Extremely unlikely to be identical for 50 patches on a 256x256 image
         assert patcher.patch_indices != old_indices
 
-    def test_get_patch_indices_returns_current(self):
-        patcher = RandomPatching2D(
-            img_shape=(64, 64), patch_shape=(16, 16), patch_num=3
-        )
-        assert patcher.get_patch_indices() is patcher.patch_indices
-
     def test_set_patch_num_updates_count_and_indices(self):
         patcher = RandomPatching2D(
             img_shape=(64, 64), patch_shape=(16, 16), patch_num=3

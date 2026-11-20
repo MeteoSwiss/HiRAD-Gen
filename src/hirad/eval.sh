@@ -16,7 +16,7 @@
 #SBATCH --output=./logs/eval_compute.log
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A a0269
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM
@@ -32,7 +32,6 @@ echo "Master port: $MASTER_PORT"
 
 export OMP_NUM_THREADS=1
 
-# python src/hirad/training/train.py --config-name=training_era_cosmo_testrun.yaml
 srun --environment=./ci/edf/modulus_env.toml bash -c "
     pip install -e . --no-dependencies
     python src/hirad/eval/compute_eval.py --config-name=generate_era_cosmo.yaml

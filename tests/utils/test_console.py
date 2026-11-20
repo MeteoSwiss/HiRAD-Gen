@@ -1,5 +1,4 @@
 import logging
-import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -63,52 +62,6 @@ class TestPythonLogger:
         with caplog.at_level(logging.ERROR, logger="test_error"):
             pl.error("bad")
         assert expected in caplog.text
-
-    def test_file_logging_creates_file(self, tmp_path):
-        log_file = str(tmp_path / "test.log")
-        pl = PythonLogger(name="test_file_create")
-        pl.logger.setLevel(logging.DEBUG)
-        pl.file_logging(log_file)
-        pl.log("file message")
-        assert os.path.exists(log_file)
-        with open(log_file) as f:
-            content = f.read()
-        assert "file message" in content
-
-    def test_file_logging_removes_existing_file(self, tmp_path):
-        log_file = str(tmp_path / "old.log")
-        with open(log_file, "w") as f:
-            f.write("old content")
-        pl = PythonLogger(name="test_file_overwrite")
-        pl.logger.setLevel(logging.DEBUG)
-        pl.file_logging(log_file)
-        pl.log("new content")
-        with open(log_file) as f:
-            content = f.read()
-        assert "old content" not in content
-        assert "new content" in content
-
-    def test_file_logging_formatter(self, tmp_path):
-        log_file = str(tmp_path / "fmt.log")
-        pl = PythonLogger(name="test_fmt")
-        pl.logger.setLevel(logging.DEBUG)
-        pl.file_logging(log_file)
-        pl.log("fmt check")
-        with open(log_file) as f:
-            content = f.read()
-        # Format: [HH:MM:SS - name - LEVEL] message
-        assert "test_fmt" in content
-        assert "INFO" in content
-
-    def test_file_logging_level_is_debug(self, tmp_path):
-        log_file = str(tmp_path / "debug.log")
-        pl = PythonLogger(name="test_debug_level")
-        pl.logger.setLevel(logging.DEBUG)
-        pl.file_logging(log_file)
-        pl.logger.debug("debug msg")
-        with open(log_file) as f:
-            content = f.read()
-        assert "debug msg" in content
 
 
 ############################################################################

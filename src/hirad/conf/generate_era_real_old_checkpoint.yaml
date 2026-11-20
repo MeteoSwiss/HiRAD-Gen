@@ -1,0 +1,18 @@
+# The older era_real checkpoints (model_checkpoints/era_real, before the cross-validation
+# folds): generate_era_real with these checkpoints and the tp output stats they were trained with.
+hydra:
+  job:
+    name: generation_era_real_old_checkpoint_results
+
+defaults:
+  - generate_era_real
+  - _self_
+
+dataset:
+  transform_output_means: {'tp-box_cox_025': -3.8121187083242556}
+  transform_output_stdevs: {'tp-box_cox_025': 0.3345851858215482}
+
+generation:
+  io:
+    res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/diffusion/
+    reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real/regression/

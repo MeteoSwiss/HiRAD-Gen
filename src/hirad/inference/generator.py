@@ -10,7 +10,7 @@ from torch.distributed import gather
 from hirad.utils.inference_utils import regression_step, diffusion_step
 from hirad.distributed import DistributedManager
 from hirad.utils.patching import GridPatching2D
-from hirad.inference import stochastic_sampler, deterministic_sampler
+from hirad.inference import stochastic_sampler
 
 
 def _sync_t() -> float:
@@ -54,16 +54,7 @@ class Generator():
         self.rank_batches = all_batches[self.dist.rank :: self.dist.world_size]
 
     def initialize_sampler(self, sampler_type, **sampler_args):
-        if sampler_type == "deterministic":
-            if self.hr_mean_conditioning:
-                raise NotImplementedError(
-                    "High-res mean conditioning is not yet implemented for the deterministic sampler"
-                )
-            self.sampler = partial(
-                deterministic_sampler,
-                **sampler_args
-            )
-        elif sampler_type == "stochastic":
+        if sampler_type == "stochastic":
             self.sampler = partial(stochastic_sampler, patching=self.patching, **sampler_args)
         else:
             raise ValueError(f"Unknown sampling method {sampler_type}")

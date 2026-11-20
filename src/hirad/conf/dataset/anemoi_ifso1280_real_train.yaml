@@ -1,6 +1,7 @@
 # IFS-HRES -> RealCH1 training dataset.
-# Same as the base IFS train dataset but: provide_lead_time=False and max_lead_hours=12.
-# With 2 usable inits/day (00Z, 12Z) leads 1..12 tile the full 24h diurnal cycle
+# Lead-time labels off (provide_lead_time=False) for the production _nolt models; the lead-time
+# entry configs (training_ifso1280_real_regression, _diffusion_patched) switch them on.
+# max_lead_hours=12: with 2 usable inits/day (00Z, 12Z) leads 1..12 tile the full 24h diurnal cycle
 # (00Z->valid 01..12, 12Z->valid 13..24);
 type: anemoi_ifs_real
 input_anemoi_dataset_path: '/capstor/scratch/cscs/pstamenk/ifs-hres-realch1/ifs_hres_traj_2020_202502.zarr'

@@ -18,7 +18,7 @@
 #SBATCH --error=./logs/train_regression.err
 
 ### ENVIRONMENT ####
-#SBATCH -A a161
+#SBATCH -A a0269
 
 # Choose method to initialize dist in pythorch
 export DISTRIBUTED_INITIALIZATION_METHOD=SLURM

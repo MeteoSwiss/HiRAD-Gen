@@ -64,7 +64,7 @@ _BASE_CFG = {
         "model_args": {"N_grid_channels": 4},
     },
     "dataset": {
-        "type": "era5_cosmo",
+        "type": "anemoi_era5_cosmo",
         "validation": False,
         "n_month_hour_channels": 0,
     },

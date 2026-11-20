@@ -1,20 +1,25 @@
+# era_real (1h) checkpoints on IFS N320 operational forecasts: generate_era_real (cv1 by default)
+# with only the forecast-specific settings changed. 6h variant (era_real_6h):
+# generate_ifsn320_real_6h.
 hydra:
   job:
-    chdir: true
     name: generation_ifsn320_real_results
-  run:
-    dir: ./outputs/generation/${hydra:job.name}
 
-# Get defaults
 defaults:
+  - generate_era_real
   - _self_
-  # Dataset
-  - dataset/anemoi_ifsn320_real_inference_1h
-#  - dataset/anemoi_ifsn320_real_inference_6h
 
-  # Sampler
-  - sampler/stochastic
-  #- sampler/deterministic
+dataset:
+  type: anemoi_ifs_real
+  input_anemoi_dataset_path: '/capstor/store/cscs/pasc/c38/ifs-forecasts/fc_medium_20260730-20260731_N320_1h.zarr'
+  # Normalize with the stats of the ERA5 store the model was trained on, not the forecast's own.
+  input_stats_anemoi_dataset_path: '/capstor/store/mch/msopr/ml/datasets/aifs-ea-an-oper-0001-mars-n320-1979-2024-1h-v2-with-era51.zarr'
+  # Forecast init (base) times to use.
+  start_date: '2026-07-30'
+  end_date: '2026-07-31'
+  # No REAL-CH1 target exists for these dates: write zeros instead.
+  target_missing_as_zeros: true
 
-  # Generation
-  - generation/ifsn320_real
+generation:
+  # Valid times.
+  times_range: ['20260730-0100','20260803-0000',1]

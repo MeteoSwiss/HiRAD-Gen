@@ -1,18 +1,19 @@
+# Previous-HR temporal conditioning (era_real_tc: cv1 split, diffusion trained from scratch with
+# history dropout 0.25): generate_era_real with the autoregressive rollout switched on. Each
+# member carries its own previous prediction; the first step of a contiguous window, and any step
+# after a gap, runs with the null history.
 hydra:
   job:
-    chdir: true
     name: generation_era_real_prevhr
-  run:
-    dir: ./outputs/generation/${hydra:job.name}
 
 defaults:
-  - dataset/anemoi_era_real_inference
-  - sampler/stochastic
-  - generation/era_real_prevhr
+  - generate_era_real
   - _self_
 
-# The inference dataset ships tp box-cox OUTPUT stats for an older checkpoint; override to the
-# cv1 training values so denormalized tp (and the saved/visualized fields) are on the right scale.
-dataset:
-  transform_output_means: {'tp-box_cox_025': -3.923594846877984}
-  transform_output_stdevs: {'tp-box_cox_025': 0.19256625704644262}
+generation:
+  prev_hr_conditioning: True
+  rollout: True
+  io:
+    # The regression is byte-identical to cv1's; set here so the pair stays together.
+    res_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_tc/diffusion/
+    reg_ckpt_path: /capstor/store/cscs/pasc/c38/model_checkpoints/era_real_tc/regression/
